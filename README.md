@@ -1,6 +1,41 @@
-# KYBER_on_RISC-V32
+# KYBER on RISC-V32I — GNU Toolchain, QEMU & Quickstart (Ubuntu)
 
-To use a specific JDK for within your environment, you'll need to set the JAVA_HOME environment variable after you activate the Python environment. Since environment variables are typically isolated within the active shell session (or virtual environment session)
+This project runs **CRYSTALS-Kyber** on **RV32I** using the **RISC-V GNU (ELF/Newlib) toolchain** and **QEMU**.
+
+It follows the structure of [John Winans’](https://github.com/johnwinans/riscv-toolchain-install-guide) guide for predictable installs and paths.
+
+* **Toolchain & QEMU install path:** `~/projects/riscv/install/rv32i/bin`
+* **Project location:** `~/projects/KYBER_on_RISC-V32`
+
+> If you delete `~/projects/riscv/`, the toolchain is gone. Your project stays in `~/projects/KYBER_on_RISC-V32`.
+
+---
+
+## 1) Ubuntu prerequisites
+
+```bash
+sudo apt update
+sudo apt install -y git build-essential autoconf automake autotools-dev \
+  curl python3 libmpc-dev libmpfr-dev libgmp-dev gawk gperf bison flex \
+  texinfo help2man libtool patchutils zlib1g-dev libexpat1-dev ninja-build \
+  cmake libglib2.0-dev libpixman-1-dev
+```
+
+Tested on Ubuntu 22.04/24.04.
+
+---
+
+## 2) Get the project
+
+```bash
+mkdir -p ~/projects
+cd ~/projects
+git clone https://github.com/catalin69140/KYBER_on_RISC-V32.git
+cd KYBER_on_RISC-V32
+
+# bring submodules (toolchain, qemu, etc.) to pinned commits
+git submodule update --init --recursive
+```
 
 <details>
 <summary>
