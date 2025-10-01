@@ -4,7 +4,7 @@
 	branch = 2021.06.26
 [submodule "qemu"]
 	path = qemu
-	url = https://git.qemu.org/git/qemu.git
+	url = https://gitlab.com/qemu-project/qemu.git
 	branch = v5.2.0
 [submodule "gdb-dashboard"]
 	path = gdb-dashboard
