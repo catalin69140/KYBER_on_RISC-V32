@@ -1,15 +1,26 @@
 # KYBER on RISC-V32I — GNU Toolchain, QEMU & Quickstart (Ubuntu)
 
-This project runs **CRYSTALS-Kyber** on **RV32I** using the **RISC-V GNU (ELF/Newlib) toolchain** and **QEMU**.
+This project runs **CRYSTALS-Kyber** on **RV32** using the **RISC-V GNU (ELF/Newlib) toolchain** and **QEMU**.
+The toolchain installs under your user folder, next to this repo.
+
+Source: [Denisa Greconici](https://github.com/denigreco/Kyber_RISC_V_Thesis)
 
 It follows the structure of [John Winans’](https://github.com/johnwinans/riscv-toolchain-install-guide) guide for predictable installs and paths.
 
-* **Toolchain & QEMU install path:** `~/projects/riscv/install/rv32i/bin`
-* **Project location:** `~/projects/KYBER_on_RISC-V32`
+* **Toolchain & QEMU path:** `~/Kyber-Project/riscv/install/rv32i/bin`
+* **Project location:** `~/Kyber-Project/KYBER_on_RISC-V32`
+* **Default ISA/ABI:** `-march=rv32i`, `-mabi=ilp32`
 
-> If you delete `~/projects/riscv/`, the toolchain is gone. Your project stays in `~/projects/KYBER_on_RISC-V32`.
+> To uninstall the toolchain, remove `~/Kyber-Project/riscv/`.
+> Your repo remains in `~/Kyber-Project/KYBER_on_RISC-V32`.
 
 ---
+
+For MacOS at the moment I do not have a solution on how to run it as there were some problem with the toolchain set-up.
+
+---
+
+Tested on Ubuntu 24.04. It should work from Ubuntu 20.04 and up.
 
 ## 1) Ubuntu prerequisites
 
@@ -21,21 +32,22 @@ sudo apt install -y git build-essential autoconf automake autotools-dev \
   cmake libglib2.0-dev libpixman-1-dev
 ```
 
-Tested on Ubuntu 22.04/24.04.
-
 ---
 
 ## 2) Get the project
 
 ```bash
-mkdir -p ~/projects
-cd ~/projects
+mkdir -p ~/Kyber-Project
+cd ~/Kyber-Project
 git clone https://github.com/catalin69140/KYBER_on_RISC-V32.git
 cd KYBER_on_RISC-V32
-
-# bring submodules (toolchain, qemu, etc.) to pinned commits
-git submodule update --init --recursive
 ```
+
+---
+
+Follow the next sections in order.
+
+---
 
 <details>
 <summary>
@@ -46,7 +58,77 @@ git submodule update --init --recursive
   
 ---
 
-write here
+## 1) One-command setup (deps → submodules → toolchain → QEMU)
+
+```bash
+# from the repo root
+./setup.sh
+```
+
+Note that this can take the better part of an hour to complete!
+
+This will:
+
+* Install OS dependencies (idempotent)
+* Initialize & update submodules at pinned commits
+* Build **rv32i** GNU toolchain + QEMU into `~/Kyber-Project/riscv/install/rv32i`
+
+Add tools to your PATH:
+
+```bash
+echo 'export PATH=$HOME/Kyber-Project/riscv/install/rv32i/bin:$PATH' >> ~/.bashrc
+export PATH=$HOME/Kyber-Project/riscv/install/rv32i/bin:$PATH
+```
+
+Sanity checks:
+
+```bash
+which riscv32-unknown-elf-gcc && riscv32-unknown-elf-gcc --version
+which qemu-system-riscv32 && qemu-system-riscv32 --version
+```
+
+---
+
+## 2) Build & run KYBER (**rv32i** by default)
+
+```bash
+# Default build = Kyber-768 (KYBER_K=3), ISA = rv32i
+make
+
+# Run on QEMU (virt, headless)
+make run-qemu
+```
+
+Pick a Kyber parameter set:
+
+```bash
+make kyber512     # KYBER_K=2
+make kyber768     # KYBER_K=3 (default)
+make kyber1024    # KYBER_K=4
+```
+
+---
+
+## 3) (Optional) Spike + proxy kernel
+
+```bash
+make run-spike
+```
+
+---
+
+## 4) Hello-UART smoke test
+
+```bash
+make run-hello
+# expected output:
+# hello from rv32 on qemu virt!
+```
+
+---
+
+here next
+
 
 </details>
 
