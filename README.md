@@ -53,10 +53,6 @@ It should work from Ubuntu 20.04 and up.
 
 ```bash
 sudo apt update
-sudo apt install -y git build-essential autoconf automake autotools-dev \
-  curl python3 libmpc-dev libmpfr-dev libgmp-dev gawk gperf bison flex \
-  texinfo help2man libtool patchutils zlib1g-dev libexpat1-dev ninja-build \
-  cmake libglib2.0-dev libpixman-1-dev
 ```
 
 ---
