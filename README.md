@@ -101,6 +101,11 @@ This will:
 * Initialize & update submodules at pinned commits
 * Build **rv32i** GNU toolchain + QEMU into `Kyber-Project/riscv/install/rv32i`
 
+```bash
+# Make PATH live in this shell (new shells will have it already)
+source ~/.bashrc
+```
+
 Add tools to your PATH:
 
 ```bash
@@ -111,8 +116,11 @@ export PATH=$HOME/Kyber-Project/riscv/install/rv32i/bin:$PATH
 Sanity checks:
 
 ```bash
-which riscv32-unknown-elf-gcc && riscv32-unknown-elf-gcc --version
-which qemu-system-riscv32 && qemu-system-riscv32 --version
+# Sanity check: both tools should come from the same prefix/bin
+which riscv32-unknown-elf-gcc
+which qemu-system-riscv32
+riscv32-unknown-elf-gcc --version
+qemu-system-riscv32 --version
 ```
 
 ---
