@@ -1,22 +1,39 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# -----------------------------------------------------------------------------
+# installdeps-gnu.sh
+#
+# Purpose
+#   Install host (Ubuntu/Debian) packages needed to build:
+#     - riscv-gnu-toolchain (ELF/Newlib)
+#     - QEMU (riscv32-softmmu)
+#
+# Notes
+#   - Intended for Ubuntu 22.04/24.04 (also works on Debian-like systems).
+#   - Safe to re-run; 'apt' will skip already-installed packages.
+#   - Uses separate groups for clarity (toolchain core, gdb extras, qemu deps).
+#
+# Usage
+#   ./installdeps-gnu.sh
+# -----------------------------------------------------------------------------
 
-# This was tested on Ubuntu 24.04.03(live-server-arm64).
+set -euo pipefail
 
+echo "[deps] Installing toolchain core build dependencies..."
+sudo apt-get update
+sudo apt-get install -y \
+  autoconf automake autotools-dev curl python3 libmpc-dev libmpfr-dev libgmp-dev \
+  gawk build-essential bison flex texinfo gperf libtool patchutils bc zlib1g-dev \
+  libexpat-dev
 
+echo "[deps] (Optional) GDB python support / dashboards..."
+# Some GDB dashboards/scripts expect Python headers (for the host's Python 3).
+# On older docs you may see 'python-dev' (Python 2); use python3-dev on modern Ubuntu.
+sudo apt-get install -y python3-dev || true
 
-# This command is for the GNU toolchain dependencies:
-sudo apt-get install autoconf automake autotools-dev curl python3 libmpc-dev libmpfr-dev libgmp-dev gawk build-essential bison flex texinfo gperf libtool patchutils bc zlib1g-dev libexpat-dev
+echo "[deps] QEMU build helpers (graphics & build tools used by softmmu)..."
+sudo apt-get install -y ninja-build libglib2.0-dev libpixman-1-dev
 
-# This command is used by GDB so can run a dashboard script:
-sudo apt-get install python-dev
+echo "[deps] Useful extra: device-tree compiler (dtc) to inspect QEMU machines..."
+sudo apt-get install -y device-tree-compiler
 
-
-
-# The following may not be necessary on 24.04.03(live-server-arm64) but my tests included it:
-sudo apt install ninja-build libglib2.0-dev libpixman-1-dev
-
-
-
-# This is a useful tool for viewing the configuration of the QEMU-emulated machines:
-sudo apt install device-tree-compiler
-
+echo "[deps] All dependencies installed."
