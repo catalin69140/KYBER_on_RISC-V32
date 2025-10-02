@@ -1,4 +1,4 @@
-# KYBER on RISC-V32I — GNU Toolchain, QEMU & Quickstart (Ubuntu)
+# KYBER on RISC-V32I — GNU Toolchain, QEMU & Quickstart
 
 This project runs **CRYSTALS-Kyber** on **RV32** using the **RISC-V GNU (ELF/Newlib) toolchain** and **QEMU**.
 The toolchain installs under your user folder, next to this repo.
@@ -16,11 +16,38 @@ It follows the structure of [John Winans’](https://github.com/johnwinans/riscv
 
 ---
 
-For MacOS at the moment I do not have a solution on how to run it as there were some problem with the toolchain set-up.
+<details>
+  
+<summary>
+  
+## MacOS 
+
+</summary>
+
+For MacOS at the moment I do not have a solution on how to run it as there were some problems with the toolchain set-up.
 
 ---
 
-Tested on Ubuntu 24.04. It should work from Ubuntu 20.04 and up.
+As a temporary solution is to run Ubuntu VM on MacOS:
+- (install UTM)[https://mac.getutm.app/]
+- (Ubuntu Server for ARM)[https://ubuntu.com/download/server/arm] / (Ubuntu Server for Intel)[https://ubuntu.com/download/server#architectures]
+- look for a youtube video for a detailed set-up instructions
+
+</details>
+
+---
+
+<details>
+  
+<summary>
+  
+## UBUNTU
+
+</summary>
+
+Tested on Ubuntu 24.04. 
+
+It should work from Ubuntu 20.04 and up.
 
 ## 1) Ubuntu prerequisites
 
@@ -50,6 +77,7 @@ Follow the next sections in order.
 ---
 
 <details>
+  
 <summary>
 
 ## RISC-V GNU toolchain Installation (Click to Expand) ⚙️
@@ -269,5 +297,7 @@ Confirm that both the system default and the `JAVA_HOME` variable are pointing t
     Output should start with `java version "1.8.0_..."`.
 
 You can now use your required project tools and run Java applications, as they will correctly identify and use the Java 8 installation.
+
+</details>
 
 </details>
