@@ -1,7 +1,7 @@
-# KYBER on RISC-V32I — GNU Toolchain, QEMU & Quickstart
+# KYBER on RISC-V32I
 
 This project runs **CRYSTALS-Kyber** on **RV32** using the **RISC-V GNU (ELF/Newlib) toolchain** and **QEMU**.
-The toolchain installs under your user folder, next to this repo.
+The toolchain installs in a self-contained folder for easy access.
 
 Source: [Denisa Greconici](https://github.com/denigreco/Kyber_RISC_V_Thesis)
 
@@ -111,14 +111,75 @@ echo 'export PATH=$HOME/Kyber-Project/riscv/install/rv32i/bin:$PATH' >> ~/.bashr
 export PATH=$HOME/Kyber-Project/riscv/install/rv32i/bin:$PATH
 ```
 
-Sanity checks(both tools should come from the same prefix/bin):
+<details>
+  
+<summary>
+  
+Sanity checks(both tools should come from the same prefix/bin)
+
+</summary>
 
 ```bash
 which riscv32-unknown-elf-gcc
+```
+
+Output:
+
+```bash
+/home/catalin-ubuntu/Desktop/Kyber-Project/riscv/install/rv32i/bin/riscv32-unknown-elf-gcc
+```
+---
+```bash
 which qemu-system-riscv32
+```
+
+Output:
+
+```bash
+/home/catalin-ubuntu/Desktop/Kyber-Project/riscv/install/rv32i/bin/qemu-system-riscv32
+```
+---
+```bash
 riscv32-unknown-elf-gcc --version
+```
+
+Output:
+
+```bash
+riscv32-unknown-elf-gcc (g1b306039ac4) 15.1.0
+Copyright (C) 2025 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.  There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+```
+---
+```bash
 qemu-system-riscv32 --version
 ```
+
+Output:
+
+```bash
+QEMU emulator version 5.2.0 (v5.2.0)
+Copyright (c) 2003-2020 Fabrice Bellard and the QEMU Project developers
+```
+---
+```bash
+qemu-system-riscv32 -machine help
+```
+
+Output:
+
+```bash
+Supported machines are:
+none                 empty machine
+opentitan            RISC-V Board compatible with OpenTitan
+sifive_e             RISC-V Board compatible with SiFive E SDK
+sifive_u             RISC-V Board compatible with SiFive U SDK
+spike                RISC-V Spike board (default)
+virt                 RISC-V VirtIO board
+```
+
+</details>
 
 ---
 
@@ -266,5 +327,79 @@ Confirm that both the system default and the `JAVA_HOME` variable are pointing t
 You can now use your required project tools and run Java applications, as they will correctly identify and use the Java 8 installation.
 
 </details>
+
+---
+
+<details>
+  
+<summary>
+
+## Install SBT (Click to Expand) ⚙️
+
+</summary>
+
+---
+
+here
+
+</details>
+
+---
+
+<details>
+  
+<summary>
+
+## Install Verilator (Click to Expand) ⚙️
+
+</summary>
+
+---
+
+here
+
+</details>
+
+---
+
+<details>
+  
+<summary>
+
+## Clone Source (Click to Expand) ⚙️
+
+</summary>
+
+---
+
+Inside `Kyber-Project/KYBER_on_RISC-V32`:
+
+```bash
+git clone https://github.com/denigreco/Kyber_RISC_V_Thesis.git
+```
+
+</details>
+
+---
+
+<details>
+  
+<summary>
+
+## Clone the pqriscv-vexriscv repository (Click to Expand) ⚙️
+
+</summary>
+
+---
+
+Inside `Kyber-Project/KYBER_on_RISC-V32`:
+
+```bash
+git clone https://github.com/mupq/pqriscv-vexriscv.git
+```
+
+</details>
+
+---
 
 </details>
