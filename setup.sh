@@ -38,17 +38,18 @@ echo "[1/4] Installing OS dependencies..."
 
 # 2) Sources (submodules or shallow clones)
 echo "[2/4] Ensuring sources exist..."
-if [[ ! -d "$REPO_ROOT/riscv-gnu-toolchain" ]]; then
-  echo "[setup] Cloning riscv-gnu-toolchain..."
-  git clone --depth=1 https://github.com/riscv-collab/riscv-gnu-toolchain.git "$REPO_ROOT/riscv-gnu-toolchain"
-fi
-if [[ ! -d "$REPO_ROOT/qemu" ]]; then
-  echo "[setup] Cloning QEMU..."
-  git clone --depth=1 https://gitlab.com/qemu-project/qemu.git "$REPO_ROOT/qemu"
-fi
+# If you do not keep them as submodules, switch to:
+# if [[ ! -d "$REPO_ROOT/riscv-gnu-toolchain" ]]; then
+#   echo "[setup] Cloning riscv-gnu-toolchain..."
+#   git clone --depth=1 https://github.com/riscv-collab/riscv-gnu-toolchain.git "$REPO_ROOT/riscv-gnu-toolchain"
+# fi
+# if [[ ! -d "$REPO_ROOT/qemu" ]]; then
+#   echo "[setup] Cloning QEMU..."
+#   git clone --depth=1 https://gitlab.com/qemu-project/qemu.git "$REPO_ROOT/qemu"
+# fi
 
 # If you keep them as submodules, switch to:
-#   git submodule update --init --recursive --jobs=$(nproc)
+git submodule update --init --recursive --jobs=$(nproc)
 
 # 3) Build
 echo "[3/4] Building toolchain + QEMU..."
