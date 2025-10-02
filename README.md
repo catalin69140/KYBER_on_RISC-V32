@@ -117,44 +117,6 @@ which qemu-system-riscv32 && qemu-system-riscv32 --version
 
 ---
 
-## 2) Build & run KYBER (**rv32i** by default)
-
-```bash
-# Default build = Kyber-768 (KYBER_K=3), ISA = rv32i
-make
-
-# Run on QEMU (virt, headless)
-make run-qemu
-```
-
-Pick a Kyber parameter set:
-
-```bash
-make kyber512     # KYBER_K=2
-make kyber768     # KYBER_K=3 (default)
-make kyber1024    # KYBER_K=4
-```
-
----
-
-## 3) (Optional) Spike + proxy kernel
-
-```bash
-make run-spike
-```
-
----
-
-## 4) Hello-UART smoke test
-
-```bash
-make run-hello
-# expected output:
-# hello from rv32 on qemu virt!
-```
-
----
-
 here next
 
 
