@@ -7,12 +7,12 @@ Source: [Denisa Greconici](https://github.com/denigreco/Kyber_RISC_V_Thesis)
 
 It follows the structure of [John Winans’](https://github.com/johnwinans/riscv-toolchain-install-guide) guide for predictable installs and paths.
 
-* **Toolchain & QEMU path:** `~/Kyber-Project/riscv/install/rv32i/bin`
-* **Project location:** `~/Kyber-Project/KYBER_on_RISC-V32`
+* **Toolchain & QEMU path:** `Kyber-Project/riscv/install/rv32i/bin`
+* **Project location:** `Kyber-Project/KYBER_on_RISC-V32`
 * **Default ISA/ABI:** `-march=rv32i`, `-mabi=ilp32`
 
-> To uninstall the toolchain, remove `~/Kyber-Project/riscv/`.
-> Your repo remains in `~/Kyber-Project/KYBER_on_RISC-V32`.
+> To uninstall the toolchain, remove `Kyber-Project/riscv/`.
+> Your repo remains in `Kyber-Project/KYBER_on_RISC-V32`.
 
 ---
 
@@ -71,7 +71,7 @@ This will:
 
 * Install OS dependencies (idempotent)
 * Initialize & update submodules at pinned commits
-* Build **rv32i** GNU toolchain + QEMU into `~/Kyber-Project/riscv/install/rv32i`
+* Build **rv32i** GNU toolchain + QEMU into `Kyber-Project/riscv/install/rv32i`
 
 Add tools to your PATH:
 
