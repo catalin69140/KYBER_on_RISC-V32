@@ -32,7 +32,7 @@ sudo apt-get install -y python3-dev || true
 
 echo "[deps] QEMU build helpers (graphics & build tools used by softmmu)..."
 sudo apt-get install -y ninja-build meson pkg-config libglib2.0-dev libpixman-1-dev \
-                 python3 python3-venv
+                 python3 python3-venv qemu-system-misc
 
 echo "[deps] Useful extra: device-tree compiler (dtc) to inspect QEMU machines..."
 sudo apt-get install -y device-tree-compiler
