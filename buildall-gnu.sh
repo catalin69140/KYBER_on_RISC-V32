@@ -8,19 +8,19 @@
 # What this script does
 #   1) Chooses an install prefix (default: $HOME/Kyber-Project/riscv/install/rv32i)
 #   2) Builds riscv-gnu-toolchain targeting rv32i plus a few common multilibs
-#   3) Builds QEMU with the riscv32-softmmu target
+#   3) Builds QEMU with the riscv32-softmmu target and installs into the same prefix
 #
 # Usage
 #   ./buildall-gnu.sh                 # installs to $HOME/Kyber-Project/riscv/install/rv32i
 #   ./buildall-gnu.sh /custom/prefix  # override install prefix
 #
-# Expected repo layout
-#   ./riscv-gnu-toolchain   (git submodule)
-#   ./qemu                  (git submodule)
+# Expected repo layout (as git submodules)
+#   ./riscv-gnu-toolchain
+#   ./qemu
 #
 # One-time prerequisites
 #   ./installdeps-gnu.sh
-#   ./setup.sh
+#   ./setup.sh    # (this also runs submodule init/update)
 #
 # Results
 #   Binaries:  $INSTALL_DIR/bin
@@ -29,7 +29,7 @@
 
 set -euo pipefail
 
-# 1) Resolve install directory (default to ~/Kyber-Project/riscv/install/rv32i)
+# 1) Resolve install directory; default to ~/Kyber-Project/riscv/install/rv32i
 if [[ $# -ge 1 && -n "${1:-}" ]]; then
   INSTALL_DIR="$1"
 else
@@ -57,12 +57,12 @@ fi
 
 pushd riscv-gnu-toolchain >/dev/null
 
-# Configure for a rv32i baseline. The multilib generator enables a few common
-# -march/-mabi combinations; keep or trim as you see fit.
+# Configure for an rv32i baseline. The multilib generator enables a few common
+# -march/-mabi combinations. Keep it minimal but useful for future tweaks.
 ./configure --prefix="$INSTALL_DIR" --with-arch=rv32i \
   --with-multilib-generator="rv32i-ilp32--;rv32ima-ilp32--;rv32imafd-ilp32--"
 
-# For this project, plain `make` performs the build and install into --prefix.
+# Build and install into --prefix
 make -j"$JOBS"
 
 popd >/dev/null
