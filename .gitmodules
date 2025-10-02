@@ -1,11 +1,11 @@
 [submodule "riscv-gnu-toolchain"]
 	path = riscv-gnu-toolchain
 	url = https://github.com/riscv/riscv-gnu-toolchain
-	branch = 2021.06.26
+	branch = master
 [submodule "qemu"]
 	path = qemu
 	url = https://gitlab.com/qemu-project/qemu.git
-	branch = v5.2.0
+	branch = master
 [submodule "gdb-dashboard"]
 	path = gdb-dashboard
 	url = https://github.com/cyrus-and/gdb-dashboard.git
