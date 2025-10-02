@@ -84,12 +84,13 @@ Follow the next sections in order.
 
 ## 1) One-command setup (deps → submodules → toolchain → QEMU)
 
+From the repo root:
+
 ```bash
-# from the repo root
 ./setup.sh
 ```
 
-> Note that this can take the better part of an hour to complete!
+> Note that this can take the better part of an hour or more to complete!
 
 This will:
 
@@ -97,8 +98,9 @@ This will:
 * Initialize & update submodules at pinned commits
 * Build **rv32i** GNU toolchain + QEMU into `Kyber-Project/riscv/install/rv32i`
 
+Make PATH live in this shell (new shells will have it already):
+
 ```bash
-# Make PATH live in this shell (new shells will have it already)
 source ~/.bashrc
 ```
 
@@ -109,10 +111,9 @@ echo 'export PATH=$HOME/Kyber-Project/riscv/install/rv32i/bin:$PATH' >> ~/.bashr
 export PATH=$HOME/Kyber-Project/riscv/install/rv32i/bin:$PATH
 ```
 
-Sanity checks:
+Sanity checks(both tools should come from the same prefix/bin):
 
 ```bash
-# Sanity check: both tools should come from the same prefix/bin
 which riscv32-unknown-elf-gcc
 which qemu-system-riscv32
 riscv32-unknown-elf-gcc --version
