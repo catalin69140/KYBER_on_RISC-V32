@@ -7,13 +7,7 @@
 #     1) Install host dependencies (idempotent).
 #     2) Initialize & update submodules to pinned commits.
 #     3) Build and install the rv32i GNU toolchain + QEMU next to this project.
-#
-# Differences vs original
-#   - Adds dependency installation step (calls installdeps-gnu.sh).
-#   - Uses 'git submodule update --init --recursive' in one shot.
-#   - Calls ./buildall-gnu.sh with a default install prefix at:
-#       $HOME/Kyber-Project/riscv/install/rv32i
-#     (You can still override by passing a custom prefix as $1.)
+#     4) PATH WIRING
 #
 # Usage
 #   ./setup.sh                   # installs to $HOME/Kyber-Project/riscv/install/rv32i
@@ -24,38 +18,48 @@
 #   e.g. riscv32-unknown-elf-gcc, qemu-system-riscv32
 # -----------------------------------------------------------------------------
 
-set -euo pipefail
+set -Eeuo pipefail
 
-# 0) Resolve install directory (default near the project)
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+DEFAULT_PREFIX="$(cd "$REPO_ROOT/.." && pwd)/riscv/install/rv32i"
+
+# Choose install dir: arg > PREFIX env > default
 if [[ $# -ge 1 && -n "${1:-}" ]]; then
   INSTALL_DIR="$1"
 else
-  INSTALL_DIR="$HOME/Kyber-Project/riscv/install/rv32i"
+  INSTALL_DIR="${PREFIX:-$DEFAULT_PREFIX}"
 fi
-echo "Will install toolchain into: $INSTALL_DIR"
 
-# 1) Install OS deps (idempotent)
-echo "[1/3] Installing Ubuntu packages..."
-./installdeps-gnu.sh
+echo "[setup] Will install into: $INSTALL_DIR"
 
-# 2) Submodules (pin to this repo's recorded commits)
-echo "[2/3] Initializing/updating submodules..."
-git submodule update --init --recursive
+# 1) Deps
+echo "[1/4] Installing OS dependencies..."
+"$REPO_ROOT/installdeps-gnu.sh"
 
-# Optional: manually pin specific versions if you need exact tags/commits:
-# pushd riscv-gnu-toolchain >/dev/null
-# git checkout 2021.06.26
-# popd >/dev/null
-# pushd qemu >/dev/null
-# git checkout v5.2.0
-# popd >/dev/null
+# 2) Sources (submodules or shallow clones)
+echo "[2/4] Ensuring sources exist..."
+if [[ ! -d "$REPO_ROOT/riscv-gnu-toolchain" ]]; then
+  echo "[setup] Cloning riscv-gnu-toolchain..."
+  git clone --depth=1 https://github.com/riscv-collab/riscv-gnu-toolchain.git "$REPO_ROOT/riscv-gnu-toolchain"
+fi
+if [[ ! -d "$REPO_ROOT/qemu" ]]; then
+  echo "[setup] Cloning QEMU..."
+  git clone --depth=1 https://gitlab.com/qemu-project/qemu.git "$REPO_ROOT/qemu"
+fi
 
-# 3) Build the rv32i GNU toolchain + QEMU
-echo "[3/3] Building GNU toolchain + QEMU (rv32i)..."
-./buildall-gnu.sh "$INSTALL_DIR"
+# If you keep them as submodules, switch to:
+#   git submodule update --init --recursive --jobs=$(nproc)
+
+# 3) Build
+echo "[3/4] Building toolchain + QEMU..."
+"$REPO_ROOT/buildall-gnu.sh" "$INSTALL_DIR"
+
+# 4) PATH wiring
+echo "[4/4] Updating PATH in ~/.bashrc (idempotent)..."
+PATH_LINE="export PATH=\"$INSTALL_DIR/bin:\$PATH\""
+grep -qxF "$PATH_LINE" "$HOME/.bashrc" || echo "$PATH_LINE" >> "$HOME/.bashrc"
+export PATH="$INSTALL_DIR/bin:$PATH"
 
 echo
-echo "Setup complete."
-echo "Add to PATH if needed:"
-echo "  echo 'export PATH=$INSTALL_DIR/bin:\$PATH' >> ~/.bashrc"
-echo "  export PATH=$INSTALL_DIR/bin:\$PATH"
+echo "[setup] Done."
+echo "Open a new shell or run: source ~/.bashrc"
