@@ -37,8 +37,8 @@ sudo apt install -y git build-essential autoconf automake autotools-dev \
 ## 2) Get the project
 
 ```bash
-mkdir -p ~/Kyber-Project
-cd ~/Kyber-Project
+mkdir -p Kyber-Project
+cd Kyber-Project
 git clone https://github.com/catalin69140/KYBER_on_RISC-V32.git
 cd KYBER_on_RISC-V32
 ```
