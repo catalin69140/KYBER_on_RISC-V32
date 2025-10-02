@@ -65,7 +65,7 @@ Follow the next sections in order.
 ./setup.sh
 ```
 
-Note that this can take the better part of an hour to complete!
+> Note that this can take the better part of an hour to complete!
 
 This will:
 
