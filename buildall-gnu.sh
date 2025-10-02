@@ -27,15 +27,19 @@
 #   Tools:     riscv32-unknown-elf-gcc, qemu-system-riscv32, etc.
 # -----------------------------------------------------------------------------
 
-set -euo pipefail
+set -Eeuo pipefail
 
-# Resolve install directory
+# Repo root + default colocated prefix: <parent-of-repo>/riscv/install/rv32i
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+DEFAULT_PREFIX="$(cd "$REPO_ROOT/.." && pwd)/riscv/install/rv32i"
+
 if [[ $# -ge 1 && -n "${1:-}" ]]; then
   INSTALL_DIR="$1"
 else
-  INSTALL_DIR="$HOME/Kyber-Project/riscv/install/rv32i"
+  INSTALL_DIR="${PREFIX:-$DEFAULT_PREFIX}"
 fi
-echo "Installing into: $INSTALL_DIR"
+
+echo "[build] Install prefix: $INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 
 # Parallel jobs
@@ -46,36 +50,61 @@ elif command -v sysctl >/dev/null 2>&1; then
 else
   JOBS=1
 fi
-echo "Using parallel jobs: $JOBS"
+echo "[build] Using jobs: $JOBS"
 
-# --- Build RISC-V GNU toolchain ----------------------------------------------
-if [[ ! -d "riscv-gnu-toolchain" ]]; then
-  echo "ERROR: Submodule 'riscv-gnu-toolchain' not found. Run ./setup.sh first."
+# ---- Toolchain ---------------------------------------------------------------
+TOOLCHAIN_DIR="$REPO_ROOT/riscv-gnu-toolchain"
+if [[ ! -d "$TOOLCHAIN_DIR" ]]; then
+  echo "ERROR: 'riscv-gnu-toolchain' not found. Run ./setup.sh first."
   exit 1
 fi
 
-pushd riscv-gnu-toolchain >/dev/null
+echo "[build] Configuring riscv-gnu-toolchain..."
+pushd "$TOOLCHAIN_DIR" >/dev/null
 
-# Base ISA is rv32i; multilibs provide a few common variants if needed later.
-./configure --prefix="$INSTALL_DIR" --with-arch=rv32i \
-  --with-multilib-generator="rv32i-ilp32--;rv32ima-ilp32--;rv32imafd-ilp32--"
+# Provide a few multilibs so -march/-mabi can vary at build time if needed
+./configure \
+  --prefix="$INSTALL_DIR" \
+  --with-arch=rv32i \
+  --with-abi=ilp32 \
+  --with-multilib-generator="rv32i-ilp32--;rv32im-ilp32--;rv32ima-ilp32--;rv32imafd-ilp32--"
 
+echo "[build] Building toolchain..."
 make -j"$JOBS"
-popd >/dev/null
 
-# --- Build QEMU (rv32 softmmu) -----------------------------------------------
-if [[ ! -d "qemu" ]]; then
-  echo "ERROR: Submodule 'qemu' not found. Run ./setup.sh first."
-  exit 1
-fi
-
-pushd qemu >/dev/null
-./configure --target-list=riscv32-softmmu --prefix="$INSTALL_DIR"
-make -j"$JOBS"
+echo "[build] Installing toolchain..."
 make install
 popd >/dev/null
 
-echo
-echo "Done."
-echo "Now add to PATH (if not already):"
-echo "  export PATH=\"$INSTALL_DIR/bin:\$PATH\""
+# ---- QEMU --------------------------------------------------------------------
+QEMU_DIR="$REPO_ROOT/qemu"
+if [[ ! -d "$QEMU_DIR" ]]; then
+  echo "ERROR: 'qemu' not found. Run ./setup.sh first."
+  exit 1
+fi
+
+echo "[build] Configuring QEMU..."
+pushd "$QEMU_DIR" >/dev/null
+./configure \
+  --target-list=riscv32-softmmu \
+  --prefix="$INSTALL_DIR" \
+  --disable-werror
+
+echo "[build] Building QEMU..."
+make -j"$JOBS"
+
+echo "[build] Installing QEMU..."
+make install
+popd >/dev/null
+
+cat <<EOF
+
+[build] Done.
+
+Add to PATH if not already:
+  export PATH="$INSTALL_DIR/bin:\$PATH"
+
+Then verify:
+  which riscv32-unknown-elf-gcc
+  which qemu-system-riscv32
+EOF
