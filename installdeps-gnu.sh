@@ -8,7 +8,7 @@
 #     - QEMU (riscv32-softmmu)
 #
 # Notes
-#   - Intended for Ubuntu 22.04/24.04 (also works on Debian-like systems).
+#   - Intended for Ubuntu 22.04 or newer (also works on Debian-like systems).
 #   - Safe to re-run; 'apt' will skip already-installed packages.
 #   - Uses separate groups for clarity (toolchain core, gdb extras, qemu deps).
 #
