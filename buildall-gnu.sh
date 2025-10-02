@@ -29,7 +29,7 @@
 
 set -euo pipefail
 
-# 1) Resolve install directory; default to ~/Kyber-Project/riscv/install/rv32i
+# Resolve install directory
 if [[ $# -ge 1 && -n "${1:-}" ]]; then
   INSTALL_DIR="$1"
 else
@@ -38,7 +38,7 @@ fi
 echo "Installing into: $INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 
-# 2) Determine parallelism (prefer nproc; fall back to sysctl or 1)
+# Parallel jobs
 if command -v nproc >/dev/null 2>&1; then
   JOBS="$(nproc)"
 elif command -v sysctl >/dev/null 2>&1; then
@@ -48,29 +48,24 @@ else
 fi
 echo "Using parallel jobs: $JOBS"
 
-# 3) Build the RISC-V GNU toolchain (ELF/Newlib)
-#    The toolchain submodule is expected at: ./riscv-gnu-toolchain
+# --- Build RISC-V GNU toolchain ----------------------------------------------
 if [[ ! -d "riscv-gnu-toolchain" ]]; then
-  echo "ERROR: Submodule 'riscv-gnu-toolchain' not found. Did you run ./setup.sh?"
+  echo "ERROR: Submodule 'riscv-gnu-toolchain' not found. Run ./setup.sh first."
   exit 1
 fi
 
 pushd riscv-gnu-toolchain >/dev/null
 
-# Configure for an rv32i baseline. The multilib generator enables a few common
-# -march/-mabi combinations. Keep it minimal but useful for future tweaks.
+# Base ISA is rv32i; multilibs provide a few common variants if needed later.
 ./configure --prefix="$INSTALL_DIR" --with-arch=rv32i \
   --with-multilib-generator="rv32i-ilp32--;rv32ima-ilp32--;rv32imafd-ilp32--"
 
-# Build and install into --prefix
 make -j"$JOBS"
-
 popd >/dev/null
 
-# 4) Build QEMU (riscv32 softmmu)
-#    The QEMU submodule is expected at: ./qemu
+# --- Build QEMU (rv32 softmmu) -----------------------------------------------
 if [[ ! -d "qemu" ]]; then
-  echo "ERROR: Submodule 'qemu' not found. Did you run ./setup.sh?"
+  echo "ERROR: Submodule 'qemu' not found. Run ./setup.sh first."
   exit 1
 fi
 
@@ -82,5 +77,5 @@ popd >/dev/null
 
 echo
 echo "Done."
-echo "Add to PATH if needed:"
+echo "Now add to PATH (if not already):"
 echo "  export PATH=\"$INSTALL_DIR/bin:\$PATH\""
