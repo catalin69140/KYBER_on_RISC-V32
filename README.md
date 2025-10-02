@@ -29,8 +29,8 @@ For MacOS at the moment I do not have a solution on how to run it as there were 
 ---
 
 As a temporary solution is to run Ubuntu VM on MacOS:
-- (install UTM)[https://mac.getutm.app/]
-- (Ubuntu Server for ARM)[https://ubuntu.com/download/server/arm] / (Ubuntu Server for Intel)[https://ubuntu.com/download/server#architectures]
+- [install UTM](https://mac.getutm.app/)
+- [Ubuntu Server for ARM](https://ubuntu.com/download/server/arm) / [Ubuntu Server for Intel](https://ubuntu.com/download/server#architectures)
 - look for a youtube video for a detailed set-up instructions
 
 </details>
