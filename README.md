@@ -355,6 +355,7 @@ here
 
 </summary>
 
+Repo: [Verilator](https://www.veripool.org/verilator/)
 ---
 
 here
@@ -370,6 +371,8 @@ here
 ## Clone Source (Click to Expand) ⚙️
 
 </summary>
+
+Repo: [Kyber_RISC_V_Thesis](https://github.com/denigreco/Kyber_RISC_V_Thesis.git)
 
 ---
 
@@ -390,6 +393,8 @@ git clone https://github.com/denigreco/Kyber_RISC_V_Thesis.git
 ## Clone the pqriscv-vexriscv repository (Click to Expand) ⚙️
 
 </summary>
+
+Repo: [pqriscv-vexriscv](https://github.com/mupq/pqriscv-vexriscv.git)
 
 ---
 
