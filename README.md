@@ -24,7 +24,8 @@ It follows the structure of [John Winans’](https://github.com/johnwinans/riscv
 
 </summary>
 
-For MacOS at the moment I do not have a solution on how to run it as there were some problems with the toolchain set-up.
+For MacOS at the moment I do not have a solution on how to run it as there were some problems with the gnu toolchain set-up. Besides, most of the repositories used in this project are made to run in Ubuntu.
+> In order to have a chance to run it create a case-sensitive file system (sparse image) of 64GB.
 
 ---
 
