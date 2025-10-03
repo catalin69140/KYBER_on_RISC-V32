@@ -49,7 +49,7 @@ echo "[2/4] Ensuring sources exist..."
 # fi
 
 # If you keep them as submodules, switch to:
-git submodule update --init --recursive --jobs=$(nproc)
+git submodule update --init --recursive --remote --jobs=$(nproc)
 
 # 3) Build
 echo "[3/4] Building toolchain + QEMU..."
