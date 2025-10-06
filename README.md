@@ -46,9 +46,9 @@ As a temporary solution is to run Ubuntu VM on MacOS:
 
 </summary>
 
-Tested on Ubuntu 24.04. 
+> Tested version: Ubuntu 24.04. 
 
-It should work from Ubuntu 20.04 and up.
+> Minimum version: Ubuntu 20.04.
 
 ## 1) Ubuntu prerequisites
 
