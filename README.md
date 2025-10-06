@@ -105,13 +105,6 @@ Make PATH live in this shell (new shells will have it already):
 source ~/.bashrc
 ```
 
-Add tools to your PATH:
-
-```bash
-echo 'export PATH=$HOME/Kyber-Project/riscv/install/rv32i/bin:$PATH' >> ~/.bashrc
-export PATH=$HOME/Kyber-Project/riscv/install/rv32i/bin:$PATH
-```
-
 <details>
   
 <summary>
@@ -160,8 +153,8 @@ qemu-system-riscv32 --version
 Output:
 
 ```bash
-QEMU emulator version 5.2.0 (v5.2.0)
-Copyright (c) 2003-2020 Fabrice Bellard and the QEMU Project developers
+QEMU emulator version 10.1.0 (v10.1.0-60-g562020faa2)
+Copyright (c) 2003-2025 Fabrice Bellard and the QEMU Project developers
 ```
 ---
 ```bash
