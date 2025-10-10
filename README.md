@@ -177,7 +177,7 @@ virt                 RISC-V VirtIO board
 
 ---
 
-here next
+here next gdb dashboard
 
 
 </details>
@@ -192,12 +192,6 @@ here next
 </summary>
   
 ---
-
-# JDK Set-Up
-
-This chapter explains how to correctly set the **`JAVA_HOME`** environment variable in an Ubuntu environment and how to specifically configure your system to use **Java 8 (JDK 1.8)**, which is often required for older or legacy projects.
-
------
 
 ## 1\. Determine the Required JDK Version
 
@@ -334,7 +328,40 @@ You can now use your required project tools and run Java applications, as they w
 
 ---
 
-here
+Website: [SBT](https://www.scala-sbt.org/)
+
+> Prerequisites: JDK 8
+
+To install **SBT** on Ubuntu/Debian systems, run the following commands:
+
+```bash
+# Add the official SBT repositories
+echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
+echo "deb https://repo.scala-sbt.org/scalasbt/debian /" | sudo tee /etc/apt/sources.list.d/sbt_old.list
+
+# Add the SBT public key
+curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" | sudo tee /etc/apt/trusted.gpg.d/sbt.asc
+
+# Update package lists and install sbt
+sudo apt-get update
+sudo apt-get install sbt
+```
+
+> Note: If it says anything similar to "Unable to locate package sbt" check website for the Linux download page and try the debian version as the above commands can be outdated.
+
+Once installed, you can verify by:
+
+```bash
+sbt --version
+```
+You should see something like:
+
+```bash
+sbt runner version: 1.11.7
+
+[info] sbt runner (sbt-the-shell-script) is a runner to run any declared version of sbt.
+[info] Actual version of the sbt is declared using project/build.properties for each build.
+```
 
 </details>
 
