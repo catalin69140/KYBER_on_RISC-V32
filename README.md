@@ -347,13 +347,14 @@ sudo apt-get update
 sudo apt-get install sbt
 ```
 
-> Note: If it says anything similar to "Unable to locate package sbt" check website for the Linux download page and try the debian version as the above commands can be outdated.
+> Note: If it says anything similar to "Unable to locate package sbt" check the website for the Linux download page and try the debian version as the above commands can be outdated.
 
 Once installed, you can verify by:
 
 ```bash
 sbt --version
 ```
+
 You should see something like:
 
 ```bash
@@ -375,10 +376,31 @@ sbt runner version: 1.11.7
 
 </summary>
 
-Repo: [Verilator](https://www.veripool.org/verilator/)
+Website: [Verilator](https://www.veripool.org/verilator/)
+
+Repo: [Verilator](https://github.com/verilator/verilator)
+
 ---
 
-here
+One-liner to install all you need:
+
+```bash
+sudo apt update && sudo apt install -y \
+    verilator sbt openjdk-8-jre make python3 git \
+    build-essential autoconf flex bison libfl2 libfl-dev zlib1g-dev
+```
+
+Once installed, you can verify by:
+
+```bash
+verilator --version
+```
+
+You should see something like:
+
+```bash
+Verilator 5.020 2024-01-01 rev (Debian 5.020-1)
+```
 
 </details>
 
