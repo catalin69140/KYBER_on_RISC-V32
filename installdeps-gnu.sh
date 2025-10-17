@@ -30,6 +30,10 @@ echo "[deps] (Optional) GDB python support / dashboards..."
 # On older docs you may see 'python-dev' (Python 2); use python3-dev on modern Ubuntu.
 sudo apt-get install -y python3-dev || true
 
+echo "[deps] Installing Pygments (Python package for syntax highlighting)..."
+# Needed to enable syntax highlighting in GDB
+sudo apt-get install -y python3-pygments
+
 echo "[deps] QEMU build helpers (graphics & build tools used by softmmu)..."
 sudo apt-get install -y ninja-build meson pkg-config libglib2.0-dev libpixman-1-dev \
                  python3 python3-venv qemu-system-misc
