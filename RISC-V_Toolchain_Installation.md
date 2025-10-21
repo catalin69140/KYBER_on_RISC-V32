@@ -105,7 +105,7 @@ cp .gdbinit ~
 **Remark:** GDB automatically looks for initialization files in these locations (in order):
 
 * **`~/.gdbinit`**: Your global config (always loaded, no matter what directory or project you're in).
-* **`.gdbinit` in the current working directory**: Optional, only loaded if present and you've allowed it (`set auto-load local-gdbinit on`).
+* **`.gdbinit` in the current working directory(optional)**: Only loaded if present and you've allowed it (`set auto-load local-gdbinit on`).
 
 Since you already copied the dashboard into your home directory, GDB will always load it automatically, anywhere — including inside your KYBER project, or any other RISC-V project.
 
