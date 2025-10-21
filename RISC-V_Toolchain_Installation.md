@@ -92,7 +92,46 @@ virt                 RISC-V VirtIO board
 
 ---
 
-here next gdb dashboard
+## 2) Seting up gdb dashboard
+
+Inside the folder `gdb-dasboard` run this command in the terminal:
+
+```bash
+cp .gdbinit ~
+```
+
+> Note: You only need the .gdbinit in your home directory (~/.gdbinit) — that’s the one GDB actually reads at startup. You don’t need another copy inside your project.
+
+**Remark:** GDB automatically looks for initialization files in these locations (in order):
+
+* **`~/.gdbinit`**: Your global config (always loaded, no matter what directory or project you're in).
+* **`.gdbinit` in the current working directory**: Optional, only loaded if present and you've allowed it (`set auto-load local-gdbinit on`).
+
+Since you already copied the dashboard into your home directory, GDB will always load it automatically, anywhere — including inside your KYBER project, or any other RISC-V project.
+
+<details>
+  
+<summary>
+  
+Sanity checks:
+
+</summary>
+
+```bash
+echo ~/.gdbinit
+```
+
+Output:
+
+```bash
+/home/catalin-ubuntu/.gdbinit
+```
+
+</details>
+
+---
+
+## 3) Testing gdb dashboard
 
 
 </details>
