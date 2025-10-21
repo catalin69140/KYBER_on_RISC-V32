@@ -133,5 +133,6 @@ Output:
 
 ## 3) Testing gdb dashboard
 
+Go into **test-freestanding** or **testfreestanding2** folder and follow the instructions.
 
 </details>
