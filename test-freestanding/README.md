@@ -82,7 +82,7 @@ riscv32-unknown-elf-gdb ./prog
 Then type this inside that terminal and press enter:
 
 ```bash
-target remote :1234
+target remote:1234
 ```
 
 > To stop gdb: q
