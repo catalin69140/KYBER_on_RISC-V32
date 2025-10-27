@@ -1,0 +1,46 @@
+make world
+
+winans@x570:~/projects/riscv/riscv-toolchain-install-guide/test-freestanding$ make world
+rm -f prog prog.lst  *.o *.s *.lst *.bin *.srec
+riscv32-unknown-elf-gcc -Wall -Werror -g -Wcast-align -ffreestanding  -fno-pic -O2  -march=rv32ima -mabi=ilp32 -c -o crt0.o crt0.S
+riscv32-unknown-elf-gcc -Wall -Werror -g -Wcast-align -ffreestanding  -fno-pic -O2  -nostdlib -Wl,-T,vanilla.ld -march=rv32ima -mabi=ilp32 -o prog crt0.o -lc -lgcc
+riscv32-unknown-elf-size -A -x prog
+prog  :
+section              size         addr
+.text                0x30   0x80000000
+.rodata               0xe   0x80000030
+.eh_frame            0x2c   0x80000040
+.riscv.attributes    0x28          0x0
+.debug_line          0x82          0x0
+.debug_line_str      0x38          0x0
+.debug_info          0x24          0x0
+.debug_abbrev        0x14          0x0
+.debug_aranges       0x20          0x0
+.debug_str           0x46          0x0
+Total               0x1ea
+
+
+riscv32-unknown-elf-objdump -Mnumeric,no-aliases -dr prog > prog.lst
+
+
+A super simple freestanding RV32I app that is suitable for verifying a toolchain & qemu installation.
+
+
+## Run with one hart like this:
+
+qemu-system-riscv32 -machine virt -m 128M -bios none -device loader,file=./prog -nographic -s
+
+
+## Note that qemu will set the PC register to the load address of 'prog'.
+## To stop qemu: ^A x
+
+
+# run qemu with -S to make it wait for gdb to attach before it starts running:
+
+qemu-system-riscv32 -machine virt -m 128M -bios none -device loader,file=./prog -nographic -s -S
+
+
+# Then run gdb like this:
+
+riscv32-unknown-elf-gdb ./prog
+target remote :1234
