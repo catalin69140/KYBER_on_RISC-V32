@@ -1,6 +1,6 @@
 This directory contains a **freestanding test harness** that boots directly on QEMU or real RISC-V hardware (no OS, no libc).  
 
-> For now it runs some simple test wich should pass if everything was installed correctly. It can be changed later on for verifying cryptographic primitives and core functions — such as the Kyber algorithm — at the **machine level**. 
+> For now it runs some simple tests wich should pass if everything was installed correctly. It can be changed later on for verifying cryptographic primitives and core functions — such as the Kyber algorithm — at the **machine level**. 
 
 ---
 
