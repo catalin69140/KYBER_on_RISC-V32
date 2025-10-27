@@ -1,41 +1,40 @@
+ARCH	=	riscv32-unknown-elf
 
-ARCH=riscv32-unknown-elf
 
+CC	=	$(ARCH)-gcc
+CXX	=	$(ARCH)-g++
+AS	=	$(ARCH)-as
+LD	=	$(ARCH)-ld
+OBJCOPY	=	$(ARCH)-objcopy
+OBJDUMP	=	$(ARCH)-objdump
+SIZE	=	$(ARCH)-size
+AR		=	$(ARCH)-ar
+RANLIB	=	$(ARCH)-ranlib
 
-CC=$(ARCH)-gcc
-CXX=$(ARCH)-g++
-AS=$(ARCH)-as
-LD=$(ARCH)-ld
-OBJCOPY=$(ARCH)-objcopy
-OBJDUMP=$(ARCH)-objdump
-SIZE=$(ARCH)-size
-AR=$(ARCH)-ar
-RANLIB=$(ARCH)-ranlib
+MARCH	=	rv32im_zicsr_zifencei
+MABI	=	ilp32
 
-MARCH=rv32ima
-MABI=ilp32
+CFLAGS	+=	-Wall -Werror
+CFLAGS	+=	-g
+CFLAGS	+=	-Wcast-align
 
-CFLAGS+=-Wall -Werror
-CFLAGS+=-g
-CFLAGS+=-Wcast-align
+CFLAGS	+=	-ffreestanding 
+CFLAGS	+=	-fno-pic
+#CFLAGS	+=	-fomit-frame-pointer
 
-CFLAGS+=-ffreestanding 
-CFLAGS+=-fno-pic
-#CFLAGS+=-fomit-frame-pointer
+TARGET_ARCH	+=	-march=$(MARCH)
+TARGET_ARCH	+=	-mabi=$(MABI)
 
-TARGET_ARCH+=-march=$(MARCH)
-TARGET_ARCH+=-mabi=$(MABI)
+LDFLAGS	+=	-nostdlib
 
-LDFLAGS+=-nostdlib
+ASFLAGS	+=	$(CFLAGS)
+ASFLAGS	+=	-Wa,-alh=$@.lst,-L
 
-ASFLAGS+=$(CFLAGS)
-ASFLAGS+=-Wa,-alh=$@.lst,-L
+CLEAN_DIRS	=	$(SUBDIRS:%=clean-%)
+ALL_DIRS	=	$(SUBDIRS:%=all-%)
 
-CLEAN_DIRS=$(SUBDIRS:%=clean-%)
-ALL_DIRS=$(SUBDIRS:%=all-%)
-
-OBJDUMPFLAGS+=-Mnumeric,no-aliases
-OBJDUMPFLAGS+=-S
+OBJDUMPFLAGS	+=	-Mnumeric,no-aliases
+OBJDUMPFLAGS	+=	-S
 
 .PHONY: all clean world $(CLEAN_DIRS) $(ALL_DIRS)
 
