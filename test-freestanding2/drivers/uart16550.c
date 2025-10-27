@@ -21,7 +21,7 @@ void uart_puts(const char *s) {
 }
 
 
-static const char HEX[16] = "0123456789ABCDEF";
+static const char HEX[] = "0123456789ABCDEF";
 
 
 void uart_print_hex32(uint32_t v) {
