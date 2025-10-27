@@ -1,10 +1,10 @@
-A super simple freestanding RV32I app that is suitable for verifying the toolchain & qemu installation.
+A super simple freestanding RV32I app that is suitable for verifying the toolchain, gdb & qemu installation.
 
 It follows the example of [John Winans’](https://github.com/johnwinans/riscv-toolchain-install-guide) but with some modifications.
 
 Inside the **test-freestanding** folder:
 
-## Initialize
+## Initialize/Build
 
 ```bash
 make world
