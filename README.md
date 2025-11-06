@@ -9,7 +9,7 @@ It follows the structure of [John Winans’](https://github.com/johnwinans/riscv
 
 * **Toolchain & QEMU path:** `Kyber-Project/riscv/install/rv32i/bin`
 * **Project location:** `Kyber-Project/KYBER_on_RISC-V32`
-* **Default ISA/ABI:** `-march=rv32imac_zicsr`, `-mabi=ilp32`
+* **Default ISA/ABI:** `-march=rv32im`, `-mabi=ilp32`
 
 > To uninstall the toolchain, remove `Kyber-Project/riscv/`.
 > Your repo remains in `Kyber-Project/KYBER_on_RISC-V32`.
