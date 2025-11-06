@@ -37,7 +37,7 @@ PROGS=prog prog.lst
 # 'rv32im' is the base 32-bit integer ISA (I) plus integer multiplication/division (M).
 # '_zicsr' adds Control and Status Register (CSR) instructions.
 # '_zifencei' adds the Instruction Fence (FENCE.I) instruction for cache/pipeline synchronization.
-RISCV_ARCH ?= rv32im_zicsr_zifencei
+RISCV_ARCH ?= rv32im
 
 # Defines the Application Binary Interface (ABI).
 # 'ilp32' means Integer, Long, and Pointer types are all 32-bit.

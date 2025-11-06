@@ -11,7 +11,7 @@ SIZE	=	$(ARCH)-size
 AR		=	$(ARCH)-ar
 RANLIB	=	$(ARCH)-ranlib
 
-MARCH	=	rv32im_zicsr_zifencei
+MARCH	=	rv32im
 MABI	=	ilp32
 
 CFLAGS	+=	-Wall -Werror

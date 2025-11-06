@@ -14,26 +14,28 @@ Expected Output:
 
 ```bash
 catalin-ubuntu@catalin-ubuntu:~/Desktop/Kyber-Project/KYBER_on_RISC-V32/test-freestanding$ make world
+# Remove executables (*.o) and intermediate/listing files.
 rm -f prog prog.lst *.o *.s *.lst
-riscv32-unknown-elf-gcc -Wall -Werror -g -Wcast-align -ffreestanding  -fno-pic -O2 -march=rv32im_zicsr -mabi=ilp32 -Wa,-alh=crt0.o.lst,-L -march=rv32im_zicsr -mabi=ilp32   -c -o crt0.o crt0.S
-riscv32-unknown-elf-gcc -Wall -Werror -g -Wcast-align -ffreestanding  -fno-pic -O2 -march=rv32im_zicsr -mabi=ilp32  -nostdlib -Wl,-T,vanilla.ld -march=rv32im_zicsr -mabi=ilp32 -march=rv32im_zicsr -mabi=ilp32 -o prog crt0.o -lc -lgcc
-/home/catalin-ubuntu/Desktop/Kyber-Project/riscv/install/rv32i/lib/gcc/riscv32-unknown-elf/15.1.0/../../../../riscv32-unknown-elf/bin/ld: warning: prog has a LOAD segment with RWX permissions
+riscv32-unknown-elf-gcc -Wall -Werror -g -Wcast-align -ffreestanding  -fno-pic -O2 -march=rv32im -mabi=ilp32 -Wa,-alh=crt0.o.lst,-L -march=rv32im -mabi=ilp32   -c -o crt0.o crt0.S
+# The default link command (LINK.c) creates the executable.
+# prog: target name (prog); crt0.o: prerequisites (crt0.o + others); -lc -lgcc: linked libraries.
+riscv32-unknown-elf-gcc -Wall -Werror -g -Wcast-align -ffreestanding  -fno-pic -O2 -march=rv32im -mabi=ilp32  -nostdlib -Wl,-T,vanilla.ld -march=rv32im -mabi=ilp32 -march=rv32im -mabi=ilp32 -o prog crt0.o -lc -lgcc
+# Use 'size' to output the size of the text, data, and bss sections.
+# -A: print in SysV format; -x: print in hex. This helps create the prog.lst file.
 riscv32-unknown-elf-size -A -x prog
 prog  :
-section               size         addr
-.text                 0x30   0x80000000
-.rodata                0xe   0x80000030
-.eh_frame             0x28   0x80000040
-.data                0xf98   0x80000068
-.bss                   0x0   0x80001000
-.riscv.attributes     0x35          0x0
-.debug_line           0x82          0x0
-.debug_line_str       0x56          0x0
-.debug_info           0x24          0x0
-.debug_abbrev         0x14          0x0
-.debug_aranges        0x20          0x0
-.debug_str            0x62          0x0
-Total               0x11c5
+section              size         addr
+.text                0x24   0x80000000
+.rodata               0xe   0x80000030
+.eh_frame            0x28   0x80000040
+.riscv.attributes    0x28          0x0
+.debug_line          0x70          0x0
+.debug_line_str      0x56          0x0
+.debug_info          0x24          0x0
+.debug_abbrev        0x14          0x0
+.debug_aranges       0x20          0x0
+.debug_str           0x62          0x0
+Total               0x202
 
 
 riscv32-unknown-elf-objdump -Mnumeric,no-aliases -S -dr prog > prog.lst
