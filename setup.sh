@@ -6,51 +6,131 @@
 #   One-command bootstrap for this repo on Ubuntu:
 #     1) Install host dependencies (idempotent).
 #     2) Initialize & update submodules to pinned commits.
-#     3) Build and install the rv32i GNU toolchain + QEMU next to this project.
-#     4) PATH WIRING
+#     3) Build and install rv32i and/or rv64i GNU toolchains + QEMU.
+#     4) PATH wiring (adds/removes arch-specific bin dirs).
 #
 # Usage
-#   ./setup.sh                   # installs to $HOME/Kyber-Project/riscv/install/rv32i
-#   ./setup.sh /custom/prefix    # installs to /custom/prefix
-#
-# Result
-#   Tool binaries at:  $INSTALL_DIR/bin
-#   e.g. riscv32-unknown-elf-gcc, qemu-system-riscv32
+#   ./setup.sh                          # build both rv32 & rv64 into default base
+#   ./setup.sh --only-rv32              # build only rv32
+#   ./setup.sh --only-rv64              # build only rv64
+#   ./setup.sh --delete-rv32            # remove rv32 install and PATH line
+#   ./setup.sh --delete-rv64            # remove rv64 install and PATH line
+#   ./setup.sh --delete-all             # remove both installs and PATH lines
+#   ./setup.sh /custom/prefix           # base prefix (contains rv32i/ and rv64i/)
+#   ./setup.sh --prefix=/custom/prefix  # same as above
 # -----------------------------------------------------------------------------
 
 set -Eeuo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
-DEFAULT_PREFIX="$(cd "$REPO_ROOT/.." && pwd)/riscv/install/rv32i"
+DEFAULT_BASE_PREFIX="$(cd "$REPO_ROOT/.." && pwd)/riscv/install"
 
-# Choose install dir: arg > PREFIX env > default
-if [[ $# -ge 1 && -n "${1:-}" ]]; then
-  INSTALL_DIR="$1"
-else
-  INSTALL_DIR="${PREFIX:-$DEFAULT_PREFIX}"
+# -------- arg parse --------
+INSTALL_BASE=""
+ONLY=""
+DELETE_MODE=""
+
+print_usage() {
+  sed -n '1,200p' "$0" | sed -n '1,35p'
+  cat <<USAGE
+
+Options:
+  --only-rv32            Build only rv32
+  --only-rv64            Build only rv64
+  --delete-rv32          Delete rv32 install and PATH line
+  --delete-rv64          Delete rv64 install and PATH line
+  --delete-all           Delete both installs and PATH lines
+  --prefix=/path         Set base install directory (contains rv32i/ and rv64i/)
+  -h, --help             Show this help
+USAGE
+}
+
+for arg in "$@"; do
+  case "$arg" in
+    --only-rv32) ONLY="rv32" ;;
+    --only-rv64) ONLY="rv64" ;;
+    --delete-rv32|--delete-rv64|--delete-all) DELETE_MODE="$arg" ;;
+    --prefix=*) INSTALL_BASE="${arg#--prefix=}" ;;
+    -h|--help) print_usage; exit 0 ;;
+    --*) echo "Unknown option: $arg"; print_usage; exit 2 ;;
+    *)  # positional base prefix
+        [[ -z "$INSTALL_BASE" ]] && INSTALL_BASE="$arg" || { echo "Unexpected arg: $arg"; exit 2; }
+        ;;
+  esac
+done
+
+if [[ -z "${INSTALL_BASE:-}" ]]; then
+  INSTALL_BASE="${PREFIX:-$DEFAULT_BASE_PREFIX}"
 fi
 
-# Determine parallelism
+RV32_DIR="$INSTALL_BASE/rv32i"
+RV64_DIR="$INSTALL_BASE/rv64i"
+
+# Determine parallelism (used for submodule jobs)
 if command -v nproc >/dev/null 2>&1; then
   JOBS="$(nproc)"
 else
   JOBS=4
 fi
 
-echo "[setup] Will install into: $INSTALL_DIR"
+# -------- helpers --------
+remove_path_line() {
+  local dir="$1"
+  local line="export PATH=\"$dir/bin:\$PATH\""
+  if [[ -f "$HOME/.bashrc" ]]; then
+    if grep -qxF "$line" "$HOME/.bashrc"; then
+      # Remove exact matching line
+      sed -i.bak "\|^$(printf '%s' "$line" | sed 's/[^^]/[&]/g; s/\^/\\^/g')\$|d" "$HOME/.bashrc"
+      echo "[setup] Removed PATH line for $dir from ~/.bashrc"
+    fi
+  fi
+}
+
+delete_tree() {
+  local dir="$1"
+  if [[ -d "$dir" ]]; then
+    rm -rf "$dir"
+    echo "[setup] Deleted: $dir"
+  else
+    echo "[setup] Skip delete (not found): $dir"
+  fi
+}
+
+# -------- delete modes --------
+if [[ -n "$DELETE_MODE" ]]; then
+  echo "[setup] Delete mode requested: $DELETE_MODE"
+  case "$DELETE_MODE" in
+    --delete-rv32)
+      delete_tree "$RV32_DIR"
+      remove_path_line "$RV32_DIR"
+      ;;
+    --delete-rv64)
+      delete_tree "$RV64_DIR"
+      remove_path_line "$RV64_DIR"
+      ;;
+    --delete-all)
+      delete_tree "$RV32_DIR"
+      delete_tree "$RV64_DIR"
+      remove_path_line "$RV32_DIR"
+      remove_path_line "$RV64_DIR"
+      ;;
+  esac
+  echo "[setup] Done (delete mode). Open a new shell or run: source ~/.bashrc"
+  exit 0
+fi
+
+echo "[setup] Will install into:"
+if [[ -z "$ONLY" || "$ONLY" == "rv32" ]]; then echo "        - rv32: $RV32_DIR"; fi
+if [[ -z "$ONLY" || "$ONLY" == "rv64" ]]; then echo "        - rv64: $RV64_DIR"; fi
 
 # 1) Deps
 echo "[1/4] Installing OS dependencies..."
 "$REPO_ROOT/installdeps-gnu.sh"
 
-# 2) Sources (submodules or shallow clones)
+# 2) Sources
 echo "[2/4] Ensuring sources exist..."
-
-# Always sync submodule URLs/config (prevents stale/renamed issues)
 git submodule sync --recursive
 
-# Optional: flag to force HTTPS remotes for submodules (CI or no SSH keys)
-#   Use: FORCE_HTTPS=1 ./setup.sh
 if [[ "${FORCE_HTTPS:-0}" == "1" ]]; then
   echo "[setup] Rewriting submodule URLs to HTTPS locally…"
   git -c protocol.file.allow=always submodule foreach --recursive '
@@ -61,14 +141,12 @@ if [[ "${FORCE_HTTPS:-0}" == "1" ]]; then
       echo "  - $name: $url -> $https_url"
     fi
   ' || true
-  # Re-sync after rewriting
   git submodule sync --recursive
 fi
 
-# Diagnostic: warn if a submodule’s configured branch doesn’t exist upstream
 echo "[setup] Checking submodule branch tracking…"
 while IFS=$'\n' read -r line; do
-  key="${line%% *}"; branch="${line#* }"                 # key like submodule.X.branch
+  key="${line%% *}"; branch="${line#* }"
   base="${key%.branch}"
   path="$(git config -f .gitmodules "$base.path" || true)"
   [[ -z "$path" ]] && continue
@@ -76,35 +154,47 @@ while IFS=$'\n' read -r line; do
     ( cd "$path"
       git fetch origin --prune >/dev/null 2>&1 || true
       if ! git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
-        echo "[warn] Submodule '$path' tracks '$branch' but origin/$branch not found. --remote may fail; will fall back to pinned commit."
+        echo "[warn] Submodule '$path' tracks '$branch' but origin/$branch not found. Falling back to pinned commit if needed."
       fi
     )
   fi
 done < <(git config -f .gitmodules --get-regexp '^submodule\..*\.branch' || true)
 
-# Try to pull latest upstream first; if that fails, fall back to pinned commits.
 echo "[setup] Updating submodules to latest upstream (with fallback)…"
 if ! git submodule update --init --recursive --remote --jobs="$JOBS"; then
-  echo "[setup] --remote failed (likely missing/renamed branch). Falling back to pinned commits…"
-  # Clean half-updated states (best effort)
+  echo "[setup] --remote failed. Falling back to pinned commits…"
   git submodule deinit -f --all || true
   git submodule update --init --recursive --jobs="$JOBS"
 fi
 
-# Show final status markers: ' ' ok, '-' uninit, '+' different commit, 'U' conflict
 echo "[setup] Submodule status:"
 git submodule status --recursive || true
 
-# 3) Build
-echo "[3/4] Building toolchain + QEMU..."
-"$REPO_ROOT/buildall-gnu.sh" "$INSTALL_DIR"
+# 3) Build (filters passed through)
+echo "[3/4] Building toolchains + QEMU…"
+BUILD_ARGS=("$INSTALL_BASE")
+[[ "$ONLY" == "rv32" ]] && BUILD_ARGS+=("--only-rv32")
+[[ "$ONLY" == "rv64" ]] && BUILD_ARGS+=("--only-rv64")
+"$REPO_ROOT/buildall-gnu.sh" "${BUILD_ARGS[@]}"
 
 # 4) PATH wiring
 echo "[4/4] Updating PATH in ~/.bashrc (idempotent)..."
-PATH_LINE="export PATH=\"$INSTALL_DIR/bin:\$PATH\""
-grep -qxF "$PATH_LINE" "$HOME/.bashrc" || echo "$PATH_LINE" >> "$HOME/.bashrc"
-export PATH="$INSTALL_DIR/bin:$PATH"
+added_any=0
+if [[ -z "$ONLY" || "$ONLY" == "rv32" ]]; then
+  RV32_LINE="export PATH=\"$RV32_DIR/bin:\$PATH\""
+  grep -qxF "$RV32_LINE" "$HOME/.bashrc" || { echo "$RV32_LINE" >> "$HOME/.bashrc"; added_any=1; }
+  export PATH="$RV32_DIR/bin:$PATH"
+fi
+if [[ -z "$ONLY" || "$ONLY" == "rv64" ]]; then
+  RV64_LINE="export PATH=\"$RV64_DIR/bin:\$PATH\""
+  grep -qxF "$RV64_LINE" "$HOME/.bashrc" || { echo "$RV64_LINE" >> "$HOME/.bashrc"; added_any=1; }
+  export PATH="$RV64_DIR/bin:$PATH"
+fi
 
 echo
 echo "[setup] Done."
-echo "Open a new shell or run: source ~/.bashrc"
+[[ "$added_any" == "1" ]] && echo "Open a new shell or run: source ~/.bashrc"
+echo
+echo "Verify:"
+[[ -z "$ONLY" || "$ONLY" == "rv32" ]] && echo "  which riscv32-unknown-elf-gcc && which qemu-system-riscv32"
+[[ -z "$ONLY" || "$ONLY" == "rv64" ]] && echo "  which riscv64-unknown-elf-gcc && which qemu-system-riscv64"
