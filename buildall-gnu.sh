@@ -136,4 +136,5 @@ $([[ -z "$ONLY" || "$ONLY" == "rv64" ]] && echo "  export PATH=\"$RV64_INSTALL/b
 Then verify:
 $([[ -z "$ONLY" || "$ONLY" == "rv32" ]] && echo "  which riscv32-unknown-elf-gcc && which qemu-system-riscv32")
 $([[ -z "$ONLY" || "$ONLY" == "rv64" ]] && echo "  which riscv64-unknown-elf-gcc && which qemu-system-riscv64")
+
 EOF
