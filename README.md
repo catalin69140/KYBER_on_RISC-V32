@@ -31,8 +31,10 @@ For MacOS at the moment I do not have a solution on how to run it as there were 
 
 As a temporary solution is to run Ubuntu VM on MacOS:
 - [install UTM](https://mac.getutm.app/)
-- [Ubuntu Server for ARM](https://ubuntu.com/download/server/arm) / [Ubuntu Server for Intel](https://ubuntu.com/download/server#architectures)
+- [Ubuntu Desktop for ARM](https://ubuntu.com/download/desktop) / [Ubuntu Server for ARM](https://ubuntu.com/download/server/arm) / [Ubuntu Server for Intel](https://ubuntu.com/download/server#architectures)
 - look for a youtube video for a detailed set-up instructions
+
+> Note: For the server version you need to disable the gpu if you want to use a code editor.
 
 </details>
 
@@ -88,10 +90,12 @@ Follow the next sections in order.
 From the repo root:
 
 ```bash
-./setup.sh
+./setup.sh --only-rv32
 ```
 
-> Note that this can take the better part of an hour or more to complete!
+> Note: If you want to install also the rv64 version look for the commands in setup.sh file.
+
+> Warning: This can take the better part of an hour or more to complete!
 
 This will:
 
