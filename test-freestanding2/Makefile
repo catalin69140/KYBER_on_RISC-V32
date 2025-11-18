@@ -40,7 +40,7 @@ OBJ := $(patsubst %.c,$(BUILD)/%.o,$(SRC_C)) $(patsubst %.S,$(BUILD)/%.o,$(SRC_S
 .PHONY: all clean run run-gdb dump
 
 
-all: $(BUILD)/$(PROJECT).elf $(BUILD)/$(PROJECT).bin
+all: $(BUILD)/$(PROJECT) $(BUILD)/$(PROJECT).bin
 
 
 $(BUILD):
@@ -53,16 +53,16 @@ $(BUILD)/%.o: %.c | $(BUILD)
 $(BUILD)/%.o: %.S | $(BUILD)
 	$(AS) $(ASFLAGS) -c $< -o $@
 
-$(BUILD)/$(PROJECT).elf: $(OBJ) linker.ld | $(BUILD)
+$(BUILD)/$(PROJECT): $(OBJ) linker.ld | $(BUILD)
 	$(LD) $(CFLAGS) $(OBJ) -o $@ $(LDFLAGS)
 
-$(BUILD)/$(PROJECT).bin: $(BUILD)/$(PROJECT).elf
+$(BUILD)/$(PROJECT).bin: $(BUILD)/$(PROJECT)
 	$(OBJCOPY) -O binary $< $@
 
-run: $(BUILD)/$(PROJECT).elf
+run: $(BUILD)/$(PROJECT)
 	qemu-system-riscv32 -M virt -nographic -bios none -kernel $<
 
-run-gdb: $(BUILD)/$(PROJECT).elf
+run-gdb: $(BUILD)/$(PROJECT)
 	qemu-system-riscv32 -M virt -nographic -bios none -kernel $< -S -gdb tcp::1234
 
 
@@ -87,5 +87,5 @@ format:
 
 
 dump: 		
-	$(BUILD)/$(PROJECT).elf
+	$(BUILD)/$(PROJECT)
 	$(OBJDUMP) -d $< | less
