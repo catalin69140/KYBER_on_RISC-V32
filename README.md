@@ -179,6 +179,47 @@ virt                 RISC-V VirtIO board
 
 </details>
 
+<details>
+  
+<summary>
+  
+DejaGnu git server Error Fix
+
+</summary>
+
+Error message:
+
+```bash
+From https://github.com/bminor/binutils-gdb
+ * branch 2bc7af1ff7732451b6a7b09462a815c3284f9613 -> FETCH_HEAD
+Submodule path 'riscv-gnu-toolchain/binutils': checked out '2bc7af1ff7732451b6a7b09462a815c3284f9613'
+error: Server does not allow request for unadvertised object 98d75813f06ff2b0bb0d721558fce51db7e9ca6e
+fatal: Fetched in submodule path 'riscv-gnu-toolchain/dejagnu', but it did not contain 98d75813f06ff2b0bb0d721558fce51db7e9ca6e. Direct fetching of that commit failed.
+fatal: Failed to recurse into submodule path 'riscv-gnu-toolchain'
+```
+
+Fix:
+
+```bash
+cd riscv-gnu-toolchain
+
+# 1. Point the dejagnu submodule to the Google mirror instead of Savannah
+git config -f .gitmodules submodule.dejagnu.url https://gnu.googlesource.com/dejagnu
+git submodule sync dejagnu
+
+# 2. Actually fetch & checkout the dejagnu submodule at the required commit
+git submodule update --init --recursive -f dejagnu
+
+# (Optionally: update other submodules again if you want)
+git submodule update --init --recursive -f
+
+cd ..
+# Now rerun your setup
+./setup.sh
+```
+
+</details>
+
 ---
 
 ## 2) Seting up gdb dashboard
