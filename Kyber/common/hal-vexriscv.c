@@ -42,19 +42,16 @@ static void uart_write(Uart_Reg* reg, uint32_t data)
 void hal_send_str(const char* in)
 {
   const char* cur = in;
-  while(*cur) {
+  while (*cur) {
     uart_write(UART, *cur);
     cur += 1;
   }
   uart_write(UART, '\n');
 }
 
-__attribute__((naked)) uint64_t hal_get_time(void)
+/* Stub time source for pure RV32IM: no CSR (mcycle) instructions used */
+uint64_t hal_get_time(void)
 {
-#define LE "\n\t"
-  asm volatile (LE"csrr a1, mcycleh"
-                LE"csrr a0, mcycle"
-                LE"csrr a2, mcycleh"
-                LE"bne a1, a2, hal_get_time"
-                LE"ret");
+  static uint64_t counter = 0;
+  return counter++;
 }

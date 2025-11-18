@@ -1,5 +1,5 @@
 # Use global RISC-V configuration
-include ../riscv_config.mk
+include riscv_config.mk
 
 # C Flags that must be used for the Murax SoC
 VEXRISCV_CFLAGS += $(RISCV_ARCHFLAGS)
@@ -8,7 +8,7 @@ VEXRISCV_CFLAGS += -fstrict-volatile-bitfields
 
 VEXRISCV_PLATFORM ?= pqvexriscvup5k
 
-PLATFORM_BSP_DIR := $(dir $(lastword $(MAKEFILE_LIST)))bsp/vexriscv
+PLATFORM_BSP_DIR := common/bsp/vexriscv
 
 VEXRISCV_LINKERSCRIPT = $(PLATFORM_BSP_DIR)/$(VEXRISCV_PLATFORM).ld
 # LD Flags that must be used to link executables for the Murax SoC

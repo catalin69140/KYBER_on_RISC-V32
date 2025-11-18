@@ -11,7 +11,20 @@ import statistics
 from datetime import datetime
 
 
-logging.basicConfig(level=logging.DEBUG)
+# === Logging Setup ===
+LOGFILE = os.path.join(os.path.dirname(__file__), "..", "kyber_debug.log")
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[
+        logging.FileHandler(LOGFILE, mode='w'),  # write log file in Kyber root
+        logging.StreamHandler()  # keep printing to console as well
+    ]
+)
+
+logging.getLogger(__name__).info("Logging initialized. Log file: %s", LOGFILE)
+# =====================
 
 
 class Implementation(object):
@@ -104,27 +117,40 @@ class PlatformSettings(object):
     def __str__(self):
         return self.name
 
+
     def get_implementations(self, all=False):
-        """Get the schemes"""
-        try:
-            for (parent, scheme_folder, namespace) in self.scheme_folders:
-                for scheme in os.listdir(scheme_folder):
-                    scheme_path = os.path.join(scheme_folder, scheme)
-                    if not os.path.isdir(scheme_path):
+        impl_count = 0
+        for (parent, scheme_folder, namespace) in self.scheme_folders:
+            self.log.debug("Checking scheme_folder=%s (parent=%s, namespace=%s)",
+                           scheme_folder, parent, namespace)
+
+            if not os.path.isdir(scheme_folder):
+                self.log.debug("Skipping missing scheme_folder=%s", scheme_folder)
+                continue
+
+            for scheme in sorted(os.listdir(scheme_folder)):
+                scheme_path = os.path.join(scheme_folder, scheme)
+                if not os.path.isdir(scheme_path):
+                    continue
+
+                for implementation_path in sorted(os.listdir(scheme_path)):
+                    path = os.path.join(scheme_path, implementation_path)
+                    if not os.path.isdir(path):
                         continue
-                    for implementation_path in os.listdir(scheme_path):
-                        path = os.path.join(scheme_path,
-                                            implementation_path)
-                        if not os.path.isdir(path):
-                            continue
-                        impl = Implementation.from_path(parent, path, namespace, self.makeflags)
-                        if not all and self.should_skip(impl):
-                            continue
-                        yield impl
-        except FileNotFoundError as e:
-            raise Exception(
-                "There is no bin/ folder. Please first make binaries."
-            ) from e
+
+                    impl = Implementation.from_path(parent, path, namespace, self.makeflags)
+                    impl_count += 1
+                    self.log.debug("Found implementation #%d: %s (%s)",
+                                   impl_count, impl.scheme, impl.implementation)
+
+                    if not all and self.should_skip(impl):
+                        self.log.debug("Skipping implementation due to skip_list: %s", impl)
+                        continue
+
+                    yield impl
+
+        self.log.debug("Total implementations discovered: %d", impl_count)
+
 
     def should_skip(self, impl):
         """Should this Implementation be skipped?"""

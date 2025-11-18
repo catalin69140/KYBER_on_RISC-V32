@@ -1,5 +1,5 @@
 # Use global RISC-V configuration
-include ../../riscv_config.mk
+include riscv_config.mk
 
 PLATFORM ?= murax
 

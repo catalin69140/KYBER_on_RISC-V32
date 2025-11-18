@@ -2,7 +2,7 @@
 #include "randombytes.h"
 #include "hal.h"
 
-//#include "poly.h"
+#include "poly.h"
 //#include "polyvec.h"
 
 #include <stdio.h>
@@ -43,8 +43,9 @@ unsigned char pk[MUPQ_CRYPTO_PUBLICKEYBYTES];
 unsigned char sendb[MUPQ_CRYPTO_CIPHERTEXTBYTES];
 unsigned char sk_a[MUPQ_CRYPTO_SECRETKEYBYTES];
 unsigned int stack_key_gen, stack_encaps, stack_decaps,stack_ntt,stack_intt;
-int16_t poly[256]; //my code
- 
+
+// int16_t poly[256]; //my code
+poly poly_local;
 
 #define FILL_STACK()                                                           \
   p = &a;                                                                      \
@@ -83,14 +84,14 @@ static int test_keys(void) {
 
   //NTT
    FILL_STACK()
-  poly_ntt(poly);
+  poly_ntt(&poly_local);
   CHECK_STACK()
   if(c >= canary_size) return -1;
   stack_ntt = c;
 
   //INTT
    FILL_STACK()
-  poly_invntt(poly);
+  poly_invntt(&poly_local);
   CHECK_STACK()
   if(c >= canary_size) return -1;
   stack_intt = c;

@@ -67,20 +67,22 @@ int main(void)
   t1 = hal_get_time();
   printcycles("decaps cycles: ", t1-t0);
 
- // NTT
-  int16_t poly[256];
-  poly_ntt(poly);
+  // NTT
+  // int16_t poly[256];
+  poly poly_local;
+  
+  poly_ntt(&poly_local);
   
   t0 = hal_get_time();
-  poly_ntt(poly);
+  poly_ntt(&poly_local);
   t1 = hal_get_time();
   printcycles("NTT cycles: ",t1-t0);
 
   // iNTT
-  poly_invntt(poly);
+  poly_invntt(&poly_local);
 
   t0 = hal_get_time();
-  poly_invntt(poly);
+  poly_invntt(&poly_local);
   t1 = hal_get_time();
   printcycles("iNTT: ",t1-t0);
 
