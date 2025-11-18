@@ -50,8 +50,18 @@ void hal_send_str(const char* in)
 }
 
 /* Stub time source for pure RV32IM: no CSR (mcycle) instructions used */
-uint64_t hal_get_time(void)
+// uint64_t hal_get_time(void)
+// {
+//   static uint64_t counter = 0;
+//   return counter++;
+// }
+
+__attribute__((naked)) uint64_t hal_get_time(void)
 {
-  static uint64_t counter = 0;
-  return counter++;
+#define LE "\n\t"
+  asm volatile (LE"csrr a1, mcycleh"
+                LE"csrr a0, mcycle"
+                LE"csrr a2, mcycleh"
+                LE"bne a1, a2, hal_get_time"
+                LE"ret");
 }

@@ -2,7 +2,7 @@
 RISCV_XLEN ?= 32
 
 ifeq ($(RISCV_XLEN),32)
-    RISCV_ARCH  := rv32im
+    RISCV_ARCH  := rv32im_zicsr
     RISCV_ABI   := ilp32
     CROSS_PREFIX := riscv32-unknown-elf
 else ifeq ($(RISCV_XLEN),64)
