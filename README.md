@@ -93,7 +93,7 @@ From the repo root:
 ./setup.sh --only-rv32
 ```
 
-> Note: If you want to install also the rv64 version look for the commands in setup.sh file.
+> Note: If you want to install also the rv64 version look for the commands in `setup.sh` file.
 
 > Warning: This can take the better part of an hour or more to complete!
 
