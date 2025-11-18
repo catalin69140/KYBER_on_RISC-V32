@@ -2,3 +2,10 @@
 /build/
 /*.map
 test-freestanding2/build/
+# Ignore Kyber build output folders
+Kyber/elf/
+Kyber/bin/
+Kyber/bin-host/
+Kyber/obj/
+Kyber/testvectors/
+Kyber/benchmarks/
