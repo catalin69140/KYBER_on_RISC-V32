@@ -1,7 +1,21 @@
 .gdb_history
 /build/
 /*.map
+
+# Ignore build output folders
+build-gnu-rv32i
+build-gnu-rv64i
+build-qemu-riscv32-softmmu
+build-qemu-riscv64-softmmu
+
+# Ignore build output from test-freestanding2
+test-freestanding/crt0.o
+test-freestanding/crt0.o.lst
+test-freestanding/prog
+
+# Ignore build output from test-freestanding
 test-freestanding2/build/
+
 # Ignore Kyber build output folders
 Kyber/elf/
 Kyber/bin/
