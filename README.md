@@ -198,24 +198,30 @@ fatal: Fetched in submodule path 'riscv-gnu-toolchain/dejagnu', but it did not c
 fatal: Failed to recurse into submodule path 'riscv-gnu-toolchain'
 ```
 
-Fix:
+Possible Fix:
 
 ```bash
 cd riscv-gnu-toolchain
 
-# 1. Point the dejagnu submodule to the Google mirror instead of Savannah
-git config -f .gitmodules submodule.dejagnu.url https://gnu.googlesource.com/dejagnu
-git submodule sync dejagnu
+# Make sure the submodule knows about its origin
+git remote -v   # should show https://github.com/riscv-collab/riscv-gnu-toolchain
+```
 
-# 2. Actually fetch & checkout the dejagnu submodule at the required commit
-git submodule update --init --recursive -f dejagnu
+```bash
+# Fetch latest upstream history
+git fetch origin
+```
 
-# (Optionally: update other submodules again if you want)
-git submodule update --init --recursive -f
+```bash
+# Move to the latest master (or main) from upstream
+git checkout master
+git pull origin master
+```
 
-cd ..
-# Now rerun your setup
-./setup.sh
+```bash
+# Clean previous build and start again
+./setup.sh --delete-rv32
+./setup.sh --only-rv32
 ```
 
 </details>
