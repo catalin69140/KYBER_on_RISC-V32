@@ -415,165 +415,198 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
         f.write("];\n")
 
         f.write(r"""
-        let viz = new Viz();
-        let edgeElements = [];
-        let currentIndex = -1;        // index of the "current" edge
-        let playingDirection = null;  // "forward" | "backward" | null
-        let speed = 1.0;
-        let panZoom = null;
-        let svgRoot = null;
-        let followLine = false;
+let viz = new Viz();
+let edgeElements = [];
+let currentIndex = -1;        // index of the "current" edge
+let playingDirection = null;  // "forward" | "backward" | null
+let speed = 1.0;
+let panZoom = null;
+let svgRoot = null;
+let followLine = false;
 
-        function setupGraphAnimation(svgElement) {
-        svgRoot = svgElement;
+function setupGraphAnimation(svgElement) {
+    svgRoot = svgElement;
 
-        // Enable pan/zoom with visible control icons
-        panZoom = svgPanZoom(svgElement, {
-            controlIconsEnabled: true,
-            zoomScaleSensitivity: 0.4
-        });
+    // Enable pan/zoom with visible control icons
+    panZoom = svgPanZoom(svgElement, {
+        controlIconsEnabled: true,
+        zoomScaleSensitivity: 0.4
+    });
 
-        // Map Graphviz edges by title "caller->callee"
-        const edgeGroupsByKey = {};
-        const edgeGroups = svgElement.querySelectorAll('g.edge');
-        edgeGroups.forEach(g => {
-            const titleEl = g.querySelector('title');
-            if (!titleEl) return;
-            const key = titleEl.textContent.trim();
-            edgeGroupsByKey[key] = g;
-        });
+    // Map Graphviz edges by title "caller->callee"
+    const edgeGroupsByKey = {};
+    const edgeGroups = svgElement.querySelectorAll('g.edge');
+    edgeGroups.forEach(g => {
+        const titleEl = g.querySelector('title');
+        if (!titleEl) return;
+        const key = titleEl.textContent.trim();
+        edgeGroupsByKey[key] = g;
+    });
 
-        // Build ordered edge elements and prepare stroke-dash animation
-        edgeElements = edgeOrder.map((key, idx) => {
-            const g = edgeGroupsByKey[key];
-            if (!g) return null;
-            const path = g.querySelector('path');
-            if (!path) return null;
+    // Build ordered edge elements and prepare stroke-dash animation
+    edgeElements = edgeOrder.map(key => {
+        const g = edgeGroupsByKey[key];
+        if (!g) return null;
+        const path = g.querySelector('path');
+        if (!path) return null;
 
-            const length = path.getTotalLength();
+        const length = path.getTotalLength();
 
-            // base style
-            path.setAttribute('stroke', '#aaaaaa');
-            path.setAttribute('stroke-width', '1.5');
-            path.setAttribute('fill', 'none');
+        // base style
+        path.setAttribute('stroke', '#aaaaaa');
+        path.setAttribute('stroke-width', '1.5');
+        path.setAttribute('fill', 'none');
 
-            // prepare for "draw line" animation
-            path.setAttribute('stroke-dasharray', length);
-            path.setAttribute('stroke-dashoffset', length);
+        // prepare for "draw line" animation
+        path.setAttribute('stroke-dasharray', length);
+        path.setAttribute('stroke-dashoffset', length);
 
-            return { key, group: g, path, length };
-        }).filter(e => e !== null);
+        return { key, group: g, path, length };
+    }).filter(e => e !== null);
 
-        // Initially: all grey + hidden
-        highlightEdges(-1);
+    // Initially: all grey + hidden
+    highlightEdges(-1);
 
-        // Hook up controls
-        const btnPlay = document.getElementById('btn-play');
-        const btnPlayBack = document.getElementById('btn-play-backward');
-        const btnPause = document.getElementById('btn-pause');
-        const btnPrev = document.getElementById('btn-prev');
-        const btnNext = document.getElementById('btn-next');
-        const speedSlider = document.getElementById('speed');
-        const speedValue = document.getElementById('speed-value');
-        const followCheckbox = document.getElementById('follow-line');
-        const zoomInBtn = document.getElementById('zoom-in');
-        const zoomOutBtn = document.getElementById('zoom-out');
-        const zoomResetBtn = document.getElementById('zoom-reset');
+    // Hook up controls
+    const btnPlay        = document.getElementById('btn-play');
+    const btnPlayBack    = document.getElementById('btn-play-backward');
+    const btnPause       = document.getElementById('btn-pause');
+    const btnPrev        = document.getElementById('btn-prev');
+    const btnNext        = document.getElementById('btn-next');
+    const speedSlider    = document.getElementById('speed');
+    const speedValue     = document.getElementById('speed-value');
+    const followCheckbox = document.getElementById('follow-line');
+    const zoomInBtn      = document.getElementById('zoom-in');
+    const zoomOutBtn     = document.getElementById('zoom-out');
+    const zoomResetBtn   = document.getElementById('zoom-reset');
 
-        btnPlay.onclick = () => {
-            // prevent stacking multiple forward runs
-            if (playingDirection !== null) return;
-            playingDirection = "forward";
-            runAnimationForward();
-        };
-        btnPlayBack.onclick = () => {
-            // prevent stacking multiple backward runs
-            if (playingDirection !== null) return;
-            playingDirection = "backward";
-            runAnimationBackward();
-        };
-        btnPause.onclick = () => {
-            playingDirection = null;
-        };
-        btnNext.onclick = () => {
-            playingDirection = null;
-            stepForward();
-        };
-        btnPrev.onclick = () => {
-            playingDirection = null;
-            stepBack();
-        };
+    btnPlay.onclick = () => {
+        // prevent stacking multiple forward runs
+        if (playingDirection !== null) return;
+        playingDirection = "forward";
+        runAnimationForward();
+    };
+    btnPlayBack.onclick = () => {
+        // prevent stacking multiple backward runs
+        if (playingDirection !== null) return;
+        playingDirection = "backward";
+        runAnimationBackward();
+    };
+    btnPause.onclick = () => {
+        playingDirection = null;
+    };
+    btnNext.onclick = () => {
+        playingDirection = null;
+        stepForward();
+    };
+    btnPrev.onclick = () => {
+        playingDirection = null;
+        stepBack();
+    };
 
-        speedSlider.oninput = () => {
-            speed = parseFloat(speedSlider.value);
-            speedValue.textContent = speed.toFixed(2) + "x";
-        };
+    speedSlider.oninput = () => {
+        speed = parseFloat(speedSlider.value);
+        speedValue.textContent = speed.toFixed(2) + "x";
+    };
 
-        followCheckbox.onchange = () => {
-            followLine = followCheckbox.checked;
-            // When enabling follow, immediately jump to current edge if any
-            if (followLine && currentIndex >= 0) {
-            focusOnEdge(currentIndex);
-            }
-        };
+    followCheckbox.onchange = () => {
+        followLine = followCheckbox.checked;
+        if (followLine && currentIndex >= 0) {
+        focusOnEdge(currentIndex);
+        }
+    };
 
-        if (zoomInBtn)  zoomInBtn.onclick  = () => { if (panZoom) panZoom.zoomIn(); };
-        if (zoomOutBtn) zoomOutBtn.onclick = () => { if (panZoom) panZoom.zoomOut(); };
-        if (zoomResetBtn) zoomResetBtn.onclick = () => { if (panZoom) panZoom.reset(); };
+    if (zoomInBtn)  zoomInBtn.onclick  = () => { if (panZoom) panZoom.zoomIn();  };
+    if (zoomOutBtn) zoomOutBtn.onclick = () => { if (panZoom) panZoom.zoomOut(); };
+    if (zoomResetBtn) zoomResetBtn.onclick = () => { if (panZoom) panZoom.reset(); };
+}
+
+// Move the camera so the midpoint of the given edge
+// is centered in the visible container.
+// Uses getScreenCTM + panBy (no centerOn / manual zoom math).
+function focusOnEdge(index) {
+    if (!followLine) return;
+    if (!panZoom || !svgRoot) return;
+    if (index < 0 || index >= edgeElements.length) return;
+
+    const e = edgeElements[index];
+    if (!e || !e.path) return;
+
+    try {
+        const path   = e.path;
+        const length = e.length;
+
+        // Midpoint of the edge in the path's coordinate system
+        const mid = path.getPointAtLength(length / 2);
+
+        // Need SVGPoint to transform to screen coordinates
+        if (!svgRoot.createSVGPoint) {
+            return; // give up gracefully on very old browsers
         }
 
-        // Jump camera to nicely frame the given edge (by index)
-        function focusOnEdge(index) {
-        if (!panZoom || !svgRoot) return;
-        if (index < 0 || index >= edgeElements.length) return;
-        const e = edgeElements[index];
+        const pt = svgRoot.createSVGPoint();
+        pt.x = mid.x;
+        pt.y = mid.y;
+
+        // Transform that point to *screen* coordinates using the element's CTM
+        const ctm = path.getScreenCTM();
+        if (!ctm || !pt.matrixTransform) {
+            return;
+        }
+        const screenPt = pt.matrixTransform(ctm);
+
+        // Compute the center of the visible graph container in screen coords
+        const container = document.getElementById('graph-container');
+        if (!container) return;
+        const rect = container.getBoundingClientRect();
+        const centerX = rect.left + rect.width  / 2;
+
+        // Shift the "target" point a bit *lower* than the true center.
+        // 0.25 = exact middle, tweak as you like (0.55, 0.65, etc.)
+        const verticalBias = 0.25;
+        const centerY = rect.top + rect.height * verticalBias;
+
+        // We want to move the SVG so that screenPt goes to (centerX, centerY).
+        const dx = centerX - screenPt.x;
+        const dy = centerY - screenPt.y;
+
+        // panBy expects deltas in screen pixels
+        panZoom.panBy({ x: dx, y: dy });
+    } catch (err) {
+        console.error("Error in focusOnEdge:", err);
+    }
+}
+
+
+// Color & dash state for all edges based on currentIndex
+//   - current edge (i == currentIndex): RED
+//   - previous edge (i == currentIndex - 1): BLUE
+//   - all others: GREY
+//   - edges < currentIndex-1: grey but drawn (dashoffset=0)
+//   - future edges > currentIndex: grey + hidden (dashoffset=length)
+function highlightEdges(idx) {
+    if (typeof idx === "number") {
+        currentIndex = idx;
+    }
+
+    edgeElements.forEach((e, i) => {
         if (!e || !e.path) return;
+        const path   = e.path;
+        const length = e.length;
 
-        try {
-            const path = e.path;
-            const bbox = path.getBBox();
-
-            const cx = bbox.x + bbox.width / 2;
-            const cy = bbox.y + bbox.height / 2;
-
-            // Optional: small zoom adjustment so the edge isn't too tiny/huge.
-            // We keep it simple: use current zoom, just center.
-            panZoom.centerOn(cx, cy);
-        } catch (err) {
-            // ignore occasional bbox issues
-        }
-        }
-
-        // Color & dash state for all edges based on currentIndex
-        // Rules:
-        //   - current edge (i == currentIndex): RED
-        //   - previous edge (i == currentIndex - 1): BLUE
-        //   - all others: GREY
-        //   - edges < currentIndex-1: grey but drawn (dashoffset=0)
-        //   - future edges > currentIndex: grey + hidden (dashoffset=length)
-        function highlightEdges(idx) {
-        if (typeof idx === "number") {
-            currentIndex = idx;
-        }
-
-        edgeElements.forEach((e, i) => {
-            if (!e || !e.path) return;
-            const path = e.path;
-            const length = e.length;
-
-            if (currentIndex < 0) {
+        if (currentIndex < 0) {
             // initial: all grey, not yet drawn
             path.setAttribute("stroke", "#aaaaaa");
             path.setAttribute("stroke-dashoffset", length);
-            } else if (i === currentIndex) {
+        } else if (i === currentIndex) {
             // current edge: red and fully drawn
             path.setAttribute("stroke", "#ff0000");
             path.setAttribute("stroke-dashoffset", 0);
-            } else if (i === currentIndex - 1) {
+        } else if (i === currentIndex - 1) {
             // immediate previous edge: blue and fully drawn
             path.setAttribute("stroke", "#3366ff");
             path.setAttribute("stroke-dashoffset", 0);
-            } else {
+        } else {
             // all other edges
             path.setAttribute("stroke", "#aaaaaa");
             if (i < currentIndex - 1) {
@@ -583,83 +616,84 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
                 // future edges: grey and hidden
                 path.setAttribute("stroke-dashoffset", length);
             }
-            }
-        });
         }
+    });
+}
 
-        function stepForward() {
-        if (edgeElements.length === 0) return;
-        if (currentIndex < edgeElements.length - 1) {
-            highlightEdges(currentIndex + 1);
-            if (followLine) focusOnEdge(currentIndex);
-        }
-        }
+function stepForward() {
+    if (edgeElements.length === 0) return;
+    if (currentIndex < edgeElements.length - 1) {
+        highlightEdges(currentIndex + 1);
+        focusOnEdge(currentIndex);
+    }
+}
 
-        function stepBack() {
-        if (edgeElements.length === 0) return;
-        if (currentIndex >= 0) {
-            highlightEdges(currentIndex - 1);
-            if (followLine && currentIndex >= 0) {
-            focusOnEdge(currentIndex);
-            }
-        }
-        }
+function stepBack() {
+    if (edgeElements.length === 0) return;
+    if (currentIndex > 0) {
+        highlightEdges(currentIndex - 1);
+        focusOnEdge(currentIndex);
+    } else if (currentIndex === 0) {
+        // go back to "no edge selected"
+        highlightEdges(-1);
+    }
+}
 
-        // Animate drawing (or undrawing) of a single edge
-        function animateEdge(index, direction, onDone) {
-        if (index < 0 || index >= edgeElements.length) {
-            onDone(false);
-            return;
-        }
-        const e = edgeElements[index];
-        if (!e || !e.path || !e.length) {
-            onDone(false);
-            return;
-        }
+// Animate drawing (or undrawing) of a single edge
+function animateEdge(index, direction, onDone) {
+    if (index < 0 || index >= edgeElements.length) {
+        onDone(false);
+        return;
+    }
+    const e = edgeElements[index];
+    if (!e || !e.path || !e.length) {
+        onDone(false);
+        return;
+    }
 
-        const path = e.path;
-        const length = e.length;
+    const path   = e.path;
+    const length = e.length;
 
-        const baseDuration = 900; // ms
-        const totalSteps = 40;
-        const interval = baseDuration / (speed * totalSteps);
-        let t = 0;
+    const baseDuration = 900; // ms
+    const totalSteps   = 40;
+    const interval     = baseDuration / (speed * totalSteps);
+    let t = 0;
 
-        // ensure current line is red while animating
-        path.setAttribute("stroke", "#ff0000");
-        path.setAttribute("stroke-dasharray", length);
+    // ensure current line is red while animating
+    path.setAttribute("stroke", "#ff0000");
+    path.setAttribute("stroke-dasharray", length);
 
-        // starting dashoffset depends on direction
-        if (direction === "forward") {
-            // draw from nothing -> full
-            path.setAttribute("stroke-dashoffset", length);
-        } else {
-            // backward: erase from full -> nothing
-            path.setAttribute("stroke-dashoffset", 0);
-        }
+    // starting dashoffset depends on direction
+    if (direction === "forward") {
+        // draw from nothing -> full
+        path.setAttribute("stroke-dashoffset", length);
+    } else {
+        // backward: erase from full -> nothing
+        path.setAttribute("stroke-dashoffset", 0);
+    }
 
-        let timer = setInterval(() => {
-            // stop if user changed direction or paused
-            if (playingDirection !== direction) {
+    const timer = setInterval(() => {
+        // stop if user changed direction or paused
+        if (playingDirection !== direction) {
             clearInterval(timer);
             onDone(false);
             return;
-            }
+        }
 
-            t++;
-            const alpha = t / totalSteps;
+        t++;
+        const alpha = t / totalSteps;
 
-            if (direction === "forward") {
+        if (direction === "forward") {
             // draw line progressively
             const offset = length * (1 - alpha);
             path.setAttribute("stroke-dashoffset", offset);
-            } else {
+        } else {
             // erase line progressively
             const offset = length * alpha;
             path.setAttribute("stroke-dashoffset", offset);
-            }
+        }
 
-            if (t >= totalSteps) {
+        if (t >= totalSteps) {
             clearInterval(timer);
 
             if (direction === "forward") {
@@ -671,71 +705,69 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
             }
 
             onDone(true);
-            }
-        }, interval);
         }
+    }, interval);
+}
 
-        function runAnimationForward() {
-        if (playingDirection !== "forward") return;
-        if (edgeElements.length === 0) {
-            playingDirection = null;
-            return;
-        }
-        const nextIndex = currentIndex + 1;
-        if (nextIndex >= edgeElements.length) {
-            playingDirection = null;
-            return;
-        }
-        // mark this as current (colors + dash state)
+function runAnimationForward() {
+    if (playingDirection !== "forward") return;
+    if (edgeElements.length === 0) {
+        playingDirection = null;
+        return;
+    }
+    const nextIndex = currentIndex + 1;
+    if (nextIndex >= edgeElements.length) {
+        playingDirection = null;
+        return;
+    }
+    // mark this as current (colors + dash state)
+    highlightEdges(nextIndex);
+    focusOnEdge(nextIndex);
+    animateEdge(nextIndex, "forward", (completed) => {
+        if (!completed || playingDirection !== "forward") return;
+        // keep states consistent: current red, previous blue, others grey
         highlightEdges(nextIndex);
-        if (followLine) focusOnEdge(nextIndex);
-        animateEdge(nextIndex, "forward", (completed) => {
-            if (!completed || playingDirection !== "forward") return;
-            // keep states consistent: current red, previous blue, others grey
-            highlightEdges(nextIndex);
-            setTimeout(runAnimationForward, 200);
-        });
-        }
+        setTimeout(runAnimationForward, 200);
+    });
+}
 
-        function runAnimationBackward() {
-        if (playingDirection !== "backward") return;
-        if (edgeElements.length === 0) {
-            playingDirection = null;
-            return;
-        }
-        if (currentIndex < 0) {
-            playingDirection = null;
-            return;
-        }
-        const idx = currentIndex;
-        // mark this as current
-        highlightEdges(idx);
-        if (followLine) focusOnEdge(idx);
-        animateEdge(idx, "backward", (completed) => {
-            if (!completed || playingDirection !== "backward") return;
-            // after erasing this edge, move one step back
-            highlightEdges(idx - 1);
-            setTimeout(runAnimationBackward, 200);
-        });
-        }
+function runAnimationBackward() {
+    if (playingDirection !== "backward") return;
+    if (edgeElements.length === 0) {
+        playingDirection = null;
+        return;
+    }
+    if (currentIndex < 0) {
+        playingDirection = null;
+        return;
+    }
+    const idx = currentIndex;
+    // mark this as current
+    highlightEdges(idx);
+    focusOnEdge(idx);
+    animateEdge(idx, "backward", (completed) => {
+        if (!completed || playingDirection !== "backward") return;
+        // after erasing this edge, move one step back
+        highlightEdges(idx - 1);
+        setTimeout(runAnimationBackward, 200);
+    });
+}
 
-        // Render graph with Viz.js
-        viz.renderSVGElement(dotSrc)
-        .then(function(svgElement) {
-            const container = document.getElementById('graph');
-            container.innerHTML = "";
-            container.appendChild(svgElement);
-            setupGraphAnimation(svgElement);
-        })
-        .catch(function(error) {
-            console.error(error);
-            const container = document.getElementById('graph');
-            container.textContent = "Error rendering graph: " + error;
-        });
-
-        </script>
-        """)
-
+// Render graph with Viz.js
+viz.renderSVGElement(dotSrc)
+    .then(function(svgElement) {
+        const container = document.getElementById('graph');
+        container.innerHTML = "";
+        container.appendChild(svgElement);
+        setupGraphAnimation(svgElement);
+    })
+    .catch(function(error) {
+        console.error(error);
+        const container = document.getElementById('graph');
+        container.textContent = "Error rendering graph: " + error;
+    });
+""")
+        f.write("</script>\n")
         f.write("</body>\n</html>\n")
 
     print(f"Wrote animated HTML to {html_path}")
