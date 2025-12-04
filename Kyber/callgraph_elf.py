@@ -336,21 +336,41 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
         f.write("<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\" />\n")
         f.write(f"<title>Call graph animation for {elf_name}</title>\n")
         f.write("<style>\n")
+
         f.write("html, body {\n")
         f.write("  margin: 0;\n")
         f.write("  padding: 0;\n")
         f.write("  height: 100%;\n")
         f.write("}\n")
+
         f.write("body {\n")
         f.write("  font-family: sans-serif;\n")
         f.write("  display: flex;\n")
         f.write("  flex-direction: column;\n")
         f.write("  height: 100vh;\n")
         f.write("}\n")
+
         f.write("#controls {\n")
         f.write("  padding: 8px 12px;\n")
         f.write("  border-bottom: 1px solid #ccc;\n")
+        f.write("  display: flex;\n")
+        f.write("  flex-wrap: wrap;\n")
+        f.write("  align-items: center;\n")
+        f.write("  gap: 6px;\n")
         f.write("}\n")
+
+        f.write("#controls button {\n")
+        f.write("  padding: 0.6em 1.1em;\n")   # bigger hit area
+        f.write("  font-size: 1rem;\n")
+        f.write("  border-radius: 6px;\n")
+        f.write("  border: 1px solid #555;\n")
+        f.write("  cursor: pointer;\n")
+        f.write("}\n")
+
+        f.write("#controls input[type=\"range\"] {\n")
+        f.write("  vertical-align: middle;\n")
+        f.write("}\n")
+
         f.write("#graph-container {\n")
         f.write("  flex: 1;\n")
         f.write("  width: 100%;\n")
@@ -359,6 +379,7 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
         f.write("  width: 100%;\n")
         f.write("  height: 100%;\n")
         f.write("}\n")
+        
         f.write("</style>\n</head>\n<body>\n")
 
         f.write(f"<h3>Call graph animation for <code>{elf_name}</code></h3>\n")
@@ -381,7 +402,7 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
         )
         f.write(
             '<label style="margin-left:10px;">'
-            '<input type="checkbox" id="follow-line"> Follow line'
+            '<input type="checkbox" id="follow-line"> Track Step'
             '</label>\n'
         )
         f.write(
@@ -413,6 +434,43 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
         for key in edge_keys:
             f.write(f'  "{_js_escape(key)}",\n')
         f.write("];\n")
+
+        # --- Zoom compensation for controls ---
+        f.write(r"""
+// Keep the control buttons readable when the user zooms the page
+let basePixelRatio = window.devicePixelRatio || 1;
+let baseControlsFontSize = null;
+
+function initZoomCompensation() {
+    const controls = document.getElementById('controls');
+    if (!controls) return;
+    const computed = window.getComputedStyle(controls);
+    baseControlsFontSize = parseFloat(computed.fontSize) || 14;
+}
+
+function applyZoomCompensation() {
+    const controls = document.getElementById('controls');
+    if (!controls || baseControlsFontSize === null) return;
+
+    const ratio = (window.devicePixelRatio || 1) / basePixelRatio;
+
+    // Extra boost factor so buttons get a bit larger than “exactly same size”
+    const extraBoost = 1.4;  // tweak: 1.2–1.8
+
+    // When zoom = 50% → ratio ~0.5 → 1/ratio = 2 → × extraBoost = 2.8
+    const scale = (1 / ratio) * extraBoost;
+
+    controls.style.fontSize = (baseControlsFontSize * scale) + "px";
+}
+
+window.addEventListener('load', () => {
+    initZoomCompensation();
+    applyZoomCompensation();
+});
+
+// devicePixelRatio usually changes on zoom and triggers resize
+window.addEventListener('resize', applyZoomCompensation);
+""")
 
         f.write(r"""
 let viz = new Viz();
