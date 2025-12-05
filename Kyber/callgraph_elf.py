@@ -313,6 +313,12 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
       - Animates edges in BFS-ish order from main
       - Provides Play/Pause, Step Back, Step Forward, Speed controls
       - Optional 'Follow line' that jumps the camera to each red edge
+      - Node interactions:
+          * Click a node to select/deselect it
+          * Outgoing edges of the selected node can be highlighted (green)
+          * Incoming edges of the selected node can be highlighted (blue)
+          * Highlighting is controlled by two checkboxes in the UI
+          * Double-click a node to start animation from its outgoing edges
     """
     order, _, _ = bfs_from_main(cg, root_func)
     if not order:
@@ -360,7 +366,7 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
         f.write("}\n")
 
         f.write("#controls button {\n")
-        f.write("  padding: 0.6em 1.1em;\n")   # bigger hit area
+        f.write("  padding: 0.6em 1.1em;\n")
         f.write("  font-size: 1rem;\n")
         f.write("  border-radius: 6px;\n")
         f.write("  border: 1px solid #555;\n")
@@ -385,7 +391,7 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
         f.write(f"<h3>Call graph animation for <code>{elf_name}</code></h3>\n")
         f.write(
             "<p>Layout and clusters match the Graphviz PNG. "
-            "Use the controls to animate calls from <code>main</code>.</p>\n"
+            "Use the controls to animate calls from <code>main</code> and explore neighbors of each function.</p>\n"
         )
 
         # Controls
@@ -403,6 +409,16 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
         f.write(
             '<label style="margin-left:10px;">'
             '<input type="checkbox" id="follow-line"> Track Step'
+            '</label>\n'
+        )
+        f.write(
+            '<label style="margin-left:10px;">'
+            '<input type="checkbox" id="highlight-outgoing" checked> Outgoing edges'
+            '</label>\n'
+        )
+        f.write(
+            '<label style="margin-left:10px;">'
+            '<input type="checkbox" id="highlight-incoming"> Incoming edges'
             '</label>\n'
         )
         f.write(
@@ -475,20 +491,26 @@ window.addEventListener('resize', applyZoomCompensation);
         f.write(r"""
 let viz = new Viz();
 let edgeElements = [];
-let currentIndex = -1;        // index of the "current" edge
+let currentIndex = -1;        // index of the "current" edge in animation order
 let playingDirection = null;  // "forward" | "backward" | null
 let speed = 1.0;
 let panZoom = null;
 let svgRoot = null;
 let followLine = false;
 
+// Node selection + neighbor highlighting state
+let selectedNode = null;
+let showOutgoing = true;
+let showIncoming = false;
+
 function setupGraphAnimation(svgElement) {
     svgRoot = svgElement;
 
-    // Enable pan/zoom with visible control icons
+    // Enable pan/zoom with visible control icons, but disable dbl-click zoom
     panZoom = svgPanZoom(svgElement, {
         controlIconsEnabled: true,
-        zoomScaleSensitivity: 0.4
+        zoomScaleSensitivity: 0.4,
+        dblClickZoomEnabled: false
     });
 
     // Map Graphviz edges by title "caller->callee"
@@ -502,7 +524,7 @@ function setupGraphAnimation(svgElement) {
     });
 
     // Build ordered edge elements and prepare stroke-dash animation
-    edgeElements = edgeOrder.map(key => {
+    edgeElements = edgeOrder.map((key, idx) => {
         const g = edgeGroupsByKey[key];
         if (!g) return null;
         const path = g.querySelector('path');
@@ -518,11 +540,13 @@ function setupGraphAnimation(svgElement) {
         // prepare for "draw line" animation
         path.setAttribute('stroke-dasharray', length);
         path.setAttribute('stroke-dashoffset', length);
+        path.setAttribute('data-base-color', '#aaaaaa');
+        path.setAttribute('data-discovered', '0'); // 0 = not discovered yet
 
         return { key, group: g, path, length };
     }).filter(e => e !== null);
 
-    // Initially: all grey + hidden
+    // Initially: nothing discovered
     highlightEdges(-1);
 
     // Hook up controls
@@ -537,6 +561,8 @@ function setupGraphAnimation(svgElement) {
     const zoomInBtn      = document.getElementById('zoom-in');
     const zoomOutBtn     = document.getElementById('zoom-out');
     const zoomResetBtn   = document.getElementById('zoom-reset');
+    const outgoingCheckbox = document.getElementById('highlight-outgoing');
+    const incomingCheckbox = document.getElementById('highlight-incoming');
 
     btnPlay.onclick = () => {
         // prevent stacking multiple forward runs
@@ -570,13 +596,82 @@ function setupGraphAnimation(svgElement) {
     followCheckbox.onchange = () => {
         followLine = followCheckbox.checked;
         if (followLine && currentIndex >= 0) {
-        focusOnEdge(currentIndex);
+            focusOnEdge(currentIndex);
         }
     };
 
     if (zoomInBtn)  zoomInBtn.onclick  = () => { if (panZoom) panZoom.zoomIn();  };
     if (zoomOutBtn) zoomOutBtn.onclick = () => { if (panZoom) panZoom.zoomOut(); };
     if (zoomResetBtn) zoomResetBtn.onclick = () => { if (panZoom) panZoom.reset(); };
+
+    if (outgoingCheckbox) {
+        showOutgoing = outgoingCheckbox.checked;
+        outgoingCheckbox.onchange = () => {
+            showOutgoing = outgoingCheckbox.checked;
+            updateNeighborHighlights();
+        };
+    }
+
+    if (incomingCheckbox) {
+        showIncoming = incomingCheckbox.checked;
+        incomingCheckbox.onchange = () => {
+            showIncoming = incomingCheckbox.checked;
+            updateNeighborHighlights();
+        };
+    }
+
+    // Make nodes clickable: select/deselect symbol
+    const nodes = svgElement.querySelectorAll('g.node');
+    nodes.forEach(node => {
+        const titleEl = node.querySelector('title');
+        if (!titleEl) return;
+        const sym = titleEl.textContent.trim();
+
+        node.style.cursor = 'pointer';
+
+        // Single-click: select node for incoming/outgoing highlighting
+        node.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            if (selectedNode === sym) {
+                selectedNode = null;
+            } else {
+                selectedNode = sym;
+            }
+            updateNeighborHighlights();
+        });
+
+        // Double-click: continue animation from this node's outgoing edges
+        node.addEventListener('dblclick', (ev) => {
+            ev.stopPropagation();
+            ev.preventDefault();
+            continueFromNode(sym);
+        });
+    });
+}
+
+// Double-click helper: find first edge with this node as caller,
+// jump animation to just before it, and start playing forward.
+function continueFromNode(sym) {
+    if (!edgeElements.length) return;
+
+    let idx = -1;
+    for (let i = 0; i < edgeElements.length; i++) {
+        const e = edgeElements[i];
+        if (!e || !e.key) continue;
+        if (e.key.startsWith(sym + "->")) {
+            idx = i;
+            break;
+        }
+    }
+    if (idx === -1) {
+        return; // no outgoing edges from this symbol
+    }
+
+    // Apply one step forward from this node:
+    // make that edge the current one (red), but don't start animation.
+    highlightEdges(idx);
+    playingDirection = null;   // ensure nothing is playing
+    focusOnEdge(idx);          // optional: center camera on that edge
 }
 
 // Move the camera so the midpoint of the given edge
@@ -620,7 +715,6 @@ function focusOnEdge(index) {
         const centerX = rect.left + rect.width  / 2;
 
         // Shift the "target" point a bit *lower* than the true center.
-        // 0.25 = exact middle, tweak as you like (0.55, 0.65, etc.)
         const verticalBias = 0.25;
         const centerY = rect.top + rect.height * verticalBias;
 
@@ -635,13 +729,75 @@ function focusOnEdge(index) {
     }
 }
 
+// Apply neighbor-based highlighting and visibility on top of base colors
+// - Outgoing edges of selected node: green
+// - Incoming edges of selected node: blue
+// - Current animated (red) edge keeps its red color
+// - Any edge that is "discovered" or highlighted is visible (dashoffset=0)
+// - Other edges are hidden (dashoffset=length)
+function updateNeighborHighlights() {
+    if (!edgeElements.length) return;
 
-// Color & dash state for all edges based on currentIndex
-//   - current edge (i == currentIndex): RED
-//   - previous edge (i == currentIndex - 1): BLUE
-//   - all others: GREY
-//   - edges < currentIndex-1: grey but drawn (dashoffset=0)
-//   - future edges > currentIndex: grey + hidden (dashoffset=length)
+    const outgoingSet = new Set();
+    const incomingSet = new Set();
+
+    if (selectedNode) {
+        edgeElements.forEach((e, i) => {
+            if (!e || !e.path || !e.key) return;
+            const key = e.key;
+            const parts = key.split("->");
+            if (parts.length !== 2) return;
+            const caller = parts[0];
+            const callee = parts[1];
+            if (showOutgoing && caller === selectedNode) {
+                outgoingSet.add(i);
+            }
+            if (showIncoming && callee === selectedNode) {
+                incomingSet.add(i);
+            }
+        });
+    }
+
+    edgeElements.forEach((e, i) => {
+        if (!e || !e.path) return;
+        const path = e.path;
+        const length = e.length;
+        const baseColor = path.getAttribute("data-base-color") || "#aaaaaa";
+        const discovered = path.getAttribute("data-discovered") === "1";
+        const isOutgoing = outgoingSet.has(i);
+        const isIncoming = incomingSet.has(i);
+        const highlighted = isOutgoing || isIncoming;
+
+        // Color priority:
+        //  1. animated red (baseColor == red)
+        //  2. incoming blue
+        //  3. outgoing green
+        //  4. baseColor (grey)
+        if (baseColor === "#ff0000") {
+            path.setAttribute("stroke", baseColor);
+        } else if (isIncoming) {
+            path.setAttribute("stroke", "#3366ff"); // blue
+        } else if (isOutgoing) {
+            path.setAttribute("stroke", "#008000"); // green
+        } else {
+            path.setAttribute("stroke", baseColor);
+        }
+
+        // Visibility: discovered OR highlighted edges are visible
+        if (discovered || highlighted) {
+            path.setAttribute("stroke-dashoffset", 0);
+        } else {
+            path.setAttribute("stroke-dashoffset", length);
+        }
+    });
+}
+
+// Color & discovered state for all edges based on currentIndex
+//   - current edge (i == currentIndex): RED and discovered
+//   - edges < currentIndex: GREY and discovered
+//   - edges > currentIndex: GREY and not discovered
+// Dashoffset is handled in updateNeighborHighlights so we can show
+// future edges if they're highlighted via checkboxes.
 function highlightEdges(idx) {
     if (typeof idx === "number") {
         currentIndex = idx;
@@ -649,33 +805,34 @@ function highlightEdges(idx) {
 
     edgeElements.forEach((e, i) => {
         if (!e || !e.path) return;
-        const path   = e.path;
-        const length = e.length;
+        const path = e.path;
+        let baseColor = "#aaaaaa";
+        let discovered = "0";
 
         if (currentIndex < 0) {
-            // initial: all grey, not yet drawn
-            path.setAttribute("stroke", "#aaaaaa");
-            path.setAttribute("stroke-dashoffset", length);
+            // Initial: nothing discovered
+            baseColor = "#aaaaaa";
+            discovered = "0";
         } else if (i === currentIndex) {
-            // current edge: red and fully drawn
-            path.setAttribute("stroke", "#ff0000");
-            path.setAttribute("stroke-dashoffset", 0);
-        } else if (i === currentIndex - 1) {
-            // immediate previous edge: blue and fully drawn
-            path.setAttribute("stroke", "#3366ff");
-            path.setAttribute("stroke-dashoffset", 0);
+            // current edge: red + discovered
+            baseColor = "#ff0000";
+            discovered = "1";
+        } else if (i < currentIndex) {
+            // older than current: grey + discovered
+            baseColor = "#aaaaaa";
+            discovered = "1";
         } else {
-            // all other edges
-            path.setAttribute("stroke", "#aaaaaa");
-            if (i < currentIndex - 1) {
-                // older than previous: grey but drawn
-                path.setAttribute("stroke-dashoffset", 0);
-            } else {
-                // future edges: grey and hidden
-                path.setAttribute("stroke-dashoffset", length);
-            }
+            // future edges: grey + not discovered
+            baseColor = "#aaaaaa";
+            discovered = "0";
         }
+
+        path.setAttribute("stroke", baseColor);
+        path.setAttribute("data-base-color", baseColor);
+        path.setAttribute("data-discovered", discovered);
     });
+
+    updateNeighborHighlights();
 }
 
 function stepForward() {
@@ -719,6 +876,7 @@ function animateEdge(index, direction, onDone) {
 
     // ensure current line is red while animating
     path.setAttribute("stroke", "#ff0000");
+    path.setAttribute("data-base-color", "#ff0000");
     path.setAttribute("stroke-dasharray", length);
 
     // starting dashoffset depends on direction
@@ -757,9 +915,11 @@ function animateEdge(index, direction, onDone) {
             if (direction === "forward") {
                 // final: fully drawn
                 path.setAttribute("stroke-dashoffset", 0);
+                path.setAttribute("data-discovered", "1");
             } else {
                 // final: fully hidden
                 path.setAttribute("stroke-dashoffset", length);
+                path.setAttribute("data-discovered", "0");
             }
 
             onDone(true);
@@ -778,12 +938,12 @@ function runAnimationForward() {
         playingDirection = null;
         return;
     }
-    // mark this as current (colors + dash state)
+    // mark this as current (colors + discovered state)
     highlightEdges(nextIndex);
     focusOnEdge(nextIndex);
     animateEdge(nextIndex, "forward", (completed) => {
         if (!completed || playingDirection !== "forward") return;
-        // keep states consistent: current red, previous blue, others grey
+        // keep states consistent
         highlightEdges(nextIndex);
         setTimeout(runAnimationForward, 200);
     });
