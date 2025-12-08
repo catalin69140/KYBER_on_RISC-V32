@@ -447,7 +447,7 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
             'Find: '
             '<input type="text" id="search-node" size="20" '
             'placeholder="function name" '
-            'style="height:2.2em; vertical-align:middle;" '
+            'style="height:2.2em; width:500px; vertical-align:middle;" '
             'list="search-node-list" /> '
             '<button id="search-node-btn">Go</button>'
             '<button id="clear-node-btn" style="margin-left:4px;">Clear</button>'
