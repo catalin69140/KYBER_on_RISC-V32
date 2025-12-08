@@ -312,6 +312,7 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
       - Adds pan/zoom
       - Animates edges in BFS-ish order from main
       - Provides Play/Pause, Step Back, Step Forward, Speed controls
+      - Provides a search box to find functions by name
       - Optional 'Follow line' that jumps the camera to each red edge
       - Node interactions:
           * Click a node to select/deselect it
@@ -319,6 +320,7 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
           * Incoming edges of the selected node can be highlighted (blue)
           * Highlighting is controlled by two checkboxes in the UI
           * Double-click a node to start animation from its outgoing edges
+          * Copy name and the path of the selected node to clipboard
     """
     order, _, _ = bfs_from_main(cg, root_func)
     if not order:
@@ -439,7 +441,7 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
             '</label>\n'
         )
 
-        # New: search bar with suggestions and Clear button
+        # Search bar with suggestions and Clear button
         f.write(
             '<label style="margin-left:10px;">'
             'Find: '
@@ -454,7 +456,7 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
         # Dropdown suggestions list
         f.write('<datalist id="search-node-list"></datalist>\n')
 
-        # Move zoom all the way to the right
+        # Zoom controls
         f.write(
             '<span style="margin-left:auto;">Zoom: '
             '<button id="zoom-in">+</button>'
