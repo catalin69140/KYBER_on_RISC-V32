@@ -383,8 +383,8 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
         f.write("}\n")
 
         f.write("#controls button {\n")
-        f.write("  padding: 0.6em 1.1em;\n")
-        f.write("  font-size: 1rem;\n")
+        f.write("  padding: 0.65em 1.2em;\n")
+        f.write("  font-size: 1.25rem;\n")
         f.write("  border-radius: 6px;\n")
         f.write("  border: 1px solid #555;\n")
         f.write("  cursor: pointer;\n")
@@ -405,7 +405,7 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
         
         f.write("</style>\n</head>\n<body>\n")
 
-        f.write(f"<h3>Call graph animation for <code>{elf_name}</code></h3>\n")
+        f.write(f'<h3 style="font-size:20px; margin:10px 0;">Call graph animation for <code>{elf_name}</code></h3>\n')
         f.write(
             "<p>Layout and clusters match the Graphviz PNG. "
             "Use the controls to animate calls from <code>main</code> and explore neighbors of each function.</p>\n"
@@ -443,16 +443,20 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
 
         # Search bar with suggestions and Clear button
         f.write(
-            '<label style="margin-left:10px;">'
+            '<label style="margin-left:10px; font-size:30px; vertical-align:middle;">'
             'Find: '
             '<input type="text" id="search-node" size="20" '
             'placeholder="function name" '
-            'style="height:2.2em; width:500px; vertical-align:middle;" '
+            'style="height:2.4em; width:500px; font-size:30px; vertical-align:middle; line-height:1.2;" '
             'list="search-node-list" /> '
-            '<button id="search-node-btn">Go</button>'
-            '<button id="clear-node-btn" style="margin-left:4px;">Clear</button>'
+            '<button id="search-node-btn" '
+            'style="height:2.4em; font-size:30px; vertical-align:middle;">Go</button>'
+            '<button id="clear-node-btn" '
+            'style="height:2.4em; font-size:30px; vertical-align:middle; margin-left:4px;">Clear</button>'
             '</label>\n'
         )
+
+
         # Dropdown suggestions list
         f.write('<datalist id="search-node-list"></datalist>\n')
 
@@ -568,6 +572,8 @@ let selectedNode = null;
 let showOutgoing = true;
 let showIncoming = false;
 
+let nodeMap = {};   // symbol -> <g.node> (global so all functions can use it)
+
 function setupGraphAnimation(svgElement) {
     svgRoot = svgElement;
 
@@ -579,7 +585,7 @@ function setupGraphAnimation(svgElement) {
     });
 
     // Map from symbol -> node <g> for search/focus
-    const nodeMap = {};
+    nodeMap = {};
 
     // Map Graphviz edges by title "caller->callee"
     const edgeGroupsByKey = {};
@@ -983,17 +989,21 @@ function emphasizeNode(node) {
 }
 
 
-// Apply neighbor-based highlighting and visibility on top of base colors
+// Apply neighbor-based highlighting on top of base colors
 // - Outgoing edges of selected node: green
-// - Incoming edges of selected node: blue
+// - Incoming edges of selected node: purple
 // - Current animated (red) edge keeps its red color
-// - Any edge that is "discovered" or highlighted is visible (dashoffset=0)
-// - Other edges are hidden (dashoffset=length)
+// - Also color the nodes themselves:
+//     * selected node: orange border
+//     * outgoing targets: green border
+//     * incoming sources: purple border
 function updateNeighborHighlights() {
     if (!edgeElements.length) return;
 
-    const outgoingSet = new Set();
-    const incomingSet = new Set();
+    const outgoingEdgeSet = new Set();
+    const incomingEdgeSet = new Set();
+    const outgoingNodeSet = new Set(); // callees of selected
+    const incomingNodeSet = new Set(); // callers of selected
 
     if (selectedNode) {
         edgeElements.forEach((e, i) => {
@@ -1003,34 +1013,38 @@ function updateNeighborHighlights() {
             if (parts.length !== 2) return;
             const caller = parts[0];
             const callee = parts[1];
+
             if (showOutgoing && caller === selectedNode) {
-                outgoingSet.add(i);
+                outgoingEdgeSet.add(i);
+                outgoingNodeSet.add(callee);
             }
             if (showIncoming && callee === selectedNode) {
-                incomingSet.add(i);
+                incomingEdgeSet.add(i);
+                incomingNodeSet.add(caller);
             }
         });
     }
 
+    // ---- Edge colors (same as before, but using the sets above) ----
     edgeElements.forEach((e, i) => {
         if (!e || !e.path) return;
         const path = e.path;
         const length = e.length;
         const baseColor = path.getAttribute("data-base-color") || "#aaaaaa";
         const discovered = path.getAttribute("data-discovered") === "1";
-        const isOutgoing = outgoingSet.has(i);
-        const isIncoming = incomingSet.has(i);
+        const isOutgoing = outgoingEdgeSet.has(i);
+        const isIncoming = incomingEdgeSet.has(i);
         const highlighted = isOutgoing || isIncoming;
 
         // Color priority:
         //  1. animated red (baseColor == red)
-        //  2. incoming blue
+        //  2. incoming purple
         //  3. outgoing green
         //  4. baseColor (grey)
         if (baseColor === "#ff0000") {
             path.setAttribute("stroke", baseColor);
         } else if (isIncoming) {
-            path.setAttribute("stroke", "#3366ff"); // blue
+            path.setAttribute("stroke", "#800080"); // purple
         } else if (isOutgoing) {
             path.setAttribute("stroke", "#008000"); // green
         } else {
@@ -1044,7 +1058,32 @@ function updateNeighborHighlights() {
             path.setAttribute("stroke-dashoffset", length);
         }
     });
+
+    // ---- Node colors (new part) ----
+    Object.entries(nodeMap).forEach(([sym, node]) => {
+        const shapes = node.querySelectorAll("ellipse,polygon,rect");
+        shapes.forEach(s => {
+            // Default border
+            let stroke = "#000000";
+            let strokeWidth = "1";
+
+            if (sym === selectedNode) {
+                stroke = "#ff9900";        // selected node: orange
+                strokeWidth = "3";
+            } else if (incomingNodeSet.has(sym)) {
+                stroke = "#800080";        // callers: purple
+                strokeWidth = "3";
+            } else if (outgoingNodeSet.has(sym)) {
+                stroke = "#008000";        // callees: green
+                strokeWidth = "3";
+            }
+
+            s.setAttribute("stroke", stroke);
+            s.setAttribute("stroke-width", strokeWidth);
+        });
+    });
 }
+
 
 // Color & discovered state for all edges based on currentIndex
 //   - current edge (i == currentIndex): RED and discovered
