@@ -338,6 +338,21 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
     elf_name = Path(elf).name
     html_path = Path(html_path)
 
+    # Map symbol -> "relative/path/file.c:line" for copyable paths
+    proj_root_resolved = project_root.resolve()
+    sym2path = {}
+    for sym, (file, line) in sym2file.items():
+        if file == "??":
+            sym2path[sym] = "??"
+        else:
+            try:
+                full = Path(file).resolve()
+                rel = full.relative_to(proj_root_resolved)
+                sym2path[sym] = f"{rel}:{line}"
+            except Exception:
+                sym2path[sym] = f"{file}:{line}"
+
+
     with html_path.open("w") as f:
         f.write("<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\" />\n")
         f.write(f"<title>Call graph animation for {elf_name}</title>\n")
@@ -401,6 +416,7 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
         f.write('<button id="btn-pause">Pause ⏸</button>\n')
         f.write('<button id="btn-prev">Step Back</button>\n')
         f.write('<button id="btn-next">Step Forward</button>\n')
+
         f.write(
             '<label style="margin-left:10px;">Speed '
             '<input type="range" id="speed" min="0.25" max="3" step="0.25" value="1"> '
@@ -411,24 +427,60 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
             '<input type="checkbox" id="follow-line"> Track Step'
             '</label>\n'
         )
+
         f.write(
             '<label style="margin-left:10px;">'
             '<input type="checkbox" id="highlight-outgoing" checked> Outgoing edges'
             '</label>\n'
         )
         f.write(
-            '<label style="margin-left:10px;">'
+            '<label style="margin-left:10px; margin-right:50px;">'
             '<input type="checkbox" id="highlight-incoming"> Incoming edges'
             '</label>\n'
         )
+
+        # New: search bar with suggestions and Clear button
         f.write(
-            '<span style="margin-left:10px;">Zoom: '
+            '<label style="margin-left:10px;">'
+            'Find: '
+            '<input type="text" id="search-node" size="20" '
+            'placeholder="function name" '
+            'style="height:2.2em; vertical-align:middle;" '
+            'list="search-node-list" /> '
+            '<button id="search-node-btn">Go</button>'
+            '<button id="clear-node-btn" style="margin-left:4px;">Clear</button>'
+            '</label>\n'
+        )
+        # Dropdown suggestions list
+        f.write('<datalist id="search-node-list"></datalist>\n')
+
+        # Move zoom all the way to the right
+        f.write(
+            '<span style="margin-left:auto;">Zoom: '
             '<button id="zoom-in">+</button>'
             '<button id="zoom-out">-</button>'
             '<button id="zoom-reset">Reset</button>'
             '</span>\n'
         )
         f.write("</div>\n")
+
+        # Node info UI: separate bar for name and path
+        # Node info UI: separate bar for name and path
+        f.write(
+            '<div id="node-info-container" style="padding:8px 12px; display:flex; flex-direction:column; gap:4px;">'
+            '  <label>'
+            '    Function name: '
+            '    <input id="node-name" type="text" style="width:22.6%;" readonly /> '
+            '    <button id="copy-node-name">Copy Function Name</button>'
+            '  </label>'
+            '  <label>'
+            '    Path: '
+            '    <input id="node-path" type="text" style="width:25%;" readonly /> '
+            '    <button id="copy-node-path">Copy Path</button>'
+            '  </label>'
+            '</div>\n'
+        )
+
 
         f.write('<div id="graph-container"><div id="graph"></div></div>\n')
 
@@ -450,6 +502,17 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
         for key in edge_keys:
             f.write(f'  "{_js_escape(key)}",\n')
         f.write("];\n")
+
+        # JS mapping: symbol -> { name, path }
+        f.write("const sym2Info = {\n")
+        for sym, path in sym2path.items():
+            f.write(
+                f'  "{_js_escape(sym)}": {{ '
+                f'name: "{_js_escape(sym)}", '
+                f'path: "{_js_escape(str(path))}" }},\n'
+            )
+        f.write("};\n")
+
 
         # --- Zoom compensation for controls ---
         f.write(r"""
@@ -513,6 +576,9 @@ function setupGraphAnimation(svgElement) {
         dblClickZoomEnabled: false
     });
 
+    // Map from symbol -> node <g> for search/focus
+    const nodeMap = {};
+
     // Map Graphviz edges by title "caller->callee"
     const edgeGroupsByKey = {};
     const edgeGroups = svgElement.querySelectorAll('g.edge');
@@ -563,6 +629,14 @@ function setupGraphAnimation(svgElement) {
     const zoomResetBtn   = document.getElementById('zoom-reset');
     const outgoingCheckbox = document.getElementById('highlight-outgoing');
     const incomingCheckbox = document.getElementById('highlight-incoming');
+    const searchInput      = document.getElementById('search-node');
+    const searchBtn        = document.getElementById('search-node-btn');
+    const clearBtn          = document.getElementById('clear-node-btn');
+    const searchList        = document.getElementById('search-node-list');
+    const nodeNameInput     = document.getElementById('node-name');
+    const copyNodeNameBtn   = document.getElementById('copy-node-name');
+    const nodePathInput     = document.getElementById('node-path');
+    const copyNodePathBtn   = document.getElementById('copy-node-path');
 
     btnPlay.onclick = () => {
         // prevent stacking multiple forward runs
@@ -620,12 +694,78 @@ function setupGraphAnimation(svgElement) {
         };
     }
 
+    if (copyNodeNameBtn && nodeNameInput) {
+        copyNodeNameBtn.onclick = () => {
+            if (!nodeNameInput.value) return;
+            navigator.clipboard
+                .writeText(nodeNameInput.value)
+                .catch(err => console.error("Clipboard error:", err));
+        };
+    }
+
+    if (copyNodePathBtn && nodePathInput) {
+        copyNodePathBtn.onclick = () => {
+            if (!nodePathInput.value) return;
+            navigator.clipboard
+                .writeText(nodePathInput.value)
+                .catch(err => console.error("Clipboard error:", err));
+        };
+    }
+
+    // Search functionality
+    if (searchBtn && searchInput) {
+        searchBtn.onclick = () => {
+            const q = searchInput.value.trim();
+            if (!q) return;
+            searchAndHighlightNode(q);
+        };
+    }
+
+    if (searchInput) {
+        searchInput.addEventListener('keydown', (ev) => {
+            if (ev.key === 'Enter') {
+                ev.preventDefault();
+                const q = searchInput.value.trim();
+                if (!q) return;
+                searchAndHighlightNode(q);
+            }
+            if (ev.key === 'Escape') {
+                if (clearBtn) clearBtn.click();
+            }
+        });
+    }
+
+    // Clear functionality
+    if (clearBtn) {
+        clearBtn.onclick = () => {
+            searchInput.value = "";
+            selectedNode = null;
+            updateNeighborHighlights();
+
+            // Remove highlighted borders if any
+            if (lastHighlightedNode) {
+                const prev = lastHighlightedNode.querySelectorAll('ellipse,polygon,rect');
+                prev.forEach(s => {
+                    s.setAttribute('stroke', '#000000');
+                    s.setAttribute('stroke-width', '1');
+                });
+                lastHighlightedNode = null;
+            }
+
+            // Clear info fields
+            if (nodeNameInput) nodeNameInput.value = "";
+            if (nodePathInput) nodePathInput.value = "";
+        };
+    }
+
     // Make nodes clickable: select/deselect symbol
     const nodes = svgElement.querySelectorAll('g.node');
     nodes.forEach(node => {
         const titleEl = node.querySelector('title');
         if (!titleEl) return;
         const sym = titleEl.textContent.trim();
+
+        nodeMap[sym] = node;
 
         node.style.cursor = 'pointer';
 
@@ -638,6 +778,17 @@ function setupGraphAnimation(svgElement) {
                 selectedNode = sym;
             }
             updateNeighborHighlights();
+
+            // Update the separate name bar
+            if (nodeNameInput) {
+                nodeNameInput.value = sym || "";
+            }
+
+            // Update the path bar using sym2Info
+            if (nodePathInput) {
+                const info = sym2Info[sym];
+                nodePathInput.value = info ? info.path : "??";
+            }
         });
 
         // Double-click: continue animation from this node's outgoing edges
@@ -647,6 +798,57 @@ function setupGraphAnimation(svgElement) {
             continueFromNode(sym);
         });
     });
+
+    // Fill dropdown suggestions
+    if (searchList) {
+        searchList.innerHTML = "";
+        Object.keys(nodeMap).sort().forEach(sym => {
+            const opt = document.createElement('option');
+            opt.value = sym;
+            searchList.appendChild(opt);
+        });
+    }
+
+    // Search by name, highlight node + its edges and jump to it
+    function searchAndHighlightNode(query) {
+        if (!query) return;
+
+        const qLower = query.toLowerCase();
+
+        // Prefer exact match first
+        if (nodeMap[query]) {
+            applyNodeSelection(query, nodeMap[query]);
+            return;
+        }
+
+        // Then substring match
+        for (const sym in nodeMap) {
+            if (sym.toLowerCase().includes(qLower)) {
+                applyNodeSelection(sym, nodeMap[sym]);
+                return;
+            }
+        }
+        // No match: do nothing (or you could flash the input)
+    }
+
+    function applyNodeSelection(sym, node) {
+        // Use same selection logic as clicking the node
+        selectedNode = sym;
+        updateNeighborHighlights();
+
+        if (nodeNameInput) {
+            nodeNameInput.value = sym || "";
+        }
+        if (nodePathInput) {
+            const info = sym2Info[sym];
+            nodePathInput.value = info ? info.path : "??";
+        }
+
+        // Visually emphasize the node and jump to it
+        emphasizeNode(node);
+        focusOnNode(node);
+    }
+
 }
 
 // Double-click helper: find first edge with this node as caller,
@@ -728,6 +930,56 @@ function focusOnEdge(index) {
         console.error("Error in focusOnEdge:", err);
     }
 }
+
+
+let lastHighlightedNode = null;
+
+// Center the view on a given node, similar to focusOnEdge
+function focusOnNode(node) {
+    if (!panZoom || !svgRoot) return;
+    if (!node || !node.getBBox) return;
+
+    const bbox = node.getBBox();
+    const center = svgRoot.createSVGPoint();
+    center.x = bbox.x + bbox.width / 2;
+    center.y = bbox.y + bbox.height / 2;
+
+    const ctm = node.getScreenCTM();
+    if (!ctm || !center.matrixTransform) return;
+    const screenPt = center.matrixTransform(ctm);
+
+    const container = document.getElementById('graph-container');
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const verticalBias = 0.25;
+    const centerY = rect.top + rect.height * verticalBias;
+
+    const dx = centerX - screenPt.x;
+    const dy = centerY - screenPt.y;
+
+    panZoom.panBy({ x: dx, y: dy });
+}
+
+// Give the node a visible outline, reset previous one
+function emphasizeNode(node) {
+    if (lastHighlightedNode && lastHighlightedNode !== node) {
+        const prevShapes = lastHighlightedNode.querySelectorAll('ellipse,polygon,rect');
+        prevShapes.forEach(s => {
+            s.setAttribute('stroke', '#000000');
+            s.setAttribute('stroke-width', '1');
+        });
+    }
+
+    const shapes = node.querySelectorAll('ellipse,polygon,rect');
+    shapes.forEach(s => {
+        s.setAttribute('stroke', '#ffa500'); // orange
+        s.setAttribute('stroke-width', '3');
+    });
+
+    lastHighlightedNode = node;
+}
+
 
 // Apply neighbor-based highlighting and visibility on top of base colors
 // - Outgoing edges of selected node: green
