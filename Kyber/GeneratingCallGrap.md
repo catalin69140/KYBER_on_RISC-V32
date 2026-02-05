@@ -8,7 +8,7 @@ crypto_kem_kyber768_kyber768r1_hashing.elf
 
 ---
 
-# Project Structure
+# Structure
 
 ```
 .
