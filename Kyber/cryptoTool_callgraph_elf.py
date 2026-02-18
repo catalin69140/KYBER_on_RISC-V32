@@ -1,0 +1,1948 @@
+#!/usr/bin/env python3
+import argparse
+import subprocess
+from collections import defaultdict, deque
+from pathlib import Path
+import re
+import json
+
+
+def run_cmd(cmd):
+    return subprocess.run(
+        cmd,
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    ).stdout
+
+
+def build_symbol_table(elf, nm_tool):
+    out = run_cmd([nm_tool, "-C", "--defined-only", "-n", elf])
+    sym2addr = {}
+    addr2sym = {}
+    for line in out.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        addr_str, typecode, name = parts[0], parts[1], parts[2]
+        if typecode.upper() in ("T", "W"):
+            addr = "0x" + addr_str.lstrip("0x")
+            sym2addr[name] = addr
+            addr2sym[addr] = name
+    return sym2addr, addr2sym
+
+
+def build_call_graph(elf, objdump_tool):
+    out = run_cmd([objdump_tool, "-d", "-C", elf])
+    cg = defaultdict(set)
+    current_func = None
+
+    func_header_re = re.compile(r"^[0-9a-fA-F]+\s+<([^>]+)>:")
+
+    for line in out.splitlines():
+        line = line.rstrip()
+        m = func_header_re.match(line.strip())
+        if m:
+            current_func = m.group(1)
+            continue
+
+        if current_func is None:
+            continue
+
+        if "jal" in line and "<" in line and ">" in line:
+            callee = line.split("<", 1)[1].split(">", 1)[0].strip()
+            if callee:
+                cg[current_func].add(callee)
+
+    return cg
+
+
+def addr2line_for_symbol(elf, addr, addr2line_tool):
+    out = run_cmd([addr2line_tool, "-C", "-e", elf, addr])
+    lines = out.splitlines()
+    if not lines:
+        return ("??", 0)
+    file_line = lines[-1].strip()
+    if ":" in file_line:
+        file, ln = file_line.rsplit(":", 1)
+        try:
+            ln = int(ln)
+        except ValueError:
+            ln = 0
+    else:
+        file, ln = file_line, 0
+    return (file, ln)
+
+
+def classify_symbol_files(elf, sym2addr, addr2line_tool, project_root):
+    sym2file = {}
+    project_syms = set()
+    proj_root_resolved = project_root.resolve()
+
+    for name, addr in sym2addr.items():
+        file, line = addr2line_for_symbol(elf, addr, addr2line_tool)
+        sym2file[name] = (file, line)
+        try:
+            full = Path(file).resolve()
+        except Exception:
+            continue
+        if str(full).startswith(str(proj_root_resolved)):
+            project_syms.add(name)
+
+    return sym2file, project_syms
+
+
+def bfs_from_main(cg, root="main"):
+    """
+    BFS traversal from root.
+
+    Returns:
+      - order:  list of visited functions (in BFS order)
+      - parents: child -> parent
+      - depth: func -> distance from root (0 = root)
+    """
+    visited = set()
+    parents = {}
+    order = []
+    depth = {}
+
+    visited.add(root)
+    depth[root] = 0
+    q = deque([root])
+
+    while q:
+        f = q.popleft()
+        order.append(f)
+        for callee in cg.get(f, []):
+            if callee not in visited:
+                visited.add(callee)
+                parents[callee] = f
+                depth[callee] = depth[f] + 1
+                q.append(callee)
+
+    if not order:
+        order.append(root)
+        depth[root] = 0
+
+    return order, parents, depth
+
+
+def module_of_file(file, project_root):
+    """
+    Classify a source file into a logical module:
+      - "impl"     : crypto_kem/kyber768/kyber768r1/*
+      - "mupq"     : mupq/*
+      - "common"   : common/* (including keccak, randombytes)
+      - "hal"      : common/hal-*.c
+      - "project"  : any other file under project root
+      - "external" : outside project root or unknown
+    """
+    if file == "??":
+        return "external"
+
+    proj_root_resolved = project_root.resolve()
+    try:
+        full = Path(file).resolve()
+        rel = full.relative_to(proj_root_resolved)
+    except Exception:
+        return "external"
+
+    parts = rel.parts
+    if len(parts) >= 3 and parts[0] == "crypto_kem" and parts[1] == "kyber768" and parts[2] == "kyber768r1":
+        return "impl"
+    if parts[0] == "mupq":
+        return "mupq"
+    if parts[0] == "common":
+        if "hal-" in parts[-1]:
+            return "hal"
+        return "common"
+    return "project"
+
+
+def print_tree(elf, cg, sym2file, project_syms, root_func):
+    order, parents, depth = bfs_from_main(cg, root_func)
+    if not order:
+        print(f"[!] No calls found starting from {root_func}")
+        return
+
+    print(f"Call graph starting from {root_func}:\n")
+    children = defaultdict(list)
+    for child, parent in parents.items():
+        children[parent].append(child)
+
+    def is_project(f):
+        return f in project_syms
+
+    def print_subtree(f, indent="", seen=None):
+        if seen is None:
+            seen = set()
+        marker = "[P]" if is_project(f) else "[EXT]"
+        file, line = sym2file.get(f, ("??", 0))
+        d = depth.get(f, 0)
+        loc = ""
+        if file != "??":
+            loc = f" ({file}:{line})"
+        print(f"{indent}{marker} [d={d}] {f}{loc}")
+        if f in seen:
+            print(f"{indent}  (recursion/cycle)")
+            return
+        seen.add(f)
+        for c in sorted(children.get(f, [])):
+            print_subtree(c, indent + "  ", seen)
+
+    print_subtree(root_func)
+
+
+# ---------- DOT generation (for PNG and HTML) ----------
+
+def generate_dot(elf, cg, sym2file, project_syms, root_func, project_root):
+    order, _, depth = bfs_from_main(cg, root_func)
+    if not order:
+        return "digraph CallGraph {\\n}"
+
+    proj_root_resolved = project_root.resolve()
+
+    # Determine module for each symbol
+    sym2module = {}
+    for sym in order:
+        file, _ = sym2file.get(sym, ("??", 0))
+        sym2module[sym] = module_of_file(file, project_root)
+
+    # Group symbols by module
+    modules = defaultdict(list)
+    for sym in order:
+        modules[sym2module[sym]].append(sym)
+
+    module_labels = {
+        "impl": "Kyber768r1 implementation (core KEM operations)",
+        "mupq": "MUPQ harness / benchmarks / tests",
+        "common": "Common crypto primitives",
+        "hal": "Platform HAL / board support",
+        "project": "Other project code",
+        "external": "Toolchain / libc / external",
+    }
+
+    def rel_path(file):
+        if file == "??":
+            return "??"
+        try:
+            full = Path(file).resolve()
+            return str(full.relative_to(proj_root_resolved))
+        except Exception:
+            return file
+
+    lines = []
+    lines.append("digraph CallGraph {")
+    lines.append("  rankdir=LR;")
+    lines.append('  node [fontname="Helvetica"];')
+
+    # ELF node
+    elf_name = Path(elf).name
+    elf_node_id = f"ELF::{elf_name}"
+    lines.append(
+        f'  "{elf_node_id}" [shape=doublecircle,style="bold",label="{elf_name}\\n(ELF root)"];'
+    )
+    lines.append(f'  "{elf_node_id}" -> "{root_func}";')
+
+    # Clusters
+    for module, syms in modules.items():
+        if not syms:
+            continue
+        cluster_name = f"cluster_{module}"
+        label = module_labels.get(module, module)
+        lines.append(f"  subgraph {cluster_name} {{")
+        lines.append(f'    label="{label}";')
+        lines.append("    style=rounded;")
+
+        for sym in syms:
+            file, line = sym2file.get(sym, ("??", 0))
+            rpath = rel_path(file)
+            label_sym = sym
+            if rpath != "??":
+                label_sym += f"\\n{rpath}:{line}"
+            else:
+                label_sym += f"\\n{rpath}"
+
+            if sym in project_syms:
+                shape = "box"
+                style = "filled"
+                fillcolor = "lightgray"
+            else:
+                shape = "ellipse"
+                style = "dotted"
+                fillcolor = "white"
+
+            lines.append(
+                f'    "{sym}" [shape={shape},style="{style}",fillcolor="{fillcolor}",label="{label_sym}"];'
+            )
+
+        lines.append("  }")
+
+    # Edges between visited nodes
+    for caller in order:
+        for callee in cg.get(caller, []):
+            if callee in order:
+                lines.append(f'  "{caller}" -> "{callee}";')
+
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def write_dot(elf, cg, sym2file, project_syms, dot_path, root_func, project_root):
+    dot_text = generate_dot(elf, cg, sym2file, project_syms, root_func, project_root)
+    Path(dot_path).write_text(dot_text)
+    print(f"Wrote call graph to {dot_path}. Render with:")
+    print(f"  dot -Tpng {dot_path} -o callgraph.png")
+
+
+# ---------- HTML animation output ----------
+
+def _js_escape(s: str) -> str:
+    """Escape a Python string for safe use in JS string literal."""
+    return s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+TRACE_LINE = re.compile(r"^TRACE\|(?P<type>ENTER|EXIT|BUF|U32)\|(.+)$")
+
+def parse_trace_log(path):
+    steps = []
+    stack = []
+    buf_acc = {}  # (step_id, func, name) -> dict(len=?, chunks={off:hex})
+
+    def kv_parse(rest):
+        d = {}
+        for part in rest.split("|"):
+            if "=" in part:
+                k,v = part.split("=",1)
+                d[k] = v
+        return d
+
+    with open(path, "r", errors="ignore") as f:
+        for line in f:
+            line = line.strip()
+            m = TRACE_LINE.match(line)
+            if not m:
+                continue
+            typ = m.group("type")
+            rest = line.split("|", 2)[2]
+            kv = kv_parse(rest)
+
+            if typ == "ENTER":
+                func = kv.get("f","?")
+                depth = int(kv.get("d","0"))
+                step = {"id": len(steps), "func": func, "depth": depth, "vars": []}
+                steps.append(step)
+                stack.append(step["id"])
+
+            elif typ == "EXIT":
+                if stack:
+                    stack.pop()
+
+            elif typ == "BUF":
+                if not stack:
+                    continue
+                step_id = stack[-1]
+                func = kv.get("f","?")
+                name = kv.get("n","?")
+                total_len = int(kv.get("len","0"))
+                off = int(kv.get("off","0"))
+                hexdata = kv.get("hex","")
+
+                key = (step_id, func, name)
+                entry = buf_acc.setdefault(key, {"len": total_len, "chunks": {}})
+                entry["chunks"][off] = hexdata
+
+            elif typ == "U32":
+                if not stack:
+                    continue
+                step_id = stack[-1]
+                func = kv.get("f","?")
+                name = kv.get("n","?")
+                v = kv.get("v","0")
+                steps[step_id]["vars"].append({"name": name, "type": "u32", "value": v})
+
+    # finalize buffers: reconstruct full hex in order
+    for (step_id, func, name), entry in buf_acc.items():
+        # order chunks by offset
+        full = "".join(entry["chunks"][off] for off in sorted(entry["chunks"].keys()))
+        steps[step_id]["vars"].append({"name": name, "type": "buf", "len": entry["len"], "hex": full})
+
+    return steps
+
+def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, project_root, trace_steps=None, steps_json=None, flow_spec=None):
+    """
+    Generate an HTML file that:
+      - Uses Viz.js to render the same DOT as the PNG (same layout/structure)
+      - Adds pan/zoom
+      - Animates edges in BFS-ish order from main
+      - Provides Play/Pause, Step Back, Step Forward, Speed controls
+      - Provides a search box to find functions by name
+      - Optional 'Follow line' that jumps the camera to each red edge
+      - Node interactions:
+          * Click a node to select/deselect it
+          * Outgoing edges of the selected node can be highlighted (green)
+          * Incoming edges of the selected node can be highlighted (blue)
+          * Highlighting is controlled by two checkboxes in the UI
+          * Double-click a node to start animation from its outgoing edges
+          * Copy name and the path of the selected node to clipboard
+    """
+    order, _, _ = bfs_from_main(cg, root_func)
+    if not order:
+        print(f"[!] No calls found from {root_func}, not writing HTML.")
+        return
+
+    dot_text = generate_dot(elf, cg, sym2file, project_syms, root_func, project_root)
+    dot_js = _js_escape(dot_text)
+
+    # Edge order for animation, in BFS caller order
+    edge_keys = []
+    for caller in order:
+        for callee in cg.get(caller, []):
+            if callee in order:
+                edge_keys.append(f"{caller}->{callee}")
+
+    elf_name = Path(elf).name
+    html_path = Path(html_path)
+
+    # Map symbol -> "relative/path/file.c:line" for copyable paths
+    proj_root_resolved = project_root.resolve()
+    sym2path = {}
+    for sym, (file, line) in sym2file.items():
+        if file == "??":
+            sym2path[sym] = "??"
+        else:
+            try:
+                full = Path(file).resolve()
+                rel = full.relative_to(proj_root_resolved)
+                sym2path[sym] = f"{rel}:{line}"
+            except Exception:
+                sym2path[sym] = f"{file}:{line}"
+
+    trace_json = json.dumps(trace_steps or [])
+
+    with html_path.open("w") as f:
+        f.write("<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\" />\n")
+        f.write(f"<title>Call graph animation for {elf_name}</title>\n")
+        f.write("<style>\n")
+
+        f.write("html, body {\n")
+        f.write("  margin: 0;\n")
+        f.write("  padding: 0;\n")
+        f.write("  height: 100%;\n")
+        f.write("}\n")
+
+        f.write("body {\n")
+        f.write("  font-family: sans-serif;\n")
+        f.write("  display: flex;\n")
+        f.write("  flex-direction: column;\n")
+        f.write("  height: 100vh;\n")
+        f.write("}\n")
+
+        f.write("#controls {\n")
+        f.write("  padding: 8px 12px;\n")
+        f.write("  border-bottom: 1px solid #ccc;\n")
+        f.write("  display: flex;\n")
+        f.write("  flex-wrap: wrap;\n")
+        f.write("  align-items: center;\n")
+        f.write("  gap: 6px;\n")
+        f.write("}\n")
+
+        f.write("#controls button {\n")
+        f.write("  padding: 0.65em 1.2em;\n")
+        f.write("  font-size: 1.25rem;\n")
+        f.write("  border-radius: 6px;\n")
+        f.write("  border: 1px solid #555;\n")
+        f.write("  cursor: pointer;\n")
+        f.write("}\n")
+
+        f.write("#controls input[type=\"range\"] {\n")
+        f.write("  vertical-align: middle;\n")
+        f.write("}\n")
+
+        f.write("#main-split {\n")
+        f.write("  flex: 1;\n")
+        f.write("  display: flex;\n")
+        f.write("  min-height: 0;\n")  # important for scroll areas
+        f.write("}\n")
+
+        f.write("#trace-panel {\n")
+        f.write("  width: 420px;\n")
+        f.write("  border-right: 1px solid #ccc;\n")
+        f.write("  display: flex;\n")
+        f.write("  flex-direction: column;\n")
+        f.write("  min-height: 0;\n")
+        f.write("}\n")
+
+        f.write("#trace-steps {\n")
+        f.write("  flex: 1;\n")
+        f.write("  overflow: auto;\n")
+        f.write("  padding: 10px;\n")
+        f.write("  min-height: 0;\n")
+        f.write("}\n")
+
+        f.write("#graph-container {\n")
+        f.write("  flex: 1;\n")
+        f.write("  width: auto;\n")
+        f.write("  min-width: 0;\n")
+        f.write("}\n")
+
+
+        f.write("#graph {\n")
+        f.write("  width: 100%;\n")
+        f.write("  height: 100%;\n")
+        f.write("}\n")
+        
+        f.write("""
+            /* === CrypTool-like layout (matches your HTML IDs) === */
+
+            #main-split {
+                flex: 1;
+                display: flex;
+                min-height: 0;
+            }
+
+            #left-panel {
+                width: 420px;
+                border-right: 1px solid #ccc;
+                display: flex;
+                flex-direction: column;
+                min-height: 0;
+            }
+
+            #tabs {
+                display: flex;
+                gap: 6px;
+                padding: 8px 10px;
+                border-bottom: 1px solid #ccc;
+            }
+
+            #tabs .tab {
+                flex: 1;
+                padding: 10px;
+                border: 1px solid #555;
+                border-radius: 8px;
+                cursor: pointer;
+                background: #f7f7f7;
+                font-size: 16px;
+                text-align: center;
+                user-select: none;
+            }
+
+            #tabs .tab.active {
+                background: #e6f0ff;
+                border-color: #2b5cff;
+            }
+
+            #steps-container {
+                flex: 1;
+                min-height: 0;
+                overflow: hidden;
+            }
+
+            /* each tab pane */
+            .steps {
+                height: 100%;
+                overflow: auto;
+                padding: 10px;
+                box-sizing: border-box;
+            }
+
+            /* we’ll use these later when we render step cards */
+            .step-item {
+                border: 1px solid #bbb;
+                border-radius: 10px;
+                padding: 10px;
+                cursor: pointer;
+                background: white;
+                margin-bottom: 8px;
+            }
+
+            .step-item.active {
+                border-color: #ff9900;
+                box-shadow: 0 0 0 2px rgba(255,153,0,0.2);
+            }
+
+            .step-title {
+                font-weight: 700;
+                margin-bottom: 6px;
+            }
+
+            .step-funcs {
+                font-family: monospace;
+                font-size: 12px;
+                opacity: 0.8;
+            }
+
+            .vars {
+                margin-top: 8px;
+                display: flex;
+                flex-wrap: wrap;
+                gap: 6px;
+            }
+
+            .var-chip {
+                border: 1px solid #888;
+                border-radius: 999px;
+                padding: 4px 10px;
+                font-family: monospace;
+                font-size: 12px;
+                cursor: pointer;
+                background: #f3f3f3;
+            }
+            .var-chip { transition: transform 0.05s ease, filter 0.1s ease; }
+            .var-chip:hover { filter: brightness(1.05); }
+            .var-chip.active { outline: 3px solid rgba(255,255,255,0.6); transform: translateY(-1px); }
+
+            .var-seed      { background:#ff8a00; color:#111; border-color:#ff8a00; } /* Random bytes/Seeds */
+            .var-matrix    { background:#ff2ea6; color:#fff; border-color:#ff2ea6; } /* Matrix */
+            .var-vector    { background:#8b2cff; color:#fff; border-color:#8b2cff; } /* Vector */
+            .var-poly      { background:#1db954; color:#fff; border-color:#1db954; } /* Polynomial */
+            .var-bytes     { background:#ffd400; color:#111; border-color:#ffd400; } /* Bytes */
+            .var-calc      { background:#00bcd4; color:#111; border-color:#00bcd4; } /* Calculation */
+
+
+            #variable-box {
+                border-top: 1px solid #ccc;
+                padding: 10px;
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+            }
+
+            #variable-meta {
+                font-family: monospace;
+                font-size: 12px;
+                color: #666;
+            }
+
+            #variable-hex {
+                width: 100%;
+                height: 140px;
+                font-family: monospace;
+                box-sizing: border-box;
+            }
+        """)
+        
+        f.write("</style>\n</head>\n<body>\n")
+
+        f.write(f'<h3 style="font-size:20px; margin:10px 0;">Call graph animation for <code>{elf_name}</code></h3>\n')
+        f.write(
+            "<p>Layout and clusters match the Graphviz PNG. "
+            "Use the controls to animate calls from <code>main</code> and explore neighbors of each function.</p>\n"
+        )
+
+        # Controls
+        f.write("<div id=\"controls\">\n")
+        f.write('<button id="btn-play">Play ▶️</button>\n')
+        f.write('<button id="btn-play-backward">Play ◀️</button>\n')
+        f.write('<button id="btn-pause">Pause ⏸</button>\n')
+        f.write('<button id="btn-prev">Step Back</button>\n')
+        f.write('<button id="btn-next">Step Forward</button>\n')
+
+        f.write(
+            '<label style="margin-left:10px;">Speed '
+            '<input type="range" id="speed" min="0.25" max="3" step="0.25" value="1"> '
+            '<span id="speed-value">1.0x</span></label>\n'
+        )
+        f.write(
+            '<label style="margin-left:10px;">'
+            '<input type="checkbox" id="follow-line"> Track Step'
+            '</label>\n'
+        )
+
+        f.write(
+            '<label style="margin-left:10px;">'
+            '<input type="checkbox" id="highlight-outgoing" checked> Outgoing edges'
+            '</label>\n'
+        )
+        f.write(
+            '<label style="margin-left:10px; margin-right:50px;">'
+            '<input type="checkbox" id="highlight-incoming"> Incoming edges'
+            '</label>\n'
+        )
+
+        # Search bar with suggestions and Clear button
+        f.write(
+            '<label style="margin-left:10px; font-size:30px; vertical-align:middle;">'
+            'Find: '
+            '<input type="text" id="search-node" size="20" '
+            'placeholder="function name" '
+            'style="height:2.4em; width:500px; font-size:30px; vertical-align:middle; line-height:1.2;" '
+            'list="search-node-list" /> '
+            '<button id="search-node-btn" '
+            'style="height:2.4em; font-size:30px; vertical-align:middle;">Go</button>'
+            '<button id="clear-node-btn" '
+            'style="height:2.4em; font-size:30px; vertical-align:middle; margin-left:4px;">Clear</button>'
+            '</label>\n'
+        )
+
+
+        # Dropdown suggestions list
+        f.write('<datalist id="search-node-list"></datalist>\n')
+
+        # Zoom controls
+        f.write(
+            '<span style="margin-left:auto;">Zoom: '
+            '<button id="zoom-in">+</button>'
+            '<button id="zoom-out">-</button>'
+            '<button id="zoom-reset">Reset</button>'
+            '</span>\n'
+        )
+        f.write("</div>\n")
+
+        # Node info UI: separate bar for name and path
+        # Node info UI: separate bar for name and path
+        f.write(
+            '<div id="node-info-container" style="padding:8px 12px; display:flex; flex-direction:column; gap:4px;">'
+            '  <label>'
+            '    Function name: '
+            '    <input id="node-name" type="text" style="width:22.6%;" readonly /> '
+            '    <button id="copy-node-name">Copy Function Name</button>'
+            '  </label>'
+            '  <label>'
+            '    Path: '
+            '    <input id="node-path" type="text" style="width:25%;" readonly /> '
+            '    <button id="copy-node-path">Copy Path</button>'
+            '  </label>'
+            '</div>\n'
+        )
+
+        f.write(
+            '<div id="main-split">'
+            '  <div id="left-panel">'
+
+            # Tabs
+            '    <div id="tabs" style="display:flex; border-bottom:1px solid #ccc;">'
+            '      <div class="tab active" data-tab="keygen">KeyGen</div>'
+            '      <div class="tab" data-tab="encap">Encap</div>'
+            '      <div class="tab" data-tab="decap">Decap</div>'
+            '    </div>'
+
+            # Steps container
+            '    <div id="steps-container">'
+            '      <div class="steps" id="steps-keygen"></div>'
+            '      <div class="steps" id="steps-encap" style="display:none;"></div>'
+            '      <div class="steps" id="steps-decap" style="display:none;"></div>'
+            '    </div>'
+
+            # Selected variable box
+            '    <div id="variable-box" style="border-top:1px solid #ddd; padding:10px;">'
+            '      <b>Selected Variable</b>'
+            '      <div id="variable-meta" style="font-size:12px; color:#666; margin-top:4px;"></div>'
+            '      <textarea id="variable-hex" style="width:100%; height:140px; margin-top:6px; font-family:monospace;"></textarea>'
+            '    </div>'
+
+            '  </div>'
+
+            # Callgraph
+            '  <div id="graph-container">'
+            '    <div id="graph"></div>'
+            '  </div>'
+
+            '</div>\n'
+        )
+
+        f.write("""
+            <script>
+
+            // TAB SWITCHING
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.addEventListener('click', () => {
+
+                    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                    tab.classList.add('active');
+
+                    let selectedTab = tab.dataset.tab;
+                    currentTab = selectedTab;
+                    renderSteps();
+
+                    document.querySelectorAll('.steps').forEach(s => s.style.display = 'none');
+                    document.getElementById('steps-' + selectedTab).style.display = 'block';
+                });
+            });
+
+            </script>
+        """)
+
+
+        # Viz.js + svg-pan-zoom from CDN
+        f.write(
+            '<script src="https://cdn.jsdelivr.net/npm/viz.js@2.1.2/viz.js"></script>\n'
+        )
+        f.write(
+            '<script src="https://cdn.jsdelivr.net/npm/viz.js@2.1.2/full.render.js"></script>\n'
+        )
+        f.write(
+            '<script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>\n'
+        )
+
+        # JS: data + logic
+        f.write("<script>\n")
+        f.write(f'const dotSrc = "{dot_js}";\n')
+
+        f.write(f'const traceSteps = {trace_json};\n')
+        
+        steps_blob = json.dumps(steps_json or {})
+        flow_blob  = json.dumps(flow_spec or {})
+        f.write(f'const stepsData = {steps_blob};\n')
+        f.write(f'const flowSpec = {flow_blob};\n')
+
+        
+        f.write(r"""
+    function escapeHtml(s) {
+        return (s || "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    function selectHex(metaText, hex) {
+        const meta = document.getElementById("trace-detail-meta");
+        const ta = document.getElementById("trace-detail-hex");
+        if (meta) meta.textContent = metaText || "";
+        if (ta) ta.value = hex || "";
+    }
+
+    function highlightFunctionByName(funcName) {
+        // If graph not loaded yet, do nothing
+        if (!nodeMap || !nodeMap[funcName]) return;
+        const node = nodeMap[funcName];
+        emphasizeNode(node);
+        focusOnNode(node);
+        selectedNode = funcName;
+        updateNeighborHighlights();
+
+        // Update the node info bars too
+        const nodeNameInput = document.getElementById('node-name');
+        const nodePathInput = document.getElementById('node-path');
+        if (nodeNameInput) nodeNameInput.value = funcName;
+        if (nodePathInput) {
+            const info = sym2Info[funcName];
+            nodePathInput.value = info ? info.path : "??";
+        }
+    }
+
+    function renderTraceSteps() {
+        const container = document.getElementById("trace-steps");
+        if (!container) return;
+
+        if (!traceSteps || traceSteps.length === 0) {
+            container.innerHTML = "<div style='color:#666;'>No trace steps loaded. Provide --trace-log with TRACE|... lines.</div>";
+            return;
+        }
+
+        // Build step list (collapsible cards)
+        let html = "";
+        for (const step of traceSteps) {
+            const func = step.func || "?";
+            const vars = step.vars || [];
+            html += `
+            <div class="trace-step" data-func="${escapeHtml(func)}"
+                style="border:1px solid #ddd; border-radius:10px; padding:10px; margin-bottom:10px;">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                <div>
+                    <div style="font-weight:700;">${escapeHtml(func)}</div>
+                    <div style="font-size:12px; color:#666;">vars: ${vars.length}</div>
+                </div>
+                <button class="trace-jump" data-func="${escapeHtml(func)}">Go</button>
+                </div>
+                <div style="margin-top:8px;">
+                ${vars.map((v, idx) => {
+                    if (v.type === "buf") {
+                        const hex = v.hex || "";
+                        const len = v.len ?? (hex.length/2);
+                        const preview = hex.slice(0, 64) + (hex.length > 64 ? "…" : "");
+                        return `
+                            <div style="padding:6px 0; border-top:1px dashed #eee;">
+                            <div style="display:flex; justify-content:space-between; gap:8px;">
+                                <div>
+                                <b>${escapeHtml(v.name)}</b>
+                                <span style="font-size:12px; color:#666;">(${len} bytes)</span>
+                                </div>
+                                <button class="trace-show" data-func="${escapeHtml(func)}" data-name="${escapeHtml(v.name)}" data-hex="${escapeHtml(hex)}" data-len="${len}">Show</button>
+                            </div>
+                            <div style="font-family:monospace; font-size:12px; color:#444; margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                                ${escapeHtml(preview)}
+                            </div>
+                            </div>
+                        `;
+                    } else if (v.type === "u32") {
+                        return `
+                            <div style="padding:6px 0; border-top:1px dashed #eee;">
+                            <b>${escapeHtml(v.name)}</b> = <span style="font-family:monospace;">${escapeHtml(String(v.value))}</span>
+                            </div>
+                        `;
+                    } else {
+                        return `
+                            <div style="padding:6px 0; border-top:1px dashed #eee;">
+                            <b>${escapeHtml(v.name || "var")}</b>
+                            </div>
+                        `;
+                    }
+                }).join("")}
+                </div>
+            </div>
+            `;
+        }
+
+        container.innerHTML = html;
+
+        // Hook buttons
+        container.querySelectorAll(".trace-jump").forEach(btn => {
+            btn.addEventListener("click", (ev) => {
+            ev.preventDefault();
+            const fn = btn.getAttribute("data-func");
+            highlightFunctionByName(fn);
+            });
+        });
+
+        container.querySelectorAll(".trace-show").forEach(btn => {
+            btn.addEventListener("click", (ev) => {
+            ev.preventDefault();
+            const fn = btn.getAttribute("data-func") || "";
+            const name = btn.getAttribute("data-name") || "";
+            const hex = btn.getAttribute("data-hex") || "";
+            const len = btn.getAttribute("data-len") || "";
+            selectHex(`${fn} :: ${name} (${len} bytes)`, hex);
+            });
+        });
+
+        const copyBtn = document.getElementById("copy-trace-hex");
+        if (copyBtn) {
+            copyBtn.onclick = () => {
+            const ta = document.getElementById("trace-detail-hex");
+            if (!ta || !ta.value) return;
+            navigator.clipboard.writeText(ta.value).catch(err => console.error(err));
+            };
+        }
+    }
+        """)
+
+
+        f.write("const edgeOrder = [\n")
+        for key in edge_keys:
+            f.write(f'  "{_js_escape(key)}",\n')
+        f.write("];\n")
+
+        # JS mapping: symbol -> { name, path }
+        f.write("const sym2Info = {\n")
+        for sym, path in sym2path.items():
+            f.write(
+                f'  "{_js_escape(sym)}": {{ '
+                f'name: "{_js_escape(sym)}", '
+                f'path: "{_js_escape(str(path))}" }},\n'
+            )
+        f.write("};\n")
+
+
+        # --- Zoom compensation for controls ---
+        f.write(r"""
+    // Keep the control buttons readable when the user zooms the page
+    let basePixelRatio = window.devicePixelRatio || 1;
+    let baseControlsFontSize = null;
+
+    function initZoomCompensation() {
+        const controls = document.getElementById('controls');
+        if (!controls) return;
+        const computed = window.getComputedStyle(controls);
+        baseControlsFontSize = parseFloat(computed.fontSize) || 14;
+    }
+
+    function applyZoomCompensation() {
+        const controls = document.getElementById('controls');
+        if (!controls || baseControlsFontSize === null) return;
+
+        const ratio = (window.devicePixelRatio || 1) / basePixelRatio;
+
+        // Extra boost factor so buttons get a bit larger than “exactly same size”
+        const extraBoost = 1.4;  // tweak: 1.2–1.8
+
+        // When zoom = 50% → ratio ~0.5 → 1/ratio = 2 → × extraBoost = 2.8
+        const scale = (1 / ratio) * extraBoost;
+
+        controls.style.fontSize = (baseControlsFontSize * scale) + "px";
+    }
+
+    window.addEventListener('load', () => {
+        initZoomCompensation();
+        applyZoomCompensation();
+    });
+
+    // devicePixelRatio usually changes on zoom and triggers resize
+    window.addEventListener('resize', applyZoomCompensation);
+        """)
+
+        f.write(r"""
+    let viz = new Viz();
+    let edgeElements = [];
+    let currentIndex = -1;        // index of the "current" edge in animation order
+    let playingDirection = null;  // "forward" | "backward" | null
+    let speed = 1.0;
+    let panZoom = null;
+    let svgRoot = null;
+    let followLine = false;
+
+    // Node selection + neighbor highlighting state
+    let selectedNode = null;
+    let showOutgoing = true;
+    let showIncoming = false;
+    
+    let selectedVarKey = null; // "StepTitle::VarName" (used to toggle-highlight chips)
+
+    let nodeMap = {};   // symbol -> <g.node> (global so all functions can use it)
+
+    function setupGraphAnimation(svgElement) {
+        svgRoot = svgElement;
+
+        // Enable pan/zoom with visible control icons, but disable dbl-click zoom
+        panZoom = svgPanZoom(svgElement, {
+            controlIconsEnabled: true,
+            zoomScaleSensitivity: 0.4,
+            dblClickZoomEnabled: false
+        });
+
+        // Map from symbol -> node <g> for search/focus
+        nodeMap = {};
+
+        // Map Graphviz edges by title "caller->callee"
+        const edgeGroupsByKey = {};
+        const edgeGroups = svgElement.querySelectorAll('g.edge');
+        edgeGroups.forEach(g => {
+            const titleEl = g.querySelector('title');
+            if (!titleEl) return;
+            const key = titleEl.textContent.trim();
+            edgeGroupsByKey[key] = g;
+        });
+
+        // Build ordered edge elements and prepare stroke-dash animation
+        edgeElements = edgeOrder.map((key, idx) => {
+            const g = edgeGroupsByKey[key];
+            if (!g) return null;
+            const path = g.querySelector('path');
+            if (!path) return null;
+
+            const length = path.getTotalLength();
+
+            // base style
+            path.setAttribute('stroke', '#aaaaaa');
+            path.setAttribute('stroke-width', '1.5');
+            path.setAttribute('fill', 'none');
+
+            // prepare for "draw line" animation
+            path.setAttribute('stroke-dasharray', length);
+            path.setAttribute('stroke-dashoffset', length);
+            path.setAttribute('data-base-color', '#aaaaaa');
+            path.setAttribute('data-discovered', '0'); // 0 = not discovered yet
+
+            return { key, group: g, path, length };
+        }).filter(e => e !== null);
+
+        // Initially: nothing discovered
+        highlightEdges(-1);
+
+        // Hook up controls
+        const btnPlay        = document.getElementById('btn-play');
+        const btnPlayBack    = document.getElementById('btn-play-backward');
+        const btnPause       = document.getElementById('btn-pause');
+        const btnPrev        = document.getElementById('btn-prev');
+        const btnNext        = document.getElementById('btn-next');
+        const speedSlider    = document.getElementById('speed');
+        const speedValue     = document.getElementById('speed-value');
+        const followCheckbox = document.getElementById('follow-line');
+        const zoomInBtn      = document.getElementById('zoom-in');
+        const zoomOutBtn     = document.getElementById('zoom-out');
+        const zoomResetBtn   = document.getElementById('zoom-reset');
+        const outgoingCheckbox = document.getElementById('highlight-outgoing');
+        const incomingCheckbox = document.getElementById('highlight-incoming');
+        const searchInput      = document.getElementById('search-node');
+        const searchBtn        = document.getElementById('search-node-btn');
+        const clearBtn          = document.getElementById('clear-node-btn');
+        const searchList        = document.getElementById('search-node-list');
+        const nodeNameInput     = document.getElementById('node-name');
+        const copyNodeNameBtn   = document.getElementById('copy-node-name');
+        const nodePathInput     = document.getElementById('node-path');
+        const copyNodePathBtn   = document.getElementById('copy-node-path');
+
+        btnPlay.onclick = () => {
+            // prevent stacking multiple forward runs
+            if (playingDirection !== null) return;
+            playingDirection = "forward";
+            runAnimationForward();
+        };
+        btnPlayBack.onclick = () => {
+            // prevent stacking multiple backward runs
+            if (playingDirection !== null) return;
+            playingDirection = "backward";
+            runAnimationBackward();
+        };
+        btnPause.onclick = () => {
+            playingDirection = null;
+        };
+        btnNext.onclick = () => {
+            playingDirection = null;
+            stepForward();
+        };
+        btnPrev.onclick = () => {
+            playingDirection = null;
+            stepBack();
+        };
+
+        speedSlider.oninput = () => {
+            speed = parseFloat(speedSlider.value);
+            speedValue.textContent = speed.toFixed(2) + "x";
+        };
+
+        followCheckbox.onchange = () => {
+            followLine = followCheckbox.checked;
+            if (followLine && currentIndex >= 0) {
+                focusOnEdge(currentIndex);
+            }
+        };
+
+        if (zoomInBtn)  zoomInBtn.onclick  = () => { if (panZoom) panZoom.zoomIn();  };
+        if (zoomOutBtn) zoomOutBtn.onclick = () => { if (panZoom) panZoom.zoomOut(); };
+        if (zoomResetBtn) zoomResetBtn.onclick = () => { if (panZoom) panZoom.reset(); };
+
+        if (outgoingCheckbox) {
+            showOutgoing = outgoingCheckbox.checked;
+            outgoingCheckbox.onchange = () => {
+                showOutgoing = outgoingCheckbox.checked;
+                updateNeighborHighlights();
+            };
+        }
+
+        if (incomingCheckbox) {
+            showIncoming = incomingCheckbox.checked;
+            incomingCheckbox.onchange = () => {
+                showIncoming = incomingCheckbox.checked;
+                updateNeighborHighlights();
+            };
+        }
+
+        if (copyNodeNameBtn && nodeNameInput) {
+            copyNodeNameBtn.onclick = () => {
+                if (!nodeNameInput.value) return;
+                navigator.clipboard
+                    .writeText(nodeNameInput.value)
+                    .catch(err => console.error("Clipboard error:", err));
+            };
+        }
+
+        if (copyNodePathBtn && nodePathInput) {
+            copyNodePathBtn.onclick = () => {
+                if (!nodePathInput.value) return;
+                navigator.clipboard
+                    .writeText(nodePathInput.value)
+                    .catch(err => console.error("Clipboard error:", err));
+            };
+        }
+
+        // Search functionality
+        if (searchBtn && searchInput) {
+            searchBtn.onclick = () => {
+                const q = searchInput.value.trim();
+                if (!q) return;
+                searchAndHighlightNode(q);
+            };
+        }
+
+        if (searchInput) {
+            searchInput.addEventListener('keydown', (ev) => {
+                if (ev.key === 'Enter') {
+                    ev.preventDefault();
+                    const q = searchInput.value.trim();
+                    if (!q) return;
+                    searchAndHighlightNode(q);
+                }
+                if (ev.key === 'Escape') {
+                    if (clearBtn) clearBtn.click();
+                }
+            });
+        }
+
+        // Clear functionality
+        if (clearBtn) {
+            clearBtn.onclick = () => {
+                searchInput.value = "";
+                selectedNode = null;
+                updateNeighborHighlights();
+
+                // Remove highlighted borders if any
+                if (lastHighlightedNode) {
+                    const prev = lastHighlightedNode.querySelectorAll('ellipse,polygon,rect');
+                    prev.forEach(s => {
+                        s.setAttribute('stroke', '#000000');
+                        s.setAttribute('stroke-width', '1');
+                    });
+                    lastHighlightedNode = null;
+                }
+
+                // Clear info fields
+                if (nodeNameInput) nodeNameInput.value = "";
+                if (nodePathInput) nodePathInput.value = "";
+            };
+        }
+
+        // Make nodes clickable: select/deselect symbol
+        const nodes = svgElement.querySelectorAll('g.node');
+        nodes.forEach(node => {
+            const titleEl = node.querySelector('title');
+            if (!titleEl) return;
+            const sym = titleEl.textContent.trim();
+
+            nodeMap[sym] = node;
+
+            node.style.cursor = 'pointer';
+
+            // Single-click: select node for incoming/outgoing highlighting
+            node.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                if (selectedNode === sym) {
+                    selectedNode = null;
+                } else {
+                    selectedNode = sym;
+                }
+                updateNeighborHighlights();
+
+                // Update the separate name bar
+                if (nodeNameInput) {
+                    nodeNameInput.value = sym || "";
+                }
+
+                // Update the path bar using sym2Info
+                if (nodePathInput) {
+                    const info = sym2Info[sym];
+                    nodePathInput.value = info ? info.path : "??";
+                }
+            });
+
+            // Double-click: continue animation from this node's outgoing edges
+            node.addEventListener('dblclick', (ev) => {
+                ev.stopPropagation();
+                ev.preventDefault();
+                continueFromNode(sym);
+            });
+        });
+
+        // Fill dropdown suggestions
+        if (searchList) {
+            searchList.innerHTML = "";
+            Object.keys(nodeMap).sort().forEach(sym => {
+                const opt = document.createElement('option');
+                opt.value = sym;
+                searchList.appendChild(opt);
+            });
+        }
+
+        // Search by name, highlight node + its edges and jump to it
+        function searchAndHighlightNode(query) {
+            if (!query) return;
+
+            const qLower = query.toLowerCase();
+
+            // Prefer exact match first
+            if (nodeMap[query]) {
+                applyNodeSelection(query, nodeMap[query]);
+                return;
+            }
+
+            // Then substring match
+            for (const sym in nodeMap) {
+                if (sym.toLowerCase().includes(qLower)) {
+                    applyNodeSelection(sym, nodeMap[sym]);
+                    return;
+                }
+            }
+            // No match: do nothing (or you could flash the input)
+        }
+
+        function applyNodeSelection(sym, node) {
+            // Use same selection logic as clicking the node
+            selectedNode = sym;
+            updateNeighborHighlights();
+
+            if (nodeNameInput) {
+                nodeNameInput.value = sym || "";
+            }
+            if (nodePathInput) {
+                const info = sym2Info[sym];
+                nodePathInput.value = info ? info.path : "??";
+            }
+
+            // Visually emphasize the node and jump to it
+            emphasizeNode(node);
+            focusOnNode(node);
+        }
+    }
+
+    // Double-click helper: find first edge with this node as caller,
+    // jump animation to just before it, and start playing forward.
+    function continueFromNode(sym) {
+        if (!edgeElements.length) return;
+
+        let idx = -1;
+        for (let i = 0; i < edgeElements.length; i++) {
+            const e = edgeElements[i];
+            if (!e || !e.key) continue;
+            if (e.key.startsWith(sym + "->")) {
+                idx = i;
+                break;
+            }
+        }
+        if (idx === -1) {
+            return; // no outgoing edges from this symbol
+        }
+
+        // Apply one step forward from this node:
+        // make that edge the current one (red), but don't start animation.
+        highlightEdges(idx);
+        playingDirection = null;   // ensure nothing is playing
+        focusOnEdge(idx);          // optional: center camera on that edge
+    }
+
+    // Move the camera so the midpoint of the given edge
+    // is centered in the visible container.
+    // Uses getScreenCTM + panBy (no centerOn / manual zoom math).
+    function focusOnEdge(index) {
+        if (!followLine) return;
+        if (!panZoom || !svgRoot) return;
+        if (index < 0 || index >= edgeElements.length) return;
+
+        const e = edgeElements[index];
+        if (!e || !e.path) return;
+
+        try {
+            const path   = e.path;
+            const length = e.length;
+
+            // Midpoint of the edge in the path's coordinate system
+            const mid = path.getPointAtLength(length / 2);
+
+            // Need SVGPoint to transform to screen coordinates
+            if (!svgRoot.createSVGPoint) {
+                return; // give up gracefully on very old browsers
+            }
+
+            const pt = svgRoot.createSVGPoint();
+            pt.x = mid.x;
+            pt.y = mid.y;
+
+            // Transform that point to *screen* coordinates using the element's CTM
+            const ctm = path.getScreenCTM();
+            if (!ctm || !pt.matrixTransform) {
+                return;
+            }
+            const screenPt = pt.matrixTransform(ctm);
+
+            // Compute the center of the visible graph container in screen coords
+            const container = document.getElementById('graph-container');
+            if (!container) return;
+            const rect = container.getBoundingClientRect();
+            const centerX = rect.left + rect.width  / 2;
+
+            // Shift the "target" point a bit *lower* than the true center.
+            const verticalBias = 0.25;
+            const centerY = rect.top + rect.height * verticalBias;
+
+            // We want to move the SVG so that screenPt goes to (centerX, centerY).
+            const dx = centerX - screenPt.x;
+            const dy = centerY - screenPt.y;
+
+            // panBy expects deltas in screen pixels
+            panZoom.panBy({ x: dx, y: dy });
+        } catch (err) {
+            console.error("Error in focusOnEdge:", err);
+        }
+    }
+
+
+    let lastHighlightedNode = null;
+
+    // Center the view on a given node, similar to focusOnEdge
+    function focusOnNode(node) {
+        if (!panZoom || !svgRoot) return;
+        if (!node || !node.getBBox) return;
+
+        const bbox = node.getBBox();
+        const center = svgRoot.createSVGPoint();
+        center.x = bbox.x + bbox.width / 2;
+        center.y = bbox.y + bbox.height / 2;
+
+        const ctm = node.getScreenCTM();
+        if (!ctm || !center.matrixTransform) return;
+        const screenPt = center.matrixTransform(ctm);
+
+        const container = document.getElementById('graph-container');
+        if (!container) return;
+        const rect = container.getBoundingClientRect();
+        const centerX = rect.left + rect.width / 2;
+        const verticalBias = 0.25;
+        const centerY = rect.top + rect.height * verticalBias;
+
+        const dx = centerX - screenPt.x;
+        const dy = centerY - screenPt.y;
+
+        panZoom.panBy({ x: dx, y: dy });
+    }
+
+    // Give the node a visible outline, reset previous one
+    function emphasizeNode(node) {
+        if (lastHighlightedNode && lastHighlightedNode !== node) {
+            const prevShapes = lastHighlightedNode.querySelectorAll('ellipse,polygon,rect');
+            prevShapes.forEach(s => {
+                s.setAttribute('stroke', '#000000');
+                s.setAttribute('stroke-width', '1');
+            });
+        }
+
+        const shapes = node.querySelectorAll('ellipse,polygon,rect');
+        shapes.forEach(s => {
+            s.setAttribute('stroke', '#ffa500'); // orange
+            s.setAttribute('stroke-width', '3');
+        });
+
+        lastHighlightedNode = node;
+    }
+
+
+    // Apply neighbor-based highlighting on top of base colors
+    // - Outgoing edges of selected node: green
+    // - Incoming edges of selected node: purple
+    // - Current animated (red) edge keeps its red color
+    // - Also color the nodes themselves:
+    //     * selected node: orange border
+    //     * outgoing targets: green border
+    //     * incoming sources: purple border
+    function updateNeighborHighlights() {
+        if (!edgeElements.length) return;
+
+        const outgoingEdgeSet = new Set();
+        const incomingEdgeSet = new Set();
+        const outgoingNodeSet = new Set(); // callees of selected
+        const incomingNodeSet = new Set(); // callers of selected
+
+        if (selectedNode) {
+            edgeElements.forEach((e, i) => {
+                if (!e || !e.path || !e.key) return;
+                const key = e.key;
+                const parts = key.split("->");
+                if (parts.length !== 2) return;
+                const caller = parts[0];
+                const callee = parts[1];
+
+                if (showOutgoing && caller === selectedNode) {
+                    outgoingEdgeSet.add(i);
+                    outgoingNodeSet.add(callee);
+                }
+                if (showIncoming && callee === selectedNode) {
+                    incomingEdgeSet.add(i);
+                    incomingNodeSet.add(caller);
+                }
+            });
+        }
+
+        // ---- Edge colors (same as before, but using the sets above) ----
+        edgeElements.forEach((e, i) => {
+            if (!e || !e.path) return;
+            const path = e.path;
+            const length = e.length;
+            const baseColor = path.getAttribute("data-base-color") || "#aaaaaa";
+            const discovered = path.getAttribute("data-discovered") === "1";
+            const isOutgoing = outgoingEdgeSet.has(i);
+            const isIncoming = incomingEdgeSet.has(i);
+            const highlighted = isOutgoing || isIncoming;
+
+            // Color priority:
+            //  1. animated red (baseColor == red)
+            //  2. incoming purple
+            //  3. outgoing green
+            //  4. baseColor (grey)
+            if (baseColor === "#ff0000") {
+                path.setAttribute("stroke", baseColor);
+            } else if (isIncoming) {
+                path.setAttribute("stroke", "#800080"); // purple
+            } else if (isOutgoing) {
+                path.setAttribute("stroke", "#008000"); // green
+            } else {
+                path.setAttribute("stroke", baseColor);
+            }
+
+            // Visibility: discovered OR highlighted edges are visible
+            if (discovered || highlighted) {
+                path.setAttribute("stroke-dashoffset", 0);
+            } else {
+                path.setAttribute("stroke-dashoffset", length);
+            }
+        });
+
+        // ---- Node colors (new part) ----
+        Object.entries(nodeMap).forEach(([sym, node]) => {
+            const shapes = node.querySelectorAll("ellipse,polygon,rect");
+            shapes.forEach(s => {
+                // Default border
+                let stroke = "#000000";
+                let strokeWidth = "1";
+
+                if (sym === selectedNode) {
+                    stroke = "#ff9900";        // selected node: orange
+                    strokeWidth = "3";
+                } else if (incomingNodeSet.has(sym)) {
+                    stroke = "#800080";        // callers: purple
+                    strokeWidth = "3";
+                } else if (outgoingNodeSet.has(sym)) {
+                    stroke = "#008000";        // callees: green
+                    strokeWidth = "3";
+                }
+
+                s.setAttribute("stroke", stroke);
+                s.setAttribute("stroke-width", strokeWidth);
+            });
+        });
+    }
+
+
+    // Color & discovered state for all edges based on currentIndex
+    //   - current edge (i == currentIndex): RED and discovered
+    //   - edges < currentIndex: GREY and discovered
+    //   - edges > currentIndex: GREY and not discovered
+    // Dashoffset is handled in updateNeighborHighlights so we can show
+    // future edges if they're highlighted via checkboxes.
+    function highlightEdges(idx) {
+        if (typeof idx === "number") {
+            currentIndex = idx;
+        }
+
+        edgeElements.forEach((e, i) => {
+            if (!e || !e.path) return;
+            const path = e.path;
+            let baseColor = "#aaaaaa";
+            let discovered = "0";
+
+            if (currentIndex < 0) {
+                // Initial: nothing discovered
+                baseColor = "#aaaaaa";
+                discovered = "0";
+            } else if (i === currentIndex) {
+                // current edge: red + discovered
+                baseColor = "#ff0000";
+                discovered = "1";
+            } else if (i < currentIndex) {
+                // older than current: grey + discovered
+                baseColor = "#aaaaaa";
+                discovered = "1";
+            } else {
+                // future edges: grey + not discovered
+                baseColor = "#aaaaaa";
+                discovered = "0";
+            }
+
+            path.setAttribute("stroke", baseColor);
+            path.setAttribute("data-base-color", baseColor);
+            path.setAttribute("data-discovered", discovered);
+        });
+
+        updateNeighborHighlights();
+    }
+
+    function stepForward() {
+        if (edgeElements.length === 0) return;
+        if (currentIndex < edgeElements.length - 1) {
+            highlightEdges(currentIndex + 1);
+            focusOnEdge(currentIndex);
+        }
+    }
+
+    function stepBack() {
+        if (edgeElements.length === 0) return;
+        if (currentIndex > 0) {
+            highlightEdges(currentIndex - 1);
+            focusOnEdge(currentIndex);
+        } else if (currentIndex === 0) {
+            // go back to "no edge selected"
+            highlightEdges(-1);
+        }
+    }
+
+    // Animate drawing (or undrawing) of a single edge
+    function animateEdge(index, direction, onDone) {
+        if (index < 0 || index >= edgeElements.length) {
+            onDone(false);
+            return;
+        }
+        const e = edgeElements[index];
+        if (!e || !e.path || !e.length) {
+            onDone(false);
+            return;
+        }
+
+        const path   = e.path;
+        const length = e.length;
+
+        const baseDuration = 900; // ms
+        const totalSteps   = 40;
+        const interval     = baseDuration / (speed * totalSteps);
+        let t = 0;
+
+        // ensure current line is red while animating
+        path.setAttribute("stroke", "#ff0000");
+        path.setAttribute("data-base-color", "#ff0000");
+        path.setAttribute("stroke-dasharray", length);
+
+        // starting dashoffset depends on direction
+        if (direction === "forward") {
+            // draw from nothing -> full
+            path.setAttribute("stroke-dashoffset", length);
+        } else {
+            // backward: erase from full -> nothing
+            path.setAttribute("stroke-dashoffset", 0);
+        }
+
+        const timer = setInterval(() => {
+            // stop if user changed direction or paused
+            if (playingDirection !== direction) {
+                clearInterval(timer);
+                onDone(false);
+                return;
+            }
+
+            t++;
+            const alpha = t / totalSteps;
+
+            if (direction === "forward") {
+                // draw line progressively
+                const offset = length * (1 - alpha);
+                path.setAttribute("stroke-dashoffset", offset);
+            } else {
+                // erase line progressively
+                const offset = length * alpha;
+                path.setAttribute("stroke-dashoffset", offset);
+            }
+
+            if (t >= totalSteps) {
+                clearInterval(timer);
+
+                if (direction === "forward") {
+                    // final: fully drawn
+                    path.setAttribute("stroke-dashoffset", 0);
+                    path.setAttribute("data-discovered", "1");
+                } else {
+                    // final: fully hidden
+                    path.setAttribute("stroke-dashoffset", length);
+                    path.setAttribute("data-discovered", "0");
+                }
+
+                onDone(true);
+            }
+        }, interval);
+    }
+
+    function runAnimationForward() {
+        if (playingDirection !== "forward") return;
+        if (edgeElements.length === 0) {
+            playingDirection = null;
+            return;
+        }
+        const nextIndex = currentIndex + 1;
+        if (nextIndex >= edgeElements.length) {
+            playingDirection = null;
+            return;
+        }
+        // mark this as current (colors + discovered state)
+        highlightEdges(nextIndex);
+        focusOnEdge(nextIndex);
+        animateEdge(nextIndex, "forward", (completed) => {
+            if (!completed || playingDirection !== "forward") return;
+            // keep states consistent
+            highlightEdges(nextIndex);
+            setTimeout(runAnimationForward, 200);
+        });
+    }
+
+    function runAnimationBackward() {
+        if (playingDirection !== "backward") return;
+        if (edgeElements.length === 0) {
+            playingDirection = null;
+            return;
+        }
+        if (currentIndex < 0) {
+            playingDirection = null;
+            return;
+        }
+        const idx = currentIndex;
+        // mark this as current
+        highlightEdges(idx);
+        focusOnEdge(idx);
+        animateEdge(idx, "backward", (completed) => {
+            if (!completed || playingDirection !== "backward") return;
+            // after erasing this edge, move one step back
+            highlightEdges(idx - 1);
+            setTimeout(runAnimationBackward, 200);
+        });
+    }
+    
+    // --- Sidebar: Tabs + Steps + Variables ---
+    let currentTab = "keygen";
+    let activeStepId = null;
+
+    function getStepsForTab(tabId) {
+        // Support both formats:
+        // 1) { "keygen": {steps:[...]}, "encap":{...} }
+        // 2) { tabs:[{id:"keygen", steps:[...]}] }
+        if (!stepsData) return [];
+        if (stepsData.tabs && Array.isArray(stepsData.tabs)) {
+            const t = stepsData.tabs.find(x => x.id === tabId);
+            return t && Array.isArray(t.steps) ? t.steps : [];
+        }
+        if (stepsData[tabId] && Array.isArray(stepsData[tabId].steps)) return stepsData[tabId].steps;
+        if (stepsData.tab === tabId && Array.isArray(stepsData.steps)) return stepsData.steps;
+        return [];
+    }
+
+    function renderTabs() {
+    const btns = document.querySelectorAll("#tabs .tab");
+    btns.forEach(b => {
+            b.classList.toggle("active", b.dataset.tab === currentTab);
+            b.onclick = () => {
+                currentTab = b.dataset.tab;
+                activeStepId = null;
+                renderSteps();
+                clearVarBox();
+            };
+        });
+    }
+
+    function renderSteps() {
+        const steps = getStepsForTab(currentTab);
+        const list = document.getElementById("steps-" + currentTab);
+        if (!list) return;
+
+        list.innerHTML = "";
+        if (!steps.length) {
+            list.innerHTML = "<div style='padding:10px;color:#666;'>No steps for this tab yet.</div>";
+            return;
+        }
+
+        steps.forEach(step => {
+            const div = document.createElement("div");
+            div.className = "step-item" + (step.id === activeStepId ? " active" : "");
+            div.dataset.stepId = step.id;
+
+            const title = document.createElement("div");
+            title.className = "step-title";
+            title.textContent = (step.title || step.id || "Step");
+
+            const funcs = document.createElement("div");
+            funcs.className = "step-funcs";
+            const fns = Array.isArray(step.funcs) ? step.funcs : [];
+            funcs.textContent = fns.length ? ("funcs: " + fns.join(", ")) : "";
+
+            const vars = document.createElement("div");
+            vars.className = "vars";
+            (step.vars || []).forEach(v => {
+                    const chip = document.createElement("span");
+                    chip.className = "var-chip";
+                    chip.textContent = v.name;
+                    chip.onclick = (ev) => {
+                        ev.stopPropagation();
+                        showVar(v, step);
+                        // optional: jump to mapped function when clicking variable
+                        if (step.funcs && step.funcs[0]) {
+                            jumpToFunction(step.funcs[0]);
+                        }
+                    };
+                vars.appendChild(chip);
+            });
+
+            div.appendChild(title);
+            if (funcs.textContent) div.appendChild(funcs);
+            if ((step.vars || []).length) div.appendChild(vars);
+
+            div.onclick = () => {
+                activeStepId = step.id;
+                renderSteps();
+                onStepSelected(step);
+            };
+
+            list.appendChild(div);
+        });
+    }
+
+    function clearVarBox() {
+        const meta = document.getElementById("variable-meta");
+        const pre  = document.getElementById("variable-hex");
+        if (meta) meta.textContent = "";
+        if (pre) pre.value = "";
+    }
+
+    function showVar(v, step) {
+        const meta = document.getElementById("variable-meta");
+        const pre  = document.getElementById("variable-hex");
+        if (meta) meta.textContent = `${v.name} (${v.format || "text"})`;
+        if (!pre) return;
+
+        // Print full value (guaranteed output)
+        let val = v.value ?? "";
+        if (typeof val !== "string") val = JSON.stringify(val, null, 2);
+
+        // Optional pretty hex wrap
+        if ((v.format || "").toLowerCase() === "hex") {
+            val = val.replace(/\s+/g, "");
+            val = val.match(/.{1,64}/g)?.join("\n") || val;
+        }
+        pre.value = val;
+    }
+
+    function onStepSelected(step) {
+        // 1) Highlight/jump to function node in callgraph
+        if (step.funcs && step.funcs.length) {
+            jumpToFunction(step.funcs[0]);
+            highlightFunctions(step.funcs);
+        }
+
+        // 2) If step has flowNodes (future), you can highlight flow nodes here.
+        // For now: no-op (you'll add the flow diagram later).
+    }
+
+    function jumpToFunction(funcName) {
+        // nodeMap is built in setupGraphAnimation
+        const node = nodeMap[funcName];
+        if (!node) return;
+        emphasizeNode(node);
+        focusOnNode(node);
+    }
+
+    function highlightFunctions(funcNames) {
+        // Orange outline for all listed functions
+        if (!funcNames || !funcNames.length) return;
+        funcNames.forEach(fn => {
+            const node = nodeMap[fn];
+            if (!node) return;
+            const shapes = node.querySelectorAll("ellipse,polygon,rect");
+            shapes.forEach(s => {
+                s.setAttribute("stroke", "#ffa500");
+                s.setAttribute("stroke-width", "3");
+            });
+        });
+    }
+
+
+    // Render graph with Viz.js
+    viz.renderSVGElement(dotSrc)
+        .then(
+            function(svgElement) {
+            const container = document.getElementById('graph');
+            container.innerHTML = "";
+            container.appendChild(svgElement);
+            setupGraphAnimation(svgElement);
+            renderTabs();
+            renderSteps();
+            renderTraceSteps();
+        })
+        .catch(
+            function(error) {
+            console.error(error);
+            const container = document.getElementById('graph');
+            container.textContent = "Error rendering graph: " + error;
+        });
+        """)
+        f.write("</script>\n")
+        f.write("</body>\n</html>\n")
+
+    print(f"Wrote animated HTML to {html_path}")
+    print("Open it in a browser (with internet access for the JS libs) to watch the calls animate.")
+
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description="Build a call graph from a RISC-V ELF using objdump + debug info."
+    )
+    ap.add_argument("elf", help="Path to ELF file")
+    ap.add_argument(
+        "--nm-tool",
+        default="riscv32-unknown-elf-nm",
+        help="nm executable (default: riscv32-unknown-elf-nm)",
+    )
+    ap.add_argument(
+        "--objdump-tool",
+        default="riscv32-unknown-elf-objdump",
+        help="objdump executable (default: riscv32-unknown-elf-objdump)",
+    )
+    ap.add_argument(
+        "--addr2line-tool",
+        default="riscv32-unknown-elf-addr2line",
+        help="addr2line executable (default: riscv32-unknown-elf-addr2line)",
+    )
+    ap.add_argument(
+        "--root-func",
+        default="main",
+        help="Root function for the call graph (default: main)",
+    )
+    ap.add_argument(
+        "--dot",
+        help="Graphviz .dot output file for the call graph",
+    )
+    ap.add_argument(
+        "--html",
+        help="HTML file for animated call graph visualization",
+    )
+    ap.add_argument(
+        "--trace-log",
+        default=None,
+        help="Path to UART log containing TRACE|... lines to overlay step view",
+    )
+    ap.add_argument(
+        "--flow-spec",
+        default=None,
+        help="Path to a JSON flow specification (CrypTool-like panels/boxes/arrows + mapping to functions).",
+    )
+    ap.add_argument(
+        "--steps-json",
+        default=None,
+        help="Path to steps JSON (deterministic values for variables) to drive the UI (preferred over --trace-log).",
+    )
+    args = ap.parse_args()
+
+    elf = Path(args.elf).resolve()
+    if not elf.exists():
+        print(f"[!] ELF not found: {elf}")
+        return
+
+    project_root = Path(".").resolve()
+
+    sym2addr, addr2sym = build_symbol_table(str(elf), args.nm_tool)
+    cg = build_call_graph(str(elf), args.objdump_tool)
+    sym2file, project_syms = classify_symbol_files(
+        str(elf), sym2addr, args.addr2line_tool, project_root
+    )
+
+    print(f"ELF: {elf}\n")
+    print_tree(str(elf), cg, sym2file, project_syms, args.root_func)
+
+    if args.dot:
+        write_dot(str(elf), cg, sym2file, project_syms, args.dot, args.root_func, project_root)
+
+    trace_steps = None
+    if args.trace_log:
+        trace_steps = parse_trace_log(args.trace_log)
+
+    steps_json = None
+    if args.steps_json:
+        steps_json = json.loads(Path(args.steps_json).read_text())
+        print("[debug] loaded steps_json keys:", steps_json.keys())
+
+    flow_spec = None
+    if args.flow_spec:
+        flow_spec = json.loads(Path(args.flow_spec).read_text())
+
+    if args.html:
+        write_html_animation(
+            str(elf), cg, sym2file, project_syms,
+            args.html, args.root_func, project_root,
+            trace_steps=trace_steps,
+            steps_json=steps_json,
+            flow_spec=flow_spec,
+        )
+
+if __name__ == "__main__":
+    main()
