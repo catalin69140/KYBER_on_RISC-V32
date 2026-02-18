@@ -603,6 +603,63 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
             .var-bytes     { background:#ffd400; color:#111; border-color:#ffd400; } /* Bytes */
             .var-calc      { background:#00bcd4; color:#111; border-color:#00bcd4; } /* Calculation */
 
+            #flow-panel {
+                border-top: 1px solid #ccc;
+                border-bottom: 1px solid #ccc;
+                background: #0f1729;
+                color: #dbe2ff;
+                padding: 8px 10px 10px 10px;
+            }
+
+            #flow-legend {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 6px;
+                margin-bottom: 8px;
+            }
+
+            #flow-canvas {
+                width: 100%;
+                height: 260px;
+                background: #111b31;
+                border: 1px solid #2d3e63;
+                border-radius: 10px;
+                overflow: hidden;
+            }
+
+            .flow-node-rect {
+                stroke: #d4dcff;
+                stroke-width: 1.2;
+                rx: 8;
+            }
+
+            .flow-node-label {
+                font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+                font-size: 11px;
+                fill: #eef2ff;
+                pointer-events: none;
+            }
+
+            .flow-node-func {
+                font-family: sans-serif;
+                font-size: 9px;
+                fill: #b9c4ee;
+                pointer-events: none;
+            }
+
+            .flow-node.active .flow-node-rect {
+                stroke: #ffffff;
+                stroke-width: 3;
+                filter: brightness(1.12);
+            }
+
+            .flow-edge {
+                stroke: #95a5ce;
+                stroke-width: 1.3;
+                fill: none;
+                marker-end: url(#flow-arrow);
+            }
+
 
             #variable-box {
                 border-top: 1px solid #ccc;
@@ -719,6 +776,13 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
             '      <div class="tab active" data-tab="keygen">KeyGen</div>'
             '      <div class="tab" data-tab="encap">Encap</div>'
             '      <div class="tab" data-tab="decap">Decap</div>'
+            '    </div>'
+
+            # Flow panel
+            '    <div id="flow-panel">'
+            '      <div style="font-size:13px; margin-bottom:6px;">Colors indicate the data type. Click a node or variable to print its value.</div>'
+            '      <div id="flow-legend"></div>'
+            '      <svg id="flow-canvas" viewBox="0 0 760 260" preserveAspectRatio="xMinYMin meet"></svg>'
             '    </div>'
 
             # Steps container
@@ -1681,8 +1745,56 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
     }
     
     // --- Sidebar: Tabs + Steps + Variables ---
+    const VAR_KIND_META = {
+        seed:   { cls: "var-seed",   fill: "#ff8a00", fg: "#111" },
+        matrix: { cls: "var-matrix", fill: "#ff2ea6", fg: "#fff" },
+        vector: { cls: "var-vector", fill: "#8b2cff", fg: "#fff" },
+        poly:   { cls: "var-poly",   fill: "#1db954", fg: "#fff" },
+        bytes:  { cls: "var-bytes",  fill: "#ffd400", fg: "#111" },
+        calc:   { cls: "var-calc",   fill: "#00bcd4", fg: "#111" }
+    };
+    const FLOW_KIND_ORDER = ["seed", "matrix", "vector", "poly", "bytes", "calc"];
+    const FLOW_KIND_LABEL = {
+        seed: "Random bytes/Seeds",
+        matrix: "Matrix",
+        vector: "Vector",
+        poly: "Polynomial",
+        bytes: "Bytes",
+        calc: "Calculation"
+    };
+
+    const defaultFlowSpec = {
+        tabs: {
+            keygen: {
+                nodes: [
+                    { id: "d", label: "d", var: "d", kind: "seed", x: 30, y: 38, w: 52, h: 30, funcs: ["randombytes"] },
+                    { id: "z", label: "z", var: "z", kind: "seed", x: 30, y: 156, w: 52, h: 30, funcs: ["randombytes"] },
+                    { id: "k", label: "k", var: "k", kind: "seed", x: 112, y: 38, w: 52, h: 30, funcs: ["hash_g"] },
+                    { id: "G", label: "G(d||k)", var: "G", kind: "calc", x: 190, y: 38, w: 110, h: 30, funcs: ["hash_g"] },
+                    { id: "rho", label: "rho", var: "rho", kind: "bytes", x: 328, y: 38, w: 64, h: 30, funcs: ["hash_g"] },
+                    { id: "sigma", label: "sigma", var: "sigma", kind: "bytes", x: 328, y: 98, w: 72, h: 30, funcs: ["hash_g"] },
+                    { id: "A", label: "A", var: "A", kind: "matrix", x: 432, y: 38, w: 68, h: 30, funcs: ["gen_matrix"] },
+                    { id: "s", label: "s", var: "s", kind: "vector", x: 432, y: 98, w: 68, h: 30, funcs: ["poly_getnoise_eta1"] },
+                    { id: "e", label: "e", var: "e", kind: "vector", x: 432, y: 156, w: 68, h: 30, funcs: ["poly_getnoise_eta1"] },
+                    { id: "s_hat", label: "s_hat", var: "s_hat", kind: "vector", x: 530, y: 98, w: 80, h: 30, funcs: ["polyvec_ntt"] },
+                    { id: "t_hat", label: "t_hat", var: "t_hat", kind: "vector", x: 530, y: 156, w: 80, h: 30, funcs: ["polyvec_basemul_acc_montgomery"] },
+                    { id: "pk", label: "ek (pk)", var: "ek", kind: "bytes", x: 640, y: 38, w: 86, h: 30, funcs: ["pack_pk"] },
+                    { id: "sk", label: "dk_pke (sk)", var: "dk_pke", kind: "bytes", x: 640, y: 98, w: 108, h: 30, funcs: ["pack_sk"] },
+                    { id: "dk", label: "dk", var: "dk", kind: "bytes", x: 640, y: 156, w: 60, h: 30, funcs: ["crypto_kem_keypair"] }
+                ],
+                edges: [
+                    ["d","G"], ["k","G"], ["G","rho"], ["G","sigma"],
+                    ["rho","A"], ["sigma","s"], ["sigma","e"],
+                    ["s","s_hat"], ["A","t_hat"], ["s_hat","t_hat"], ["e","t_hat"],
+                    ["t_hat","pk"], ["s_hat","sk"], ["sk","dk"], ["z","dk"], ["pk","dk"]
+                ]
+            }
+        }
+    };
+
     let currentTab = "keygen";
     let activeStepId = null;
+    let flowNodeEls = {};
 
     function getStepsForTab(tabId) {
         // Support both formats:
@@ -1698,6 +1810,164 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
         return [];
     }
 
+    function getVarKind(v, fallbackName) {
+        const txt = String(v && (v.kind || v.type || v.category || v.group || fallbackName || "")).toLowerCase();
+        if (txt.includes("matrix")) return "matrix";
+        if (txt.includes("vector")) return "vector";
+        if (txt.includes("poly")) return "poly";
+        if (txt.includes("seed") || txt.includes("random") || txt === "z" || txt === "d" || txt === "k") return "seed";
+        if (txt.includes("calc") || txt.includes("hash") || txt.includes("prf") || txt.includes("ntt")) return "calc";
+        return "bytes";
+    }
+
+    function getFlowForTab(tabId) {
+        const spec = (flowSpec && Object.keys(flowSpec).length) ? flowSpec : defaultFlowSpec;
+        if (spec.tabs && !Array.isArray(spec.tabs)) return spec.tabs[tabId] || null;
+        if (Array.isArray(spec.tabs)) {
+            const t = spec.tabs.find(x => x.id === tabId);
+            return t || null;
+        }
+        return spec[tabId] || null;
+    }
+
+    function renderFlowLegend() {
+        const legend = document.getElementById("flow-legend");
+        if (!legend) return;
+        legend.innerHTML = "";
+        FLOW_KIND_ORDER.forEach(kind => {
+            const pill = document.createElement("span");
+            pill.className = "var-chip " + VAR_KIND_META[kind].cls;
+            pill.style.cursor = "default";
+            pill.textContent = FLOW_KIND_LABEL[kind];
+            legend.appendChild(pill);
+        });
+    }
+
+    function renderFlowGraphForStep(step) {
+        const svg = document.getElementById("flow-canvas");
+        if (!svg) return;
+        const flow = getFlowForTab(currentTab);
+        flowNodeEls = {};
+        if (!flow || !Array.isArray(flow.nodes)) {
+            svg.innerHTML = "";
+            return;
+        }
+
+        const ns = "http://www.w3.org/2000/svg";
+        svg.innerHTML = "";
+
+        const defs = document.createElementNS(ns, "defs");
+        const marker = document.createElementNS(ns, "marker");
+        marker.setAttribute("id", "flow-arrow");
+        marker.setAttribute("viewBox", "0 0 10 10");
+        marker.setAttribute("refX", "9");
+        marker.setAttribute("refY", "5");
+        marker.setAttribute("markerWidth", "5");
+        marker.setAttribute("markerHeight", "5");
+        marker.setAttribute("orient", "auto-start-reverse");
+        const arrowPath = document.createElementNS(ns, "path");
+        arrowPath.setAttribute("d", "M 0 0 L 10 5 L 0 10 z");
+        arrowPath.setAttribute("fill", "#95a5ce");
+        marker.appendChild(arrowPath);
+        defs.appendChild(marker);
+        svg.appendChild(defs);
+
+        const flowNodeById = {};
+        flow.nodes.forEach(n => { flowNodeById[n.id] = n; });
+        (flow.edges || []).forEach(e => {
+            if (!Array.isArray(e) || e.length < 2) return;
+            const src = flowNodeById[e[0]];
+            const dst = flowNodeById[e[1]];
+            if (!src || !dst) return;
+            const line = document.createElementNS(ns, "line");
+            line.setAttribute("class", "flow-edge");
+            line.setAttribute("x1", String(src.x + (src.w || 70)));
+            line.setAttribute("y1", String(src.y + (src.h || 28) / 2));
+            line.setAttribute("x2", String(dst.x));
+            line.setAttribute("y2", String(dst.y + (dst.h || 28) / 2));
+            svg.appendChild(line);
+        });
+
+        const stepVars = {};
+        if (step && Array.isArray(step.vars)) {
+            step.vars.forEach(v => {
+                if (!v || !v.name) return;
+                stepVars[String(v.name).toLowerCase()] = v;
+            });
+        }
+
+        flow.nodes.forEach(n => {
+            const kind = getVarKind(n, n.label || n.id);
+            const style = VAR_KIND_META[kind] || VAR_KIND_META.bytes;
+            const g = document.createElementNS(ns, "g");
+            g.setAttribute("class", "flow-node");
+            g.style.cursor = "pointer";
+            g.dataset.nodeId = n.id;
+
+            const rect = document.createElementNS(ns, "rect");
+            rect.setAttribute("class", "flow-node-rect");
+            rect.setAttribute("x", String(n.x));
+            rect.setAttribute("y", String(n.y));
+            rect.setAttribute("width", String(n.w || 70));
+            rect.setAttribute("height", String(n.h || 28));
+            rect.setAttribute("fill", style.fill);
+            g.appendChild(rect);
+
+            const label = document.createElementNS(ns, "text");
+            label.setAttribute("class", "flow-node-label");
+            label.setAttribute("x", String(n.x + 8));
+            label.setAttribute("y", String(n.y + 16));
+            label.setAttribute("fill", style.fg);
+            label.textContent = n.label || n.id;
+            g.appendChild(label);
+
+            const fn = (Array.isArray(n.funcs) && n.funcs.length) ? n.funcs[0] : (n.func || "");
+            if (fn) {
+                const funcText = document.createElementNS(ns, "text");
+                funcText.setAttribute("class", "flow-node-func");
+                funcText.setAttribute("x", String(n.x + 8));
+                funcText.setAttribute("y", String(n.y + (n.h || 28) - 4));
+                funcText.textContent = fn;
+                g.appendChild(funcText);
+            }
+
+            g.onclick = (ev) => {
+                ev.stopPropagation();
+                const needle = String((n.var || n.label || n.id || "")).toLowerCase();
+                let found = stepVars[needle];
+                if (!found) {
+                    const allKeys = Object.keys(stepVars);
+                    const fuzzy = allKeys.find(k => k.includes(needle) || needle.includes(k));
+                    if (fuzzy) found = stepVars[fuzzy];
+                }
+                if (found && step) {
+                    const varKey = String(step.id || step.title || "step") + "::" + found.name;
+                    toggleVarSelection(varKey, found, step);
+                }
+                if (fn) jumpToFunction(fn);
+            };
+
+            svg.appendChild(g);
+            flowNodeEls[n.id] = g;
+        });
+
+        highlightFlowNodesForStep(step);
+    }
+
+    function highlightFlowNodesForStep(step) {
+        Object.values(flowNodeEls).forEach(el => el.classList.remove("active"));
+        if (!step || !selectedVarKey) return;
+        const vars = Array.isArray(step.vars) ? step.vars : [];
+        const hit = vars.find(v => (String(step.id || step.title || "step") + "::" + v.name) === selectedVarKey);
+        if (!hit) return;
+        const needle = String(hit.name || "").toLowerCase();
+        Object.entries(flowNodeEls).forEach(([id, el]) => {
+            const lbl = String(id || "").toLowerCase();
+            const txt = String(el.textContent || "").toLowerCase();
+            if (lbl === needle || txt.includes(needle)) el.classList.add("active");
+        });
+    }
+
     function renderTabs() {
     const btns = document.querySelectorAll("#tabs .tab");
     btns.forEach(b => {
@@ -1707,6 +1977,7 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
                 activeStepId = null;
                 renderSteps();
                 clearVarBox();
+                renderFlowGraphForStep(null);
             };
         });
     }
@@ -1720,6 +1991,9 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
         if (!steps.length) {
             list.innerHTML = "<div style='padding:10px;color:#666;'>No steps for this tab yet.</div>";
             return;
+        }
+        if (!steps.some(s => s.id === activeStepId)) {
+            activeStepId = steps[0].id;
         }
 
         steps.forEach(step => {
@@ -1740,11 +2014,14 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
             vars.className = "vars";
             (step.vars || []).forEach(v => {
                     const chip = document.createElement("span");
-                    chip.className = "var-chip";
+                    const kind = getVarKind(v, v.name);
+                    const key = String(step.id || step.title || "step") + "::" + v.name;
+                    chip.className = "var-chip " + ((VAR_KIND_META[kind] || VAR_KIND_META.bytes).cls);
+                    if (selectedVarKey === key) chip.classList.add("active");
                     chip.textContent = v.name;
                     chip.onclick = (ev) => {
                         ev.stopPropagation();
-                        showVar(v, step);
+                        toggleVarSelection(key, v, step);
                         // optional: jump to mapped function when clicking variable
                         if (step.funcs && step.funcs[0]) {
                             jumpToFunction(step.funcs[0]);
@@ -1760,11 +2037,13 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
             div.onclick = () => {
                 activeStepId = step.id;
                 renderSteps();
-                onStepSelected(step);
             };
 
             list.appendChild(div);
         });
+
+        const activeStep = steps.find(s => s.id === activeStepId);
+        if (activeStep) onStepSelected(activeStep);
     }
 
     function clearVarBox() {
@@ -1772,12 +2051,13 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
         const pre  = document.getElementById("variable-hex");
         if (meta) meta.textContent = "";
         if (pre) pre.value = "";
+        selectedVarKey = null;
     }
 
     function showVar(v, step) {
         const meta = document.getElementById("variable-meta");
         const pre  = document.getElementById("variable-hex");
-        if (meta) meta.textContent = `${v.name} (${v.format || "text"})`;
+        if (meta) meta.textContent = `${step.title || step.id || currentTab} :: ${v.name} (${v.format || "text"})`;
         if (!pre) return;
 
         // Print full value (guaranteed output)
@@ -1792,15 +2072,26 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
         pre.value = val;
     }
 
+    function toggleVarSelection(varKey, v, step) {
+        if (selectedVarKey === varKey) {
+            clearVarBox();
+        } else {
+            selectedVarKey = varKey;
+            showVar(v, step);
+        }
+        renderSteps();
+        highlightFlowNodesForStep(step);
+    }
+
     function onStepSelected(step) {
         // 1) Highlight/jump to function node in callgraph
         if (step.funcs && step.funcs.length) {
             jumpToFunction(step.funcs[0]);
             highlightFunctions(step.funcs);
         }
-
-        // 2) If step has flowNodes (future), you can highlight flow nodes here.
-        // For now: no-op (you'll add the flow diagram later).
+        // 2) Sync side flow graph with this step
+        renderFlowGraphForStep(step);
+        highlightFlowNodesForStep(step);
     }
 
     function jumpToFunction(funcName) {
@@ -1834,8 +2125,10 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
             container.innerHTML = "";
             container.appendChild(svgElement);
             setupGraphAnimation(svgElement);
+            renderFlowLegend();
             renderTabs();
             renderSteps();
+            renderFlowGraphForStep(null);
             renderTraceSteps();
         })
         .catch(
