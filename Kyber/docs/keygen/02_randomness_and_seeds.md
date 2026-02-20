@@ -1,103 +1,166 @@
-# Randomness and Seeds (`d`, `z`, `rho`, `sigma`)
+# 02 - Randomness, Seed Derivation, and Deterministic Tracing
 
-This step explains where randomness enters KeyGen, how seeds are derived, and how this maps to both your flow diagram and thesis algorithms.
+This file covers the beginning of KeyGen: where randomness enters, how seeds are split into `rho`/`sigma`, and how to force deterministic behavior for debugging and trace generation.
 
-References in thesis PDF:
+## What happens conceptually
 
-- `CPA.KeyGen()` (Algorithm 1, p.12): seed split and sampling inputs
-- `CCA.KeyGen()` (Algorithm 4, p.15): adds random `z`
+At the start of KeyGen, Kyber needs fresh entropy to derive two different kinds of values:
 
-## Concept
+- public-seed material (for reproducible matrix generation)
+- secret-seed material (for noise sampling)
 
-There are two randomness origins in this implementation:
+In ML-KEM-style notation this is often described as random `d` and `z`.
 
-1. `d`-like entropy for K-PKE key material (inside `indcpa_keypair`)
-2. `z` for Fujisaki-Okamoto failure handling (inside `crypto_kem_keypair`)
+In this codebase:
 
-Then `d` is expanded with `G`-style hashing into:
+- `d`-like seed is generated inside `indcpa_keypair`.
+- `z` is generated inside `crypto_kem_keypair`.
 
-- `rho` (public seed, matrix generation)
-- `sigma` (noise seed, secret/error sampling)
+## Code path where randomness enters
 
-## Code: Seed Expansion in K-PKE KeyGen
+### 1) Seed for K-PKE keygen (`d` equivalent)
 
-Source:
-
-- R1: `crypto_kem/kyber512/kyber512r1/indcpa.c:188-197`
-- R2: `crypto_kem/kyber512/kyber512r2/indcpa.c:196-205`
+From `crypto_kem/kyber512/kyber512r2/indcpa.c:197-205`:
 
 ```c
-unsigned char buf[2*KYBER_SYMBYTES];           // 64-byte workspace: later split into rho||sigma
-unsigned char *publicseed = buf;               // first 32 bytes -> rho
-unsigned char *noiseseed = buf+KYBER_SYMBYTES; // second 32 bytes -> sigma
+unsigned char buf[2*KYBER_SYMBYTES];             // 64-byte temp buffer
+unsigned char *publicseed = buf;                 // rho  (first 32 bytes)
+unsigned char *noiseseed  = buf+KYBER_SYMBYTES;  // sigma(second 32 bytes)
 
-randombytes(buf, KYBER_SYMBYTES);              // draw initial 32-byte seed d
-hash_g(buf, buf, KYBER_SYMBYTES);              // expand d -> 64 bytes (rho||sigma)
+randombytes(buf, KYBER_SYMBYTES);                // draw 32-byte random seed d
+hash_g(buf, buf, KYBER_SYMBYTES);                // G(d) -> 64 bytes = rho||sigma
 ```
 
-R1 equivalent call uses direct SHA3 API:
+Line-by-line:
+
+- `randombytes(...)` produces 32 bytes of fresh input entropy.
+- `hash_g(...)` (SHA3-512 by default in r2) expands that into 64 bytes.
+- first half becomes `rho` (`publicseed`), second half `sigma` (`noiseseed`).
+
+R1 equivalent (`sha3_512`) is in `crypto_kem/kyber512/kyber512r1/indcpa.c:195-197`.
+
+### 2) `z` generation in KEM wrapper
+
+From `crypto_kem/kyber512/kyber512r2/kem.c:27`:
 
 ```c
-randombytes(buf, KYBER_SYMBYTES);              // d
-sha3_512(buf, buf, KYBER_SYMBYTES);            // G(d) -> rho||sigma
+randombytes(sk+KYBER_SECRETKEYBYTES-KYBER_SYMBYTES, KYBER_SYMBYTES);
 ```
 
-## Code: `z` Generation in CCA KeyGen
+This writes 32 random bytes to the tail of `sk` (`z` field).
 
-Source:
+## Why seed splitting is necessary
 
-- R1: `crypto_kem/kyber512/kyber512r1/kem.c:26`
-- R2: `crypto_kem/kyber512/kyber512r2/kem.c:27`
+Kyber separates concerns:
+
+- `rho` is public by design and can be shared.
+- `sigma` must stay secret because it drives secret and error sampling.
+
+If one seed served both roles directly, domain separation would be weaker and reasoning about leakage would be harder.
+
+## Failure handling vs your ML-KEM summary
+
+Your summary includes explicit failure return (`bottom`) if randomness is unavailable.
+
+What this implementation does:
+
+- `randombytes(...)` returns `int` (`0` on success in current implementation),
+- but callers do not check return status.
+
+So this repository currently assumes RNG success and does not surface a KeyGen failure symbol.
+
+## Deterministic & Trace-Friendly Execution
+
+This repository is already friendlier to deterministic tracing than production-grade cryptolibs.
+
+### Where seed is set
+
+`Kyber/common/randombytes.c:7-9`:
 
 ```c
-randombytes(sk+KYBER_SECRETKEYBYTES-KYBER_SYMBYTES, KYBER_SYMBYTES); // append z
+static uint32_t seed[32] = { 3, 1, 4, 1, 5, 9, ... };
 ```
 
-Line-by-line meaning:
+This is a fixed initial seed for the local `randombytes` implementation.
 
-- The write offset points to the final 32 bytes of `sk`.
-- Those final 32 bytes are the fallback secret used in decapsulation failure paths.
+### Why runs can be reproduced
 
-## Why This Matters Cryptographically
+Because RNG state is deterministic (`seed` + internal counter `in[]`), repeated runs from the same process start state produce reproducible byte streams.
 
-- `rho` must be public and reproducible so both parties can regenerate matrix `A`.
-- `sigma` must stay secret; it determines sampled `s` and `e`.
-- `z` hardens decapsulation against invalid-ciphertext behavior (FO-style fallback key path).
+### How to force identical runs on purpose
 
-## R1 vs R2 Notes
+1. Reset process and run same binary with same call order.
+2. Do not insert extra `randombytes` calls between runs.
+3. Keep `seed[]` unchanged in `Kyber/common/randombytes.c`.
 
-- Seed split pattern (`d -> rho||sigma`) is identical.
-- Hash abstraction differs:
-  - R1 uses direct `sha3_512`.
-  - R2 uses `hash_g` macro (`symmetric.h`) which defaults to `sha3_512` unless `KYBER_90S` is enabled.
+For vector-test style output, this repo also includes deterministic test drivers:
 
-## Implementation Deviations / Oddities
+- `Kyber/mupq/crypto_kem/testvectors.c:41-45`
+- `Kyber/mupq/crypto_kem/testvectors-host.c:42-45`
 
-1. No explicit RNG failure path:
-   - Your ML-KEM-style flow mentions returning `⊥` if `d` or `z` generation fails.
-   - This code does not check randombytes return status; it assumes success.
-2. API shape:
-   - Your flow models `d` and `z` as explicit inputs into internal KeyGen.
-   - Here both are generated internally inside `indcpa_keypair` and `crypto_kem_keypair`.
+Both embed the same deterministic Bernstein-style RNG setup.
 
-## ASCII Flow (This Step Only)
+### Practical hook point for tracing tools
+
+If you want controlled trace campaigns (e.g., same keypair every run), hook here:
+
+- `Kyber/common/randombytes.c`
+
+Recommended patch idea:
+
+```c
+// pseudo-interface (not currently present)
+void randombytes_set_seed(const uint32_t *seed32);
+```
+
+Then call it once before `crypto_kem_keypair` in your harness.
+
+### Bypassing randomness completely (debug mode)
+
+For one-off debugging, you can temporarily replace:
+
+```c
+randombytes(buf, KYBER_SYMBYTES)
+```
+
+with a fixed byte array copy, but keep this guarded by a debug macro so production logic is not silently changed.
+
+### Performance note
+
+- In this project, heavy Keccak/NTT work dominates crypto cost.
+- RNG cost is usually secondary in KeyGen on these code paths.
+- Denisa thesis results also show hashing-heavy cost dominance in whole KEM blocks.
+
+### ARM comparison note
+
+`2021-561.pdf` focuses on arithmetic/NTT optimization on ARM64. It does not redefine Kyber randomness flow; practical deterministic benchmarking still relies on fixed-seed harnesses, similar to this repo's test-vector programs.
+
+(Interpretation note: this is based on the implementation content and paper focus areas, not on a new RNG design claimed by that paper.)
+
+## Data-flow diagram
 
 ```text
-randombytes(32) --> d
-      |
-      v
+randombytes(32) -> d
+         |
+         v
    G(d) = 64 bytes
-      |
-      +--> rho   (publicseed)  --> matrix A generation
-      '--> sigma (noiseseed)   --> s,e sampling
+      /           \
+   rho             sigma
+(publicseed)     (noiseseed)
+    |               |
+    v               v
+ matrix A gen     noise sampling (s,e)
 
-KEM layer also draws:
-randombytes(32) --> z --> appended to secret key tail
+separately (KEM layer):
+randombytes(32) -> z -> appended to sk tail
 ```
 
-## Cross-Links
+## References used in this file
 
-- Parameter impact (`k`, `eta`, `q`): [03_k_pke_keygen.md](./03_k_pke_keygen.md)
-- Sampling details using `sigma`: [04_sampling_and_polynomials.md](./04_sampling_and_polynomials.md)
-- Final `z` usage in decapsulation: [07_secret_key_and_output.md](./07_secret_key_and_output.md)
+- `D_Greconici___KYBER_on_RISC-V.pdf`: Algorithm 1 (seed split concept), Algorithm 4 (`z` in CCA keygen), pages 12 and 15.
+- `2021-561.pdf`: Kyber-PKE keygen algorithm restatement (`rho,sigma` from hashed seed).
+- Code: `Kyber/common/randombytes.c`, `Kyber/mupq/crypto_kem/testvectors*.c`.
 
+## In simple terms:
+
+KeyGen randomness in this repo comes from a deterministic PRG implementation that is easy to reproduce in tests. One random seed is expanded into `rho` (public matrix seed) and `sigma` (secret sampling seed), and another random value `z` is appended to the secret key for CCA failure handling.

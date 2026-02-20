@@ -1,83 +1,118 @@
-# Kyber KeyGen Overview (R1 and R2)
+# 01 - KeyGen Overview and Role in ML-KEM
 
-This document explains how key generation is implemented in this repository and how it maps to the Kyber algorithm descriptions in the thesis PDF:
+This file gives the high-level picture first: what KeyGen does, where it sits in KEM, and how this repository implements it.
 
-- D. Greconici, *Kyber on RISC-V*: [PDF](https://www.cs.ru.nl/masters-theses/2020/D_Greconici___KYBER_on_RISC-V.pdf)
-- Algorithm list (CPA/CCA KeyGen): page `vi`
-- `CPA.KeyGen()` (Algorithm 1): page `12`
-- `CCA.KeyGen()` (Algorithm 4): page `15`
-- `CCA.Encapsulation()` / `CCA.Decapsulation()` (Algorithms 5/6): page `16`
+## Big picture
 
-## Scope in This Repository
+Key generation in Kyber/ML-KEM creates two keys:
 
-The KeyGen entrypoint is:
+- `pk` (public key): shared with other parties
+- `sk` (secret key): kept private by the owner
 
-- `crypto_kem_keypair()` in:
-  - `crypto_kem/kyber512/kyber512r1/kem.c`
-  - `crypto_kem/kyber768/kyber768r1/kem.c`
-  - `crypto_kem/kyber1024/kyber1024r1/kem.c`
-  - `crypto_kem/kyber512/kyber512r2/kem.c`
-  - `crypto_kem/kyber768/kyber768r2/kem.c`
-  - `crypto_kem/kyber1024/kyber1024r2/kem.c`
+Conceptually, this is done in two layers:
 
-It calls `indcpa_keypair()` in `indcpa.c` (same folder), which is the K-PKE/CPA key generation stage.
+1. K-PKE key generation (`CPA.KeyGen` style): creates algebraic keys from lattice math.
+2. KEM wrapping (`CCA.KeyGen` style): extends secret key with `pk`, `H(pk)`, and `z` for CCA security.
 
-## End-to-End Flow
+This matches the thesis flow:
+
+- `CPA.KeyGen()` (Algorithm 1, Denisa thesis p.12)
+- `CCA.KeyGen()` (Algorithm 4, Denisa thesis p.15)
+
+## KEM vs K-PKE relationship
+
+You can read ML-KEM as:
 
 ```text
-crypto_kem_keypair(pk, sk)          [KEM layer]
-  |
-  +--> indcpa_keypair(pk, sk0)      [K-PKE / CPA.KeyGen]
-  |      |
-  |      +--> seed expansion: d -> (rho, sigma)
-  |      +--> sample s, e from sigma (CBD via PRF/SHAKE)
-  |      +--> generate A_hat from rho (XOF + rejection)
-  |      +--> compute t (R1: invNTT(A_hat o s_hat)+e, R2: in NTT form + reduce)
-  |      +--> pack pk and sk0
-  |
-  +--> append pk into CCA secret key
-  +--> append H(pk)
-  +--> append random z
-  |
-  '--> output (pk, sk)
+ML-KEM.KeyGen
+  -> K-PKE.KeyGen
+  -> add KEM-specific secret-key fields
 ```
 
-This matches the thesis split between:
+In this repository, that mapping is:
 
-- `CPA.KeyGen()` (Algorithm 1, p.12)
-- `CCA.KeyGen()` (Algorithm 4, p.15)
+- KEM entrypoint: `crypto_kem_keypair` in `kem.c`
+- PKE entrypoint: `indcpa_keypair` in `indcpa.c`
 
-## R1 vs R2 at a Glance
+## Repository structure relevant to KeyGen
 
-| Topic | Round 1 in repo | Round 2 in repo |
-|---|---|---|
-| Modulus `q` | `7681` | `3329` |
-| Noise parameter | `eta` depends on `k` (`5/4/3`) | `eta = 2` |
-| Public-key packing | compressed polyvec + `rho` | full polyvec bytes + `rho` |
-| Matrix generation helper | direct SHAKE128 absorb/squeeze code path | abstracted XOF (`xof_absorb`, `xof_squeezeblocks`) + rejection helper |
-| Hash wrappers in KEM | direct `sha3_256/sha3_512` calls | `hash_h/hash_g/kdf` macros in `symmetric.h` |
+Implementations exist for all security levels and both rounds:
 
-## Mapping to Your Provided Visual Flow
+- `crypto_kem/kyber512/{kyber512r1,kyber512r2,...}`
+- `crypto_kem/kyber768/{kyber768r1,kyber768r2,...}`
+- `crypto_kem/kyber1024/{kyber1024r1,kyber1024r2,...}`
 
-Your three-box flow (`[19]` ML-KEM.KeyGen, `[16]` ML-KEM.KeyGen_internal, `[13]` K-PKE.KeyGen) corresponds to:
+For KeyGen behavior, the clearest representative files are:
 
-- `[19]` -> `crypto_kem_keypair()` in `kem.c`
-- `[16]` -> body of `crypto_kem_keypair()` after `indcpa_keypair()`
-- `[13]` -> `indcpa_keypair()` in `indcpa.c`
+- `crypto_kem/kyber512/kyber512r1/kem.c`
+- `crypto_kem/kyber512/kyber512r1/indcpa.c`
+- `crypto_kem/kyber512/kyber512r2/kem.c`
+- `crypto_kem/kyber512/kyber512r2/indcpa.c`
 
-## Notes on Terminology
+## High-level flow diagram
 
-- Your notation (`x^`, `o`, `x'`, `x_bar`) is used in this doc set as:
-  - `x_hat` for NTT-domain values
-  - `o` for NTT-domain pointwise multiplication/accumulation
-- This repository is Kyber Round 1/Round 2 code, not final FIPS ML-KEM API text. Where needed, mapping to ML-KEM-style naming is explained in later files.
+```text
++---------------------------+
+| crypto_kem_keypair(pk,sk) |
+| (KEM layer)               |
++-------------+-------------+
+              |
+              v
++---------------------------+
+| indcpa_keypair(pk, sk0)   |
+| (K-PKE / CPA layer)       |
++-------------+-------------+
+              |
+              | 1) random seed d
+              | 2) expand -> rho, sigma
+              | 3) sample s,e
+              | 4) generate A from rho
+              | 5) compute t = A*s + e
+              | 6) encode pk, sk0
+              v
++---------------------------+
+| back to KEM layer         |
+| sk = sk0 || pk || H(pk)||z|
++-------------+-------------+
+              |
+              v
+        return (pk, sk)
+```
 
-## Next
+## Where KeyGen connects to Encapsulation/Decapsulation
 
-- [02_randomness_and_seeds.md](./02_randomness_and_seeds.md)
-- [03_k_pke_keygen.md](./03_k_pke_keygen.md)
-- [04_sampling_and_polynomials.md](./04_sampling_and_polynomials.md)
-- [05_ntt_and_matrix_generation.md](./05_ntt_and_matrix_generation.md)
-- [06_public_key_construction.md](./06_public_key_construction.md)
-- [07_secret_key_and_output.md](./07_secret_key_and_output.md)
+KeyGen choices directly affect both later operations:
 
+- Encapsulation uses `pk` (`t` + `rho`) to encrypt and derive shared secret.
+- Decapsulation uses `sk`, including:
+  - `sk0` for decryption,
+  - stored `pk` and `H(pk)` for re-encryption check,
+  - `z` for failure fallback.
+
+So KeyGen is not just initialization; it defines the data layout that CCA checks rely on.
+
+## Minimal code path (annotated)
+
+From `crypto_kem/kyber512/kyber512r2/kem.c`:
+
+```c
+int crypto_kem_keypair(unsigned char *pk, unsigned char *sk)
+{
+  indcpa_keypair(pk, sk);   // Build K-PKE keys (pk, sk0)
+  // Append pk into sk
+  // Append H(pk) into sk
+  // Append random z into sk
+  return 0;
+}
+```
+
+This is the cleanest way to remember the architecture: K-PKE first, KEM hardening second.
+
+## References used in this file
+
+- `D_Greconici___KYBER_on_RISC-V.pdf`: Algorithm list (p.vi), Algorithm 1 (p.12), Algorithm 4 (p.15).
+- `2021-561.pdf`: includes Kyber-PKE key generation algorithm restatement (Algorithm 1 in that paper).
+
+## In simple terms:
+
+KeyGen in this repo is a two-stage pipeline: first create lattice keys (`indcpa_keypair`), then package them into a CCA-safe secret key (`crypto_kem_keypair`). If you trace these two functions, you trace all of KeyGen.

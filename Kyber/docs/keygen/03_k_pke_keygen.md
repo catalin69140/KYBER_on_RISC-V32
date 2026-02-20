@@ -1,107 +1,107 @@
-# K-PKE KeyGen Call and Parameter Setup
+# 03 - Entering K-PKE.KeyGen and Parameter Setup
 
-This file documents how `crypto_kem_keypair` delegates to K-PKE/CPA key generation and how parameters change across `{512,768,1024}` and `{r1,r2}`.
+This file explains the transition from KEM to K-PKE and documents parameterization (`k`, `q`, `eta`) in this repository.
 
-References in thesis PDF:
+## Step boundary
 
-- `CPA.KeyGen()` (Algorithm 1, p.12)
-- `CCA.KeyGen()` (Algorithm 4, p.15)
+KEM key generation calls K-PKE key generation.
 
-## Concept
-
-Kyber KEM key generation is layered:
-
-1. Run CPA/K-PKE key generation to get `(pk, sk0)`.
-2. Build CCA secret key by concatenating `sk0 || pk || H(pk) || z`.
-
-In code, Step 1 is exactly `indcpa_keypair(pk, sk)` called from `crypto_kem_keypair`.
-
-## Code: KEM -> K-PKE Delegation
-
-Source:
-
-- R1: `crypto_kem/kyber512/kyber512r1/kem.c:19-27`
-- R2: `crypto_kem/kyber512/kyber512r2/kem.c:20-28`
+From `crypto_kem/kyber512/kyber512r2/kem.c:23-29`:
 
 ```c
 int crypto_kem_keypair(unsigned char *pk, unsigned char *sk)
 {
-  indcpa_keypair(pk, sk);                           // Step 1: run K-PKE/CPA keygen
-  // ... CCA secret-key augmentation continues after this call
+  indcpa_keypair(pk, sk);    // K-PKE keygen starts here
+  // ... CCA augmentation continues here
+  return 0;
 }
 ```
 
-Line-by-line:
+Equivalent call exists in r1: `crypto_kem/kyber512/kyber512r1/kem.c:22-27`.
 
-- `indcpa_keypair(pk, sk)` computes:
-  - `pk = (t, rho)` (packed form depends on round)
-  - initial secret section `sk0 = s_hat` (serialized vector)
+## Parameters that control KeyGen behavior
 
-## Parameter Constants
+Kyber variants differ mainly by `k` (vector/matrix dimension), then by round-specific constants.
 
-### Round 1 (`params.h`)
+### k values and security levels
 
-Sources:
+- `k=2` -> Kyber512
+- `k=3` -> Kyber768
+- `k=4` -> Kyber1024
 
-- `crypto_kem/kyber512/kyber512r1/params.h`
-- `crypto_kem/kyber768/kyber768r1/params.h`
-- `crypto_kem/kyber1024/kyber1024r1/params.h`
+### Round 1 constants (this repo)
 
-```text
-q = 7681
-N = 256
-k in {2,3,4}
-eta depends on k:
-  k=2 -> eta=5
-  k=3 -> eta=4
-  k=4 -> eta=3
+From `params.h` files in `kyber*r1`:
+
+- `q = 7681`
+- `N = 256`
+- `eta` depends on `k`: `5,4,3` for `k=2,3,4`
+
+Example: `crypto_kem/kyber768/kyber768r1/params.h:10-18`.
+
+### Round 2 constants (this repo)
+
+From `params.h` files in `kyber*r2`:
+
+- `q = 3329`
+- `N = 256`
+- `eta = 2` for all parameter sets
+
+Example: `crypto_kem/kyber768/kyber768r2/params.h:10-13`.
+
+## Why this matters at KeyGen entry
+
+Once `indcpa_keypair` starts, these constants determine:
+
+- matrix/vector sizes (`k x k`, `k`)
+- noise distribution width (`eta`)
+- serialization sizes (`KYBER_POLY*BYTES`)
+- reduction and arithmetic details (`q`)
+
+So "same function name" does not mean same internal algebra across rounds.
+
+## Data flow into polynomial generation
+
+Inside `indcpa_keypair`, the seed buffer and polynomial objects are initialized:
+
+From `crypto_kem/kyber512/kyber512r2/indcpa.c:196-201`:
+
+```c
+polyvec a[KYBER_K], e, pkpv, skpv;               // matrix/vector objects
+unsigned char buf[2*KYBER_SYMBYTES];             // seed workspace
+unsigned char *publicseed = buf;                 // rho
+unsigned char *noiseseed = buf+KYBER_SYMBYTES;   // sigma
+unsigned char nonce=0;                           // PRF counter
 ```
 
-### Round 2 (`params.h`)
+Interpretation:
 
-Sources:
+- `a` will hold matrix `A` (or `A^` in transformed representation).
+- `skpv` is secret-vector container (`s`/`s^`).
+- `e` is error-vector container.
+- `pkpv` is the future public polynomial vector (`t`-side data).
 
-- `crypto_kem/kyber512/kyber512r2/params.h`
-- `crypto_kem/kyber768/kyber768r2/params.h`
-- `crypto_kem/kyber1024/kyber1024r2/params.h`
-
-```text
-q = 3329
-N = 256
-k in {2,3,4}
-eta = 2 for all three parameter sets
-```
-
-## Why These Parameters Matter
-
-- `k` controls vector/matrix dimensions (`k x k` matrix, `k`-length vectors).
-- `q` changes modular arithmetic behavior and reduction strategy.
-- `eta` controls noise distribution width (security/performance balance).
-
-## R1 vs R2 Implication for Your Extra Notes
-
-Your notes describe ML-KEM-like `eta1` behavior (`3 for 512`, `2 for 768/1024`).  
-This repository is Kyber round code:
-
-- R1 uses `eta` in `{5,4,3}` by `k`.
-- R2 uses fixed `eta=2`.
-
-So, use the values above when documenting this exact codebase.
-
-## ASCII Flow (Call Boundary)
+## Small pseudo-code summary
 
 ```text
-KEM: crypto_kem_keypair
-  |
-  +--> K-PKE: indcpa_keypair
-         |
-         +--> output pk, sk0
-  |
-  '--> append pk || H(pk) || z into final sk
+KEM.KeyGen(pk, sk):
+  (pk, sk0) = K-PKE.KeyGen()
+  sk = sk0 || pk || H(pk) || z
+
+K-PKE.KeyGen():
+  derive rho,sigma
+  sample s,e
+  build A from rho
+  compute t from A,s,e
+  encode pk, sk0
 ```
 
-## Cross-Links
+## References used in this file
 
-- Seed derivation entering `indcpa_keypair`: [02_randomness_and_seeds.md](./02_randomness_and_seeds.md)
-- Sampling and polynomial objects under these params: [04_sampling_and_polynomials.md](./04_sampling_and_polynomials.md)
+- `D_Greconici___KYBER_on_RISC-V.pdf`: Algorithm 1 and Algorithm 4 relation (pp.12,15).
+- `2021-561.pdf`: Section on Kyber parameters and PKE KeyGen algorithm.
+- Code: `kem.c`, `indcpa.c`, `params.h` across `kyber{512,768,1024}{r1,r2}`.
 
+## In simple terms:
+
+This step is where KEM says: "build me the algebraic keys first." The `indcpa_keypair` function then does all lattice math using constants that depend on variant (`512/768/1024`) and round (`r1/r2`).
