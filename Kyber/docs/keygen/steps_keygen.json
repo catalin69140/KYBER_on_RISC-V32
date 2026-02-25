@@ -1,0 +1,327 @@
+{
+  "keygen": {
+    "steps": [
+      {
+        "id": "kg01_setup_randomness",
+        "title": "1. Setup randomness (`z`, `d`)",
+        "funcs": [
+          "crypto_kem_keypair",
+          "indcpa_keypair",
+          "randombytes"
+        ],
+        "vars": [
+          {
+            "name": "d",
+            "kind": "seed",
+            "format": "text",
+            "value": "Initial seed input (generated inside indcpa_keypair in this repo)."
+          },
+          {
+            "name": "z",
+            "kind": "seed",
+            "format": "text",
+            "value": "Fallback secret value appended to KEM secret key in crypto_kem_keypair."
+          }
+        ],
+        "doc_refs": [
+          "00_notation.md",
+          "01_overview.md",
+          "02_randomness_and_seeds.md",
+          "10_keygen_flow_summary.md"
+        ],
+        "role": "setup randomness"
+      },
+      {
+        "id": "kg02_enter_k_pke_keygen",
+        "title": "2. Pass to `KeyGen_internal`",
+        "funcs": [
+          "crypto_kem_keypair",
+          "indcpa_keypair"
+        ],
+        "vars": [
+          {
+            "name": "pk",
+            "kind": "bytes",
+            "format": "text",
+            "value": "Public key output buffer (KEM layer -> K-PKE keygen)."
+          },
+          {
+            "name": "sk0",
+            "kind": "bytes",
+            "format": "text",
+            "value": "CPA/PKE secret-key bytes region written by indcpa_keypair."
+          },
+          {
+            "name": "k",
+            "kind": "seed",
+            "format": "text",
+            "value": "Parameter-set dimension (2/3/4 depending on Kyber level)."
+          }
+        ],
+        "doc_refs": [
+          "01_overview.md",
+          "03_k_pke_keygen.md",
+          "10_keygen_flow_summary.md"
+        ],
+        "role": "enter K-PKE.KeyGen"
+      },
+      {
+        "id": "kg03_derive_rho_sigma",
+        "title": "3. Derive seeds `rho` and `sigma`",
+        "funcs": [
+          "indcpa_keypair",
+          "hash_g",
+          "sha3_512"
+        ],
+        "vars": [
+          {
+            "name": "buf",
+            "kind": "bytes",
+            "format": "text",
+            "value": "Temporary seed-expansion buffer (typically 64 bytes for rho||sigma)."
+          },
+          {
+            "name": "rho",
+            "kind": "bytes",
+            "format": "text",
+            "value": "Public seed used to deterministically generate matrix A."
+          },
+          {
+            "name": "sigma",
+            "kind": "bytes",
+            "format": "text",
+            "value": "Secret seed used for PRF/CBD noise sampling."
+          }
+        ],
+        "doc_refs": [
+          "02_randomness_and_seeds.md",
+          "03_k_pke_keygen.md",
+          "10_keygen_flow_summary.md"
+        ],
+        "role": "derive seeds"
+      },
+      {
+        "id": "kg04_generate_s_e",
+        "title": "4. Generate `s` and `e`",
+        "funcs": [
+          "poly_getnoise_eta1",
+          "poly_getnoise",
+          "cbd"
+        ],
+        "vars": [
+          {
+            "name": "nonce",
+            "kind": "bytes",
+            "format": "text",
+            "value": "PRF counter incremented per sampled polynomial."
+          },
+          {
+            "name": "s",
+            "kind": "vector",
+            "format": "text",
+            "value": "Secret polynomial vector with small coefficients."
+          },
+          {
+            "name": "e",
+            "kind": "vector",
+            "format": "text",
+            "value": "Error/noise polynomial vector with small coefficients."
+          },
+          {
+            "name": "eta",
+            "kind": "poly",
+            "format": "text",
+            "value": "CBD width parameter controlling coefficient range."
+          }
+        ],
+        "doc_refs": [
+          "04_sampling_and_polynomials.md",
+          "08_security_and_design_rationale.md",
+          "10_keygen_flow_summary.md"
+        ],
+        "role": "sample noise/polynomials"
+      },
+      {
+        "id": "kg05_ntt_conversion",
+        "title": "5. Convert to NTT domain",
+        "funcs": [
+          "polyvec_ntt",
+          "poly_ntt"
+        ],
+        "vars": [
+          {
+            "name": "s^",
+            "kind": "vector",
+            "format": "text",
+            "value": "Secret vector converted to NTT domain for fast multiplication."
+          },
+          {
+            "name": "e^",
+            "kind": "vector",
+            "format": "text",
+            "value": "Error vector in NTT domain (round-dependent handling)."
+          }
+        ],
+        "doc_refs": [
+          "00_notation.md",
+          "05_ntt_and_matrix_generation.md",
+          "10_keygen_flow_summary.md"
+        ],
+        "role": "NTT"
+      },
+      {
+        "id": "kg06_generate_matrix_A_hat",
+        "title": "6. Generate matrix `A^`",
+        "funcs": [
+          "gen_matrix",
+          "xof_absorb",
+          "xof_squeezeblocks"
+        ],
+        "vars": [
+          {
+            "name": "A^",
+            "kind": "matrix",
+            "format": "text",
+            "value": "Public matrix generated deterministically from rho."
+          },
+          {
+            "name": "rho",
+            "kind": "bytes",
+            "format": "text",
+            "value": "Public seed reused as matrix-generation seed."
+          }
+        ],
+        "doc_refs": [
+          "05_ntt_and_matrix_generation.md",
+          "10_keygen_flow_summary.md"
+        ],
+        "role": "generate matrix A^"
+      },
+      {
+        "id": "kg07_compute_t_hat",
+        "title": "7. Compute `t^ = A^ o s^ + e^`",
+        "funcs": [
+          "polyvec_basemul_acc_montgomery",
+          "polyvec_pointwise_acc",
+          "polyvec_invntt"
+        ],
+        "vars": [
+          {
+            "name": "t^",
+            "kind": "vector",
+            "format": "text",
+            "value": "Public polynomial vector in NTT/round-specific intermediate representation."
+          },
+          {
+            "name": "A^ o s^",
+            "kind": "calc",
+            "format": "text",
+            "value": "Matrix-vector multiply in NTT domain."
+          },
+          {
+            "name": "e^",
+            "kind": "vector",
+            "format": "text",
+            "value": "Noise added to hide exact linear relation."
+          }
+        ],
+        "doc_refs": [
+          "06_public_key_construction.md",
+          "10_keygen_flow_summary.md"
+        ],
+        "role": "compute t^"
+      },
+      {
+        "id": "kg08_encode_keys",
+        "title": "8. Encode keys",
+        "funcs": [
+          "pack_pk",
+          "pack_sk",
+          "polyvec_tobytes"
+        ],
+        "vars": [
+          {
+            "name": "ek (pk)",
+            "kind": "bytes",
+            "format": "text",
+            "value": "Encoded public key: encoded t-hat/t plus rho."
+          },
+          {
+            "name": "dk_pke (sk0)",
+            "kind": "bytes",
+            "format": "text",
+            "value": "Encoded CPA/PKE secret key bytes."
+          }
+        ],
+        "doc_refs": [
+          "07_encoding_and_output.md",
+          "10_keygen_flow_summary.md"
+        ],
+        "role": "encode keys"
+      },
+      {
+        "id": "kg09_build_kem_secret_key",
+        "title": "9. Construct ML-KEM-style secret key",
+        "funcs": [
+          "crypto_kem_keypair",
+          "hash_h",
+          "sha3_256"
+        ],
+        "vars": [
+          {
+            "name": "H(pk)",
+            "kind": "bytes",
+            "format": "text",
+            "value": "Hash of public key stored in secret key for decapsulation checks."
+          },
+          {
+            "name": "dk",
+            "kind": "bytes",
+            "format": "text",
+            "value": "Final KEM secret key: sk0 || pk || H(pk) || z."
+          },
+          {
+            "name": "z",
+            "kind": "seed",
+            "format": "text",
+            "value": "Fallback secret used in CCA transform on failure paths."
+          }
+        ],
+        "doc_refs": [
+          "07_encoding_and_output.md",
+          "08_security_and_design_rationale.md",
+          "10_keygen_flow_summary.md"
+        ],
+        "role": "finalize KEM secret key"
+      },
+      {
+        "id": "kg10_return_keys",
+        "title": "10. Return `(pk, sk)`",
+        "funcs": [
+          "crypto_kem_keypair"
+        ],
+        "vars": [
+          {
+            "name": "pk",
+            "kind": "bytes",
+            "format": "text",
+            "value": "Public key returned to caller."
+          },
+          {
+            "name": "sk",
+            "kind": "bytes",
+            "format": "text",
+            "value": "Secret key returned to caller."
+          }
+        ],
+        "doc_refs": [
+          "01_overview.md",
+          "07_encoding_and_output.md",
+          "10_keygen_flow_summary.md"
+        ],
+        "role": "return outputs"
+      }
+    ],
+    "source_of_truth": "Kyber/docs/keygen/*.md"
+  }
+}

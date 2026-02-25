@@ -372,7 +372,19 @@ def parse_trace_log(path):
 
     return steps
 
-def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, project_root, trace_steps=None, steps_json=None, flow_spec=None):
+def write_html_animation(
+    elf,
+    cg,
+    sym2file,
+    project_syms,
+    html_path,
+    root_func,
+    project_root,
+    trace_steps=None,
+    steps_json=None,
+    flow_spec=None,
+    keygen_dot_text=None,
+):
     """
     Generate an HTML file that:
       - Uses Viz.js to render the same DOT as the PNG (same layout/structure)
@@ -396,6 +408,7 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
 
     dot_text = generate_dot(elf, cg, sym2file, project_syms, root_func, project_root)
     dot_js = _js_escape(dot_text)
+    keygen_dot_js = _js_escape(keygen_dot_text) if keygen_dot_text else None
 
     # Edge order for animation, in BFS caller order
     edge_keys = []
@@ -809,27 +822,7 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
             '</div>\n'
         )
 
-        f.write("""
-            <script>
-
-            // TAB SWITCHING
-            document.querySelectorAll('.tab').forEach(tab => {
-                tab.addEventListener('click', () => {
-
-                    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-                    tab.classList.add('active');
-
-                    let selectedTab = tab.dataset.tab;
-                    currentTab = selectedTab;
-                    renderSteps();
-
-                    document.querySelectorAll('.steps').forEach(s => s.style.display = 'none');
-                    document.getElementById('steps-' + selectedTab).style.display = 'block';
-                });
-            });
-
-            </script>
-        """)
+        # Tab behavior is handled in the main JS block (renderTabs + renderActiveTabGraph).
 
 
         # Viz.js + svg-pan-zoom from CDN
@@ -845,7 +838,11 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
 
         # JS: data + logic
         f.write("<script>\n")
-        f.write(f'const dotSrc = "{dot_js}";\n')
+        f.write(f'const dotSrcDefault = "{dot_js}";\n')
+        if keygen_dot_js:
+            f.write(f'const dotSrcByTab = {{"keygen": "{keygen_dot_js}"}};\n')
+        else:
+            f.write("const dotSrcByTab = {};\n")
 
         f.write(f'const traceSteps = {trace_json};\n')
         
@@ -1975,11 +1972,16 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
             b.onclick = () => {
                 currentTab = b.dataset.tab;
                 activeStepId = null;
-                renderSteps();
                 clearVarBox();
-                renderFlowGraphForStep(null);
+                document.querySelectorAll('.steps').forEach(s => s.style.display = 'none');
+                const target = document.getElementById('steps-' + currentTab);
+                if (target) target.style.display = 'block';
+                renderActiveTabGraph();
             };
         });
+        document.querySelectorAll('.steps').forEach(s => s.style.display = 'none');
+        const target = document.getElementById('steps-' + currentTab);
+        if (target) target.style.display = 'block';
     }
 
     function renderSteps() {
@@ -2116,27 +2118,46 @@ def write_html_animation(elf, cg, sym2file, project_syms, html_path, root_func, 
         });
     }
 
+    function getDotSrcForTab(tabId) {
+        if (tabId === "keygen") {
+            if (dotSrcByTab && dotSrcByTab[tabId]) return dotSrcByTab[tabId];
+            return "digraph KeyGenMissing { rankdir=LR; node [shape=note, fontname=Helvetica]; msg [label=\\"KeyGen call graph not loaded\\\\nProvide --keygen-dot <path> to the HTML generator\\"]; }";
+        }
+        if (dotSrcByTab && dotSrcByTab[tabId]) return dotSrcByTab[tabId];
+        return dotSrcDefault;
+    }
 
-    // Render graph with Viz.js
-    viz.renderSVGElement(dotSrc)
-        .then(
-            function(svgElement) {
-            const container = document.getElementById('graph');
-            container.innerHTML = "";
-            container.appendChild(svgElement);
-            setupGraphAnimation(svgElement);
-            renderFlowLegend();
-            renderTabs();
-            renderSteps();
-            renderFlowGraphForStep(null);
-            renderTraceSteps();
-        })
-        .catch(
-            function(error) {
-            console.error(error);
-            const container = document.getElementById('graph');
-            container.textContent = "Error rendering graph: " + error;
-        });
+    function renderActiveTabGraph() {
+        const dot = getDotSrcForTab(currentTab);
+        const container = document.getElementById('graph');
+        if (container) container.textContent = "Rendering graph...";
+
+        // Recreate Viz instance so each tab render gets a fresh graph state.
+        viz = new Viz();
+        viz.renderSVGElement(dot)
+            .then(
+                function(svgElement) {
+                const c = document.getElementById('graph');
+                c.innerHTML = "";
+                c.appendChild(svgElement);
+                setupGraphAnimation(svgElement);
+                renderFlowLegend();
+                renderTabs();
+                renderSteps();
+                renderFlowGraphForStep(null);
+                renderTraceSteps();
+            })
+            .catch(
+                function(error) {
+                console.error(error);
+                const c = document.getElementById('graph');
+                c.textContent = "Error rendering graph: " + error;
+            });
+    }
+
+
+    // Initial render (KeyGen can use a dedicated tab-specific DOT graph)
+    renderActiveTabGraph();
         """)
         f.write("</script>\n")
         f.write("</body>\n</html>\n")
@@ -2178,6 +2199,11 @@ def main():
     ap.add_argument(
         "--html",
         help="HTML file for animated call graph visualization",
+    )
+    ap.add_argument(
+        "--keygen-dot",
+        default=None,
+        help="DOT file to use specifically in the KeyGen tab (replaces generic ELF graph in that tab only).",
     )
     ap.add_argument(
         "--trace-log",
@@ -2228,6 +2254,10 @@ def main():
     if args.flow_spec:
         flow_spec = json.loads(Path(args.flow_spec).read_text())
 
+    keygen_dot_text = None
+    if args.keygen_dot:
+        keygen_dot_text = Path(args.keygen_dot).read_text()
+
     if args.html:
         write_html_animation(
             str(elf), cg, sym2file, project_syms,
@@ -2235,6 +2265,7 @@ def main():
             trace_steps=trace_steps,
             steps_json=steps_json,
             flow_spec=flow_spec,
+            keygen_dot_text=keygen_dot_text,
         )
 
 if __name__ == "__main__":
