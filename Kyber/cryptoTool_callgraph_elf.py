@@ -711,11 +711,23 @@ def write_html_animation(
 
             .ref-dk-group .outer,
             .ref-ekpke-group .outer {
-                fill: #542f2f;
+                fill: none;
                 stroke: #ff8f86;
                 stroke-width: 1.5;
                 rx: 6;
                 ry: 6;
+            }
+
+            .ref-dk-group .head-fill,
+            .ref-ekpke-group .head-fill {
+                fill: #542f2f;
+                stroke: none;
+            }
+
+            .ref-dk-group .body-fill,
+            .ref-ekpke-group .body-fill {
+                fill: #131f37;
+                stroke: none;
             }
 
             .ref-dk-group .header,
@@ -2393,16 +2405,32 @@ def write_html_animation(
 
     function addRefDkGroup(svg, spec) {
         const g = createSvgEl("g", { class: "ref-dk-group", "data-node-id": spec.id });
+        const headerH = 18;
+        const outerR = 6;
         const outer = createSvgEl("rect", {
             x: spec.x, y: spec.y, width: spec.w, height: spec.h, class: "outer"
         });
         outer.setAttribute("data-base-stroke", "#ff8f86");
         outer.setAttribute("data-base-stroke-width", "1.5");
+        outer.setAttribute("rx", String(outerR));
+        outer.setAttribute("ry", String(outerR));
         g.appendChild(outer);
-        addRefText(g, spec.x + spec.w / 2, spec.y + 14, "dk", "header");
 
-        const innerY = spec.y + 22;
-        const innerH = spec.h - 28;
+        g.appendChild(createSvgEl("rect", {
+            x: spec.x + 1, y: spec.y + 1, width: spec.w - 2, height: headerH, class: "head-fill",
+            rx: Math.max(0, outerR - 1), ry: Math.max(0, outerR - 1)
+        }));
+        g.appendChild(createSvgEl("rect", {
+            x: spec.x + 1, y: spec.y + headerH + 1, width: spec.w - 2, height: spec.h - headerH - 2, class: "body-fill"
+        }));
+        g.appendChild(createSvgEl("line", {
+            x1: spec.x + 1, y1: spec.y + headerH + 1, x2: spec.x + spec.w - 1, y2: spec.y + headerH + 1, class: "cell-sep"
+        }));
+
+        addRefText(g, spec.x + spec.w / 2, spec.y + 12, "dk", "header");
+
+        const innerY = spec.y + headerH + 2;
+        const innerH = spec.h - headerH - 4;
         const cells = [
             { label: "dkPKE", frac: 0.33 },
             { label: "ek", frac: 0.22 },
@@ -2423,18 +2451,6 @@ def write_html_animation(
             const key = (idx === 0) ? "dkpke" : (idx === 1) ? "ek" : (idx === 2) ? "hek" : "z";
             anchorMap[`${key}-top`] = { x: cx + w / 2, y: spec.y };
             anchorMap[`${key}-bottom`] = { x: cx + w / 2, y: spec.y + spec.h };
-
-            // Reference-style indicators in the grouped dk layout (H(ek) = green, z = orange).
-            if (idx === 2) {
-                g.appendChild(createSvgEl("circle", {
-                    cx: cx + w - 12, cy: innerY + 9, r: 5, fill: "#5edc74", stroke: "#bff6c9", "stroke-width": 1
-                }));
-            } else if (idx === 3) {
-                g.appendChild(createSvgEl("rect", {
-                    x: cx + w - 16, y: innerY + 4, width: 10, height: 10,
-                    fill: "#ff8a21", stroke: "#ffd19a", "stroke-width": 1, rx: 1.5, ry: 1.5
-                }));
-            }
             cx += w;
         });
 
@@ -2446,21 +2462,31 @@ def write_html_animation(
 
     function addRefEkPkeGroup(svg, spec) {
         const g = createSvgEl("g", { class: "ref-ekpke-group", "data-node-id": spec.id });
+        const headerH = 18;
+        const outerR = 6;
         const outer = createSvgEl("rect", {
             x: spec.x, y: spec.y, width: spec.w, height: spec.h, class: "outer"
         });
         outer.setAttribute("data-base-stroke", "#ff8f86");
         outer.setAttribute("data-base-stroke-width", "1.5");
+        outer.setAttribute("rx", String(outerR));
+        outer.setAttribute("ry", String(outerR));
         g.appendChild(outer);
 
-        const headerH = 16;
-        g.appendChild(createSvgEl("line", {
-            x1: spec.x + 4, y1: spec.y + headerH, x2: spec.x + spec.w - 4, y2: spec.y + headerH, class: "cell-sep"
+        g.appendChild(createSvgEl("rect", {
+            x: spec.x + 1, y: spec.y + 1, width: spec.w - 2, height: headerH, class: "head-fill",
+            rx: Math.max(0, outerR - 1), ry: Math.max(0, outerR - 1)
         }));
-        addRefText(g, spec.x + spec.w / 2, spec.y + 10, "ekPKE", "header");
+        g.appendChild(createSvgEl("rect", {
+            x: spec.x + 1, y: spec.y + headerH + 1, width: spec.w - 2, height: spec.h - headerH - 2, class: "body-fill"
+        }));
+        g.appendChild(createSvgEl("line", {
+            x1: spec.x + 1, y1: spec.y + headerH + 1, x2: spec.x + spec.w - 1, y2: spec.y + headerH + 1, class: "cell-sep"
+        }));
+        addRefText(g, spec.x + spec.w / 2, spec.y + 12, "ekPKE", "header");
 
-        const bodyY = spec.y + headerH + 4;
-        const bodyH = spec.h - headerH - 8;
+        const bodyY = spec.y + headerH + 2;
+        const bodyH = spec.h - headerH - 4;
         const splitX = spec.x + Math.round(spec.w * 0.62);
         g.appendChild(createSvgEl("line", {
             x1: splitX, y1: bodyY, x2: splitX, y2: bodyY + bodyH, class: "cell-sep"
@@ -2604,6 +2630,137 @@ def write_html_animation(
         return compressOrthPolyline(all);
     }
 
+    function refObstacleRects(excludeIds = [], pad = 6) {
+        const ex = new Set(excludeIds || []);
+        const rects = [];
+        Object.entries(primaryRefNodeBoxes).forEach(([id, b]) => {
+            if (!b || ex.has(id)) return;
+            rects.push({
+                id,
+                x1: b.x - pad,
+                y1: b.y - pad,
+                x2: b.x + b.w + pad,
+                y2: b.y + b.h + pad
+            });
+        });
+        return rects;
+    }
+
+    function refPointBlocked(p, rects) {
+        for (const r of rects || []) {
+            if (p.x >= r.x1 && p.x <= r.x2 && p.y >= r.y1 && p.y <= r.y2) return true;
+        }
+        return false;
+    }
+
+    function refOrthSegHitsRect(p0, p1, r) {
+        const eps = 0.001;
+        if (Math.abs(p0.y - p1.y) < eps) {
+            const y = p0.y;
+            const x1 = Math.min(p0.x, p1.x);
+            const x2 = Math.max(p0.x, p1.x);
+            return y >= r.y1 - eps && y <= r.y2 + eps && x2 >= r.x1 - eps && x1 <= r.x2 + eps;
+        }
+        if (Math.abs(p0.x - p1.x) < eps) {
+            const x = p0.x;
+            const y1 = Math.min(p0.y, p1.y);
+            const y2 = Math.max(p0.y, p1.y);
+            return x >= r.x1 - eps && x <= r.x2 + eps && y2 >= r.y1 - eps && y1 <= r.y2 + eps;
+        }
+        return true; // non-orth segment is considered invalid
+    }
+
+    function refOrthSegHitsAnyRect(p0, p1, rects) {
+        for (const r of rects || []) {
+            if (refOrthSegHitsRect(p0, p1, r)) return true;
+        }
+        return false;
+    }
+
+    function refScorePolylineAgainstRects(poly, rects) {
+        let score = 0;
+        for (let i = 1; i < poly.length; i++) {
+            if (refOrthSegHitsAnyRect(poly[i - 1], poly[i], rects)) score += 1000;
+            score += Math.abs(poly[i].x - poly[i - 1].x) + Math.abs(poly[i].y - poly[i - 1].y);
+        }
+        score += (poly.length - 2) * 15; // prefer fewer bends
+        return score;
+    }
+
+    function refDetourOrthSegment(p0, p1, rects, opts = {}) {
+        const lanePad = (opts.lanePad != null) ? opts.lanePad : 12;
+        const candidates = [];
+        const pushCand = (pts) => {
+            if (!pts || pts.length < 2) return;
+            const c = compressOrthPolyline(pts);
+            candidates.push(c);
+        };
+
+        if (Math.abs(p0.y - p1.y) < 0.001) {
+            const y = p0.y;
+            const xMin = Math.min(p0.x, p1.x), xMax = Math.max(p0.x, p1.x);
+            const blockers = (rects || []).filter(r =>
+                y >= r.y1 && y <= r.y2 && xMax >= r.x1 && xMin <= r.x2
+            );
+            if (!blockers.length) return [p0, p1];
+            const topY = Math.min(...blockers.map(r => r.y1)) - lanePad;
+            const botY = Math.max(...blockers.map(r => r.y2)) + lanePad;
+            pushCand([p0, {x:p0.x, y:topY}, {x:p1.x, y:topY}, p1]);
+            pushCand([p0, {x:p0.x, y:botY}, {x:p1.x, y:botY}, p1]);
+        } else if (Math.abs(p0.x - p1.x) < 0.001) {
+            const x = p0.x;
+            const yMin = Math.min(p0.y, p1.y), yMax = Math.max(p0.y, p1.y);
+            const blockers = (rects || []).filter(r =>
+                x >= r.x1 && x <= r.x2 && yMax >= r.y1 && yMin <= r.y2
+            );
+            if (!blockers.length) return [p0, p1];
+            const leftX = Math.min(...blockers.map(r => r.x1)) - lanePad;
+            const rightX = Math.max(...blockers.map(r => r.x2)) + lanePad;
+            pushCand([p0, {x:leftX, y:p0.y}, {x:leftX, y:p1.y}, p1]);
+            pushCand([p0, {x:rightX, y:p0.y}, {x:rightX, y:p1.y}, p1]);
+        } else {
+            return [p0, p1];
+        }
+
+        if (!candidates.length) return [p0, p1];
+        candidates.sort((a, b) => refScorePolylineAgainstRects(a, rects) - refScorePolylineAgainstRects(b, rects));
+        return candidates[0];
+    }
+
+    function refAvoidObstaclesInPolyline(polyline, excludeIds = [], opts = {}) {
+        if (!Array.isArray(polyline) || polyline.length < 2) return polyline;
+        const obstaclePad = (opts.obstaclePad != null) ? opts.obstaclePad : 6;
+        const lanePad = (opts.lanePad != null) ? opts.lanePad : 12;
+        const rects = refObstacleRects(excludeIds, obstaclePad);
+        if (!rects.length) return polyline;
+
+        let cur = compressOrthPolyline(polyline);
+        for (let iter = 0; iter < 24; iter++) {
+            let changed = false;
+            const next = [cur[0]];
+            for (let i = 1; i < cur.length; i++) {
+                const p0 = next[next.length - 1];
+                const p1 = cur[i];
+                if (!refOrthSegHitsAnyRect(p0, p1, rects)) {
+                    next.push(p1);
+                    continue;
+                }
+
+                const det = refDetourOrthSegment(p0, p1, rects, { lanePad });
+                if (det.length > 2) {
+                    changed = true;
+                    for (let k = 1; k < det.length; k++) next.push(det[k]);
+                } else {
+                    next.push(p1);
+                }
+            }
+            const compressed = compressOrthPolyline(next);
+            cur = compressed;
+            if (!changed) break;
+        }
+        return cur;
+    }
+
     function buildRefPathWithBridges(polyline, bridgeSeed = 0) {
         const bridgeRadius = 4;
         const bridgeLift = 4;
@@ -2699,13 +2856,17 @@ def write_html_animation(
         const toSide = canonicalRefBorderSide(toRawSide) || "left";
         const a = refAnchor(fromSpec.id, fromSpec.side || "right", fromSpec.dx || 0, fromSpec.dy || 0);
         const b = refAnchor(toSpec.id, toSpec.side || "left", toSpec.dx || 0, toSpec.dy || 0);
-        const polyline = buildRefConnectorPolyline(a, b, fromSide, toSide, opts || {});
+        let polyline = buildRefConnectorPolyline(a, b, fromSide, toSide, opts || {});
+        polyline = refAvoidObstaclesInPolyline(polyline, [fromSpec.id, toSpec.id], {
+            obstaclePad: (opts.obstaclePad != null) ? opts.obstaclePad : 6,
+            lanePad: (opts.lanePad != null) ? opts.lanePad : 12
+        });
         const bridgeBuilt = buildRefPathWithBridges(polyline, opts.bridgeSeed || 0);
         primaryRefDrawnSegments.push(...bridgeBuilt.segments);
 
         return addRefArrow(svg, a, b, {
             d: bridgeBuilt.d,
-            dashed: !!opts.dashed,
+            dashed: false,
             color: opts.color,
             width: opts.width
         });
@@ -2779,16 +2940,21 @@ def write_html_animation(
             return { dx: offset, dy: 0 };
         }
 
-        buffered.forEach(({ fromSpec, toSpec, opts }) => {
+        buffered.forEach(({ fromSpec, toSpec, opts }, idx) => {
             const fromAdj = { ...fromSpec };
             const toAdj = { ...toSpec };
             const fromOff = portOffsetFor(fromAdj, "right");
             const toOff = portOffsetFor(toAdj, "left");
+            const optsAdj = { ...(opts || {}) };
             if (fromAdj.dx == null) fromAdj.dx = fromOff.dx;
             if (fromAdj.dy == null) fromAdj.dy = fromOff.dy;
             if (toAdj.dx == null) toAdj.dx = toOff.dx;
             if (toAdj.dy == null) toAdj.dy = toOff.dy;
-            drawRefConnectorInternal(svg, fromAdj, toAdj, opts || {});
+            if (optsAdj.bridgeSeed == null) optsAdj.bridgeSeed = idx;
+            if (optsAdj.obstaclePad == null) optsAdj.obstaclePad = 7;
+            if (optsAdj.lanePad == null) optsAdj.lanePad = 14 + ((idx % 2) * 4);
+            if (optsAdj.clearance == null) optsAdj.clearance = 9;
+            drawRefConnectorInternal(svg, fromAdj, toAdj, optsAdj);
         });
     }
 
@@ -2862,7 +3028,7 @@ def write_html_animation(
         const availW = Math.max(320, (container.clientWidth || 1200) - canvasPad * 2);
         const availH = Math.max(240, (container.clientHeight || 600) - canvasPad * 2);
         const vbW = 1980, vbH = 410;
-        const scaleByHeight = availH / vbH;
+        const scaleByHeight = (availH * 0.92) / vbH;
         const targetW = Math.round(vbW * scaleByHeight);
         const targetH = Math.round(vbH * scaleByHeight);
         svg.setAttribute("width", String(targetW));
