@@ -517,7 +517,7 @@ def write_html_animation(
         f.write("  align-items: center;\n")
         f.write("  justify-content: center;\n")
         f.write("  overflow: auto;\n")
-        f.write("  padding: 16px;\n")
+        f.write("  padding: 20px;\n")
         f.write("  box-sizing: border-box;\n")
         f.write("  background: #0b1220;\n")
         f.write("}\n")
@@ -1175,10 +1175,10 @@ def write_html_animation(
     let primaryRefDrawnSegments = []; // segments used for crossing bridge rendering
     const REF_MAX_POLY_POINTS = 140;
     const REF_MAX_SEGMENTS_FOR_BRIDGES = 1200;
-    // Performance guard: keep routing deterministic and fast by default.
-    // Turn these on only after the base layout is stable and performance is acceptable.
-    const REF_ENABLE_OBSTACLE_AVOID = false;
+    // Performance guard: obstacle avoid is enabled in a lightweight mode; line bridges stay off.
+    const REF_ENABLE_OBSTACLE_AVOID = true;
     const REF_ENABLE_LINE_BRIDGES = false;
+    const REF_OBSTACLE_MAX_ITERS = 6;
 
     function setupGraphAnimation(svgElement) {
         svgRoot = svgElement;
@@ -2608,7 +2608,7 @@ def write_html_animation(
     }
 
     function buildRefConnectorPolyline(a, b, fromSide, toSide, opts = {}) {
-        const clearance = (opts.clearance != null) ? opts.clearance : 7;
+        const clearance = (opts.clearance != null) ? opts.clearance : 10;
         const nFrom = refSideNormal(fromSide);
         const nTo = refSideNormal(toSide);
         const aOut = { x: a.x + nFrom.x * clearance, y: a.y + nFrom.y * clearance };
@@ -2735,14 +2735,14 @@ def write_html_animation(
 
     function refAvoidObstaclesInPolyline(polyline, excludeIds = [], opts = {}) {
         if (!Array.isArray(polyline) || polyline.length < 2) return polyline;
-        const obstaclePad = (opts.obstaclePad != null) ? opts.obstaclePad : 6;
-        const lanePad = (opts.lanePad != null) ? opts.lanePad : 12;
+        const obstaclePad = (opts.obstaclePad != null) ? opts.obstaclePad : 8;
+        const lanePad = (opts.lanePad != null) ? opts.lanePad : 16;
         const rects = refObstacleRects(excludeIds, obstaclePad);
         if (!rects.length) return polyline;
 
         let cur = compressOrthPolyline(polyline);
         if (cur.length > REF_MAX_POLY_POINTS) return cur;
-        for (let iter = 0; iter < 24; iter++) {
+        for (let iter = 0; iter < REF_OBSTACLE_MAX_ITERS; iter++) {
             let changed = false;
             const next = [cur[0]];
             for (let i = 1; i < cur.length; i++) {
@@ -2992,9 +2992,9 @@ def write_html_animation(
             if (toAdj.dx == null) toAdj.dx = toOff.dx;
             if (toAdj.dy == null) toAdj.dy = toOff.dy;
             if (optsAdj.bridgeSeed == null) optsAdj.bridgeSeed = idx;
-            if (optsAdj.obstaclePad == null) optsAdj.obstaclePad = 7;
-            if (optsAdj.lanePad == null) optsAdj.lanePad = 14 + ((idx % 2) * 4);
-            if (optsAdj.clearance == null) optsAdj.clearance = 9;
+            if (optsAdj.obstaclePad == null) optsAdj.obstaclePad = 9;
+            if (optsAdj.lanePad == null) optsAdj.lanePad = 18 + ((idx % 2) * 4);
+            if (optsAdj.clearance == null) optsAdj.clearance = 11;
             drawRefConnectorInternal(svg, fromAdj, toAdj, optsAdj);
         });
     }
@@ -3012,9 +3012,32 @@ def write_html_animation(
             });
         });
 
-        // The reference diagram uses a scrollable canvas. Pan/zoom is disabled here for faster startup
-        // and to avoid unnecessary layout work on large inline SVGs.
-        panZoom = null;
+        // Lightweight zoom/pan for the reference diagram (no auto-fit, no control icons).
+        if (typeof svgPanZoom !== "undefined") {
+            try {
+                panZoom = svgPanZoom(svg, {
+                    controlIconsEnabled: false,
+                    zoomEnabled: true,
+                    panEnabled: true,
+                    mouseWheelZoomEnabled: true,
+                    zoomScaleSensitivity: 0.2,
+                    dblClickZoomEnabled: false,
+                    fit: false,
+                    center: false,
+                    minZoom: 0.4,
+                    maxZoom: 5
+                });
+                if (panZoom && panZoom.resize) panZoom.resize();
+                if (panZoom && panZoom.updateBBox) panZoom.updateBBox();
+                if (panZoom && panZoom.zoom) panZoom.zoom(1);
+                if (panZoom && panZoom.pan) panZoom.pan({ x: 0, y: 0 });
+            } catch (e) {
+                console.warn("svgPanZoom unavailable for reference diagram:", e);
+                panZoom = null;
+            }
+        } else {
+            panZoom = null;
+        }
 
         // Center the large, height-fitted SVG inside the scrollable canvas on first render.
         try {
@@ -3046,11 +3069,11 @@ def write_html_animation(
         });
 
         // Fit to available canvas height (not width) to avoid thin-strip rendering for wide diagrams.
-        const canvasPad = 24;
+        const canvasPad = 28;
         const availW = Math.max(320, (container.clientWidth || 1200) - canvasPad * 2);
         const availH = Math.max(240, (container.clientHeight || 600) - canvasPad * 2);
         const vbW = 1980, vbH = 410;
-        const scaleByHeight = (availH * 0.92) / vbH;
+        const scaleByHeight = (availH * 0.88) / vbH;
         const targetW = Math.round(vbW * scaleByHeight);
         const targetH = Math.round(vbH * scaleByHeight);
         svg.setAttribute("width", String(targetW));
