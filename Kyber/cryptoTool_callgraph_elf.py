@@ -501,6 +501,8 @@ def write_html_animation(
         f.write("  flex: 1;\n")
         f.write("  width: auto;\n")
         f.write("  min-width: 0;\n")
+        f.write("  min-height: 0;\n")
+        f.write("  display: flex;\n")
         f.write("  background: #0b1220;\n")
         f.write("}\n")
 
@@ -508,8 +510,11 @@ def write_html_animation(
         f.write("#graph {\n")
         f.write("  width: 100%;\n")
         f.write("  height: 100%;\n")
+        f.write("  flex: 1 1 auto;\n")
+        f.write("  min-width: 0;\n")
+        f.write("  min-height: 0;\n")
         f.write("  display: flex;\n")
-        f.write("  align-items: flex-start;\n")
+        f.write("  align-items: stretch;\n")
         f.write("  justify-content: flex-start;\n")
         f.write("  overflow: auto;\n")
         f.write("  background: #0b1220;\n")
@@ -631,10 +636,13 @@ def write_html_animation(
 
             /* Primary reference diagram (recreated from the supplied image) */
             #graph .primary-ref-root {
-                width: 100%;
-                min-width: 1200px;
-                min-height: 520px;
-                height: auto;
+                flex: 0 0 auto;
+                width: auto;
+                height: 100%;
+                min-width: 0;
+                min-height: 0;
+                max-width: none;
+                max-height: none;
                 display: block;
                 background: #0b1220;
             }
@@ -697,6 +705,43 @@ def write_html_animation(
                 stroke: #ffd76b !important;
                 stroke-width: 3.2 !important;
                 filter: drop-shadow(0 0 4px rgba(255, 215, 107, 0.45));
+            }
+
+            .ref-dk-group .outer,
+            .ref-ekpke-group .outer {
+                fill: #542f2f;
+                stroke: #ff8f86;
+                stroke-width: 1.5;
+                rx: 6;
+                ry: 6;
+            }
+
+            .ref-dk-group .header,
+            .ref-ekpke-group .header {
+                font-family: Georgia, "Times New Roman", serif;
+                font-size: 14px;
+                fill: #f4f7ff;
+                text-anchor: middle;
+                dominant-baseline: middle;
+                font-style: italic;
+                pointer-events: none;
+            }
+
+            .ref-dk-group .cell-sep,
+            .ref-ekpke-group .cell-sep {
+                stroke: #f0f4ff;
+                stroke-width: 1.1;
+                opacity: 0.85;
+            }
+
+            .ref-dk-group .cell-text,
+            .ref-ekpke-group .cell-text {
+                font-family: Georgia, "Times New Roman", serif;
+                font-size: 12px;
+                fill: #f4f7ff;
+                text-anchor: middle;
+                dominant-baseline: middle;
+                pointer-events: none;
             }
 
             .ref-arrow {
@@ -1111,6 +1156,7 @@ def write_html_animation(
 
     let nodeMap = {};   // symbol -> <g.node> (global so all functions can use it)
     let primaryRefNodeEls = {};  // diagram nodeId -> <g>
+    let primaryRefNodeBoxes = {}; // diagram nodeId -> {x,y,w,h}
 
     function setupGraphAnimation(svgElement) {
         svgRoot = svgElement;
@@ -1222,7 +1268,15 @@ def write_html_animation(
 
         if (zoomInBtn)  zoomInBtn.onclick  = () => { if (panZoom) panZoom.zoomIn();  };
         if (zoomOutBtn) zoomOutBtn.onclick = () => { if (panZoom) panZoom.zoomOut(); };
-        if (zoomResetBtn) zoomResetBtn.onclick = () => { if (panZoom) panZoom.reset(); };
+        if (zoomResetBtn) zoomResetBtn.onclick = () => {
+            if (!panZoom) return;
+            if (svgRoot && svgRoot.id === "primary-ref-svg") {
+                if (panZoom.zoom) panZoom.zoom(1);
+                if (panZoom.pan) panZoom.pan({ x: 0, y: 0 });
+            } else if (panZoom.reset) {
+                panZoom.reset();
+            }
+        };
 
         if (outgoingCheckbox) {
             showOutgoing = outgoingCheckbox.checked;
@@ -2210,7 +2264,7 @@ def write_html_animation(
 
     const PRIMARY_REF_STEP_MAP = {
         keygen: {
-            kg01_setup_randomness: ["rand_d", "rand_z", "mlkem_keygen"],
+            kg01_setup_randomness: ["rand_d", "rand_z"],
             kg02_enter_k_pke_keygen: ["mlkem_keygen_internal", "kpke_keygen"],
             kg03_derive_rho_sigma: ["hash_g_box", "rho_box", "sigma_box"],
             kg04_generate_s_e: ["prf_s", "cbd_s", "prf_e", "cbd_e", "s_box", "e_box"],
@@ -2218,7 +2272,7 @@ def write_html_animation(
             kg06_generate_matrix_A_hat: ["sample_ntt", "matrix_A", "rho_box"],
             kg07_compute_t_hat: ["t_calc", "t_hat_box"],
             kg08_encode_keys: ["byteencode_sk", "byteencode_pk", "dkpke_out", "ekpke_out"],
-            kg09_build_kem_secret_key: ["h_pk", "dk_bar", "ek_bar", "z_mid", "dk_fields"],
+            kg09_build_kem_secret_key: ["h_pk", "dk_fields", "ek_bar", "z_mid"],
             kg10_return_keys: ["ek_out", "dk_out", "save_decaps", "send_bob"]
         },
         encap: {},
@@ -2251,6 +2305,28 @@ def write_html_animation(
         return t;
     }
 
+    function registerRefInteractiveNode(g, id, x, y, w, h) {
+        primaryRefNodeEls[id] = g;
+        primaryRefNodeBoxes[id] = { x, y, w, h };
+
+        g.style.cursor = "pointer";
+        g.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            const aliases = PRIMARY_REF_FUNC_ALIASES[id] || [];
+            const sym = aliases[0] || id;
+            selectedNode = sym;
+            emphasizeNode(g);
+            focusOnNode(g);
+            const nodeNameInput = document.getElementById('node-name');
+            const nodePathInput = document.getElementById('node-path');
+            if (nodeNameInput) nodeNameInput.value = sym;
+            if (nodePathInput) {
+                const info = sym2Info[sym];
+                nodePathInput.value = info ? info.path : "reference-diagram";
+            }
+        });
+    }
+
     function addRefNode(svg, spec) {
         const { fill, stroke } = refNodeColors(spec.role || "data");
         const g = createSvgEl("g", {
@@ -2279,25 +2355,8 @@ def write_html_animation(
             addRefText(g, spec.x + spec.w / 2, spec.y + spec.h / 2, spec.label);
         }
 
-        g.style.cursor = "pointer";
-        g.addEventListener("click", (ev) => {
-            ev.stopPropagation();
-            const aliases = PRIMARY_REF_FUNC_ALIASES[spec.id] || [];
-            const sym = aliases[0] || spec.id;
-            selectedNode = sym;
-            emphasizeNode(g);
-            focusOnNode(g);
-            const nodeNameInput = document.getElementById('node-name');
-            const nodePathInput = document.getElementById('node-path');
-            if (nodeNameInput) nodeNameInput.value = sym;
-            if (nodePathInput) {
-                const info = sym2Info[sym];
-                nodePathInput.value = info ? info.path : "reference-diagram";
-            }
-        });
-
         svg.appendChild(g);
-        primaryRefNodeEls[spec.id] = g;
+        registerRefInteractiveNode(g, spec.id, spec.x, spec.y, spec.w, spec.h);
         return g;
     }
 
@@ -2328,6 +2387,141 @@ def write_html_animation(
         svg.appendChild(title);
     }
 
+    function addRefDkGroup(svg, spec) {
+        const g = createSvgEl("g", { class: "ref-dk-group", "data-node-id": spec.id });
+        const outer = createSvgEl("rect", {
+            x: spec.x, y: spec.y, width: spec.w, height: spec.h, class: "outer"
+        });
+        outer.setAttribute("data-base-stroke", "#ff8f86");
+        outer.setAttribute("data-base-stroke-width", "1.5");
+        g.appendChild(outer);
+        addRefText(g, spec.x + spec.w / 2, spec.y + 14, "dk", "header");
+
+        const innerY = spec.y + 22;
+        const innerH = spec.h - 28;
+        const cells = [
+            { label: "dkPKE", frac: 0.33 },
+            { label: "ek", frac: 0.22 },
+            { label: "H(ek)", frac: 0.25 },
+            { label: "z", frac: 0.20 },
+        ];
+        const anchorMap = {};
+        let cx = spec.x + 8;
+        const innerW = spec.w - 16;
+        cells.forEach((c, idx) => {
+            const w = (idx === cells.length - 1) ? (spec.x + spec.w - 8 - cx) : Math.round(innerW * c.frac);
+            if (idx > 0) {
+                g.appendChild(createSvgEl("line", {
+                    x1: cx, y1: innerY + 2, x2: cx, y2: innerY + innerH - 2, class: "cell-sep"
+                }));
+            }
+            addRefText(g, cx + w / 2, innerY + innerH / 2 + 1, c.label, "cell-text");
+            const key = (idx === 0) ? "dkpke" : (idx === 1) ? "ek" : (idx === 2) ? "hek" : "z";
+            anchorMap[`${key}-top`] = { x: cx + w / 2, y: spec.y };
+            anchorMap[`${key}-bottom`] = { x: cx + w / 2, y: spec.y + spec.h };
+
+            // Reference-style indicators in the grouped dk layout (H(ek) = green, z = orange).
+            if (idx === 2) {
+                g.appendChild(createSvgEl("circle", {
+                    cx: cx + w - 12, cy: innerY + 9, r: 5, fill: "#5edc74", stroke: "#bff6c9", "stroke-width": 1
+                }));
+            } else if (idx === 3) {
+                g.appendChild(createSvgEl("rect", {
+                    x: cx + w - 16, y: innerY + 4, width: 10, height: 10,
+                    fill: "#ff8a21", stroke: "#ffd19a", "stroke-width": 1, rx: 1.5, ry: 1.5
+                }));
+            }
+            cx += w;
+        });
+
+        svg.appendChild(g);
+        registerRefInteractiveNode(g, spec.id, spec.x, spec.y, spec.w, spec.h);
+        if (primaryRefNodeBoxes[spec.id]) primaryRefNodeBoxes[spec.id].anchors = anchorMap;
+        return g;
+    }
+
+    function addRefEkPkeGroup(svg, spec) {
+        const g = createSvgEl("g", { class: "ref-ekpke-group", "data-node-id": spec.id });
+        const outer = createSvgEl("rect", {
+            x: spec.x, y: spec.y, width: spec.w, height: spec.h, class: "outer"
+        });
+        outer.setAttribute("data-base-stroke", "#ff8f86");
+        outer.setAttribute("data-base-stroke-width", "1.5");
+        g.appendChild(outer);
+
+        const headerH = 16;
+        g.appendChild(createSvgEl("line", {
+            x1: spec.x + 4, y1: spec.y + headerH, x2: spec.x + spec.w - 4, y2: spec.y + headerH, class: "cell-sep"
+        }));
+        addRefText(g, spec.x + spec.w / 2, spec.y + 10, "ekPKE", "header");
+
+        const bodyY = spec.y + headerH + 4;
+        const bodyH = spec.h - headerH - 8;
+        const splitX = spec.x + Math.round(spec.w * 0.62);
+        g.appendChild(createSvgEl("line", {
+            x1: splitX, y1: bodyY, x2: splitX, y2: bodyY + bodyH, class: "cell-sep"
+        }));
+        addRefText(g, spec.x + (splitX - spec.x) / 2, bodyY + bodyH / 2 + 1, "t^", "cell-text");
+        addRefText(g, splitX + (spec.x + spec.w - splitX) / 2, bodyY + bodyH / 2 + 1, "rho", "cell-text");
+
+        svg.appendChild(g);
+        registerRefInteractiveNode(g, spec.id, spec.x, spec.y, spec.w, spec.h);
+        if (primaryRefNodeBoxes[spec.id]) {
+            primaryRefNodeBoxes[spec.id].anchors = {
+                "body-left": { x: spec.x, y: bodyY + bodyH / 2 },
+                "body-right": { x: spec.x + spec.w, y: bodyY + bodyH / 2 },
+                "t-bottom": { x: spec.x + (splitX - spec.x) / 2, y: spec.y + spec.h },
+                "rho-bottom": { x: splitX + (spec.x + spec.w - splitX) / 2, y: spec.y + spec.h },
+                "t-top": { x: spec.x + (splitX - spec.x) / 2, y: spec.y },
+                "rho-top": { x: splitX + (spec.x + spec.w - splitX) / 2, y: spec.y }
+            };
+        }
+        return g;
+    }
+
+    function refAnchor(nodeId, side, dx = 0, dy = 0) {
+        const b = primaryRefNodeBoxes[nodeId];
+        if (!b) return { x: 0, y: 0 };
+        if (b.anchors && b.anchors[side]) {
+            return { x: b.anchors[side].x + dx, y: b.anchors[side].y + dy };
+        }
+        if (side === "left")   return { x: b.x, y: b.y + b.h / 2 + dy };
+        if (side === "right")  return { x: b.x + b.w, y: b.y + b.h / 2 + dy };
+        if (side === "top")    return { x: b.x + b.w / 2 + dx, y: b.y };
+        if (side === "bottom") return { x: b.x + b.w / 2 + dx, y: b.y + b.h };
+        return { x: b.x + b.w / 2 + dx, y: b.y + b.h / 2 + dy };
+    }
+
+    function addRefConnector(svg, fromSpec, toSpec, opts = {}) {
+        const a = refAnchor(fromSpec.id, fromSpec.side || "right", fromSpec.dx || 0, fromSpec.dy || 0);
+        const b = refAnchor(toSpec.id, toSpec.side || "left", toSpec.dx || 0, toSpec.dy || 0);
+        let d = "";
+
+        if (opts.points && Array.isArray(opts.points) && opts.points.length) {
+            const pts = [a, ...opts.points, b];
+            d = `M ${pts[0].x} ${pts[0].y}` + pts.slice(1).map(p => ` L ${p.x} ${p.y}`).join("");
+        } else if (opts.mode === "vh") {
+            d = `M ${a.x} ${a.y} L ${a.x} ${b.y} L ${b.x} ${b.y}`;
+        } else if (opts.mode === "hv") {
+            d = `M ${a.x} ${a.y} L ${b.x} ${a.y} L ${b.x} ${b.y}`;
+        } else if (opts.mode === "curve") {
+            const c1x = (opts.c1 && opts.c1.x != null) ? opts.c1.x : (a.x + b.x) / 2;
+            const c1y = (opts.c1 && opts.c1.y != null) ? opts.c1.y : a.y;
+            const c2x = (opts.c2 && opts.c2.x != null) ? opts.c2.x : (a.x + b.x) / 2;
+            const c2y = (opts.c2 && opts.c2.y != null) ? opts.c2.y : b.y;
+            d = `M ${a.x} ${a.y} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${b.x} ${b.y}`;
+        } else {
+            d = `M ${a.x} ${a.y} L ${b.x} ${b.y}`;
+        }
+
+        return addRefArrow(svg, a, b, {
+            d,
+            dashed: !!opts.dashed,
+            color: opts.color,
+            width: opts.width
+        });
+    }
+
     function setupPrimaryReferenceNodeMap(svg) {
         svgRoot = svg;
         edgeElements = [];
@@ -2347,10 +2541,15 @@ def write_html_animation(
                     controlIconsEnabled: false,
                     zoomScaleSensitivity: 0.25,
                     dblClickZoomEnabled: false,
+                    fit: false,
+                    center: false,
                     minZoom: 0.5,
                     maxZoom: 6
                 });
-                if (panZoom && panZoom.reset) panZoom.reset();
+                if (panZoom && panZoom.resize) panZoom.resize();
+                if (panZoom && panZoom.updateBBox) panZoom.updateBBox();
+                if (panZoom && panZoom.zoom) panZoom.zoom(1);
+                if (panZoom && panZoom.pan) panZoom.pan({ x: 0, y: 0 });
             } catch (e) {
                 console.warn("svgPanZoom unavailable for reference diagram:", e);
                 panZoom = null;
@@ -2365,11 +2564,12 @@ def write_html_animation(
         if (!container) return;
         container.innerHTML = "";
         primaryRefNodeEls = {};
+        primaryRefNodeBoxes = {};
 
         const svg = createSvgEl("svg", {
             id: "primary-ref-svg",
             class: "primary-ref-root",
-            viewBox: "0 0 1960 560",
+            viewBox: "0 0 1980 410",
             preserveAspectRatio: "xMinYMin meet"
         });
 
@@ -2383,135 +2583,212 @@ def write_html_animation(
         defs.appendChild(marker);
         svg.appendChild(defs);
 
-        svg.appendChild(createSvgEl("rect", { x: 0, y: 0, width: 1960, height: 560, fill: "#0b1220" }));
+        svg.appendChild(createSvgEl("rect", { x: 0, y: 0, width: 1980, height: 410, fill: "#0b1220" }));
 
-        addRefPanel(svg, { x: 10, y: 10,  w: 540, h: 250, title: "[19] ML-KEM.KeyGen (Initiator Alice)" });
-        addRefPanel(svg, { x: 570, y: 10, w: 510, h: 250, title: "[16] ML-KEM.KeyGen_internal (Initiator Alice)" });
-        addRefPanel(svg, { x: 1100, y: 10, w: 850, h: 250, title: "[13] K-PKE.KeyGen (Initiator Alice)" });
+        const p1 = { x: 16, y: 16, w: 510, h: 350 };
+        const p2 = { x: 540, y: 16, w: 500, h: 350 };
+        const p3 = { x: 1054, y: 16, w: 910, h: 350 };
+        addRefPanel(svg, { ...p1, title: "[19] ML-KEM.KeyGen (Initiator Alice)" });
+        addRefPanel(svg, { ...p2, title: "[16] ML-KEM.KeyGen_internal (Initiator Alice)" });
+        addRefPanel(svg, { ...p3, title: "[13] K-PKE.KeyGen (Initiator Alice)" });
 
-        // Panel content (compact bounded layout matching the provided reference image)
+        // Panel 1: ML-KEM.KeyGen
+        addRefNode(svg, { id: "ifnull_d", role: "process", x: 30,  y: 58,  w: 96, h: 40, label: "if NULL" });
+        addRefNode(svg, { id: "rand_d", role: "random", x: 150, y: 54,  w: 44, h: 48, label: "d" });
+        addRefNode(svg, { id: "dk_out", role: "output", x: 300, y: 54,  w: 54, h: 48, label: "dk" });
+        addRefNode(svg, { id: "save_decaps", role: "usage", x: 380, y: 54, w: 128, h: 48, lines: ["Save for", "Decaps"] });
+        addRefNode(svg, { id: "return_bottom", role: "output", x: 30, y: 122, w: 96, h: 46, lines: ["return", "bottom"] });
+        addRefNode(svg, { id: "mlkem_keygen_internal", role: "process", x: 142, y: 122, w: 270, h: 46, label: "ML-KEM.KeyGen_internal" });
+        addRefNode(svg, { id: "ifnull_z", role: "process", x: 30, y: 198, w: 96, h: 40, label: "if NULL" });
+        addRefNode(svg, { id: "rand_z", role: "random", x: 150, y: 194, w: 44, h: 48, label: "z" });
+        addRefNode(svg, { id: "ek_out", role: "output", x: 300, y: 194, w: 54, h: 48, label: "ek" });
+        addRefNode(svg, { id: "send_bob", role: "usage", x: 380, y: 194, w: 128, h: 48, label: "Send to Bob" });
 
-        // Panel 1 (compact)
-        addRefNode(svg, { id: "ifnull_d", role: "process", x: 26, y: 50, w: 106, h: 44, label: "if NULL" });
-        addRefNode(svg, { id: "rand_d", role: "random", x: 170, y: 48, w: 56, h: 48, label: "d" });
-        addRefNode(svg, { id: "dk_out", role: "output", x: 314, y: 48, w: 60, h: 48, label: "dk" });
-        addRefNode(svg, { id: "save_decaps", role: "usage", x: 402, y: 46, w: 132, h: 52, lines: ["Save for", "Decaps"] });
-        addRefNode(svg, { id: "return_bottom", role: "output", x: 26, y: 114, w: 106, h: 48, lines: ["return", "bottom"] });
-        addRefNode(svg, { id: "mlkem_keygen_internal", role: "process", x: 156, y: 114, w: 280, h: 48, label: "ML-KEM.KeyGen_internal" });
-        addRefNode(svg, { id: "ifnull_z", role: "process", x: 26, y: 184, w: 106, h: 44, label: "if NULL" });
-        addRefNode(svg, { id: "rand_z", role: "random", x: 170, y: 182, w: 56, h: 48, label: "z" });
-        addRefNode(svg, { id: "ek_out", role: "output", x: 314, y: 182, w: 60, h: 48, label: "ek" });
-        addRefNode(svg, { id: "send_bob", role: "usage", x: 402, y: 180, w: 132, h: 52, label: "Send to Bob" });
+        // Panel 2: ML-KEM.KeyGen_internal
+        addRefDkGroup(svg, { id: "dk_fields", x: 556, y: 54, w: 468, h: 62 });
+        addRefNode(svg, { id: "dkpke_mid", role: "data", x: 608, y: 146, w: 86, h: 40, label: "dkPKE" });
+        addRefNode(svg, { id: "h_pk", role: "calc", x: 812, y: 142, w: 56, h: 48, label: "H" });
+        addRefNode(svg, { id: "z_mid", role: "input", x: 920, y: 142, w: 56, h: 48, label: "z" });
+        addRefNode(svg, { id: "d_mid", role: "input", x: 556, y: 246, w: 46, h: 40, label: "d" });
+        addRefNode(svg, { id: "kpke_keygen", role: "process", x: 622, y: 242, w: 154, h: 48, label: "K-PKE.KeyGen" });
+        addRefNode(svg, { id: "ekpke_mid", role: "data", x: 810, y: 246, w: 80, h: 40, label: "ekPKE" });
+        addRefNode(svg, { id: "ek_bar", role: "output", x: 912, y: 246, w: 50, h: 40, label: "ek" });
 
-        // Panel 2
-        addRefNode(svg, { id: "dk_fields", role: "output", x: 593, y: 44, w: 464, h: 44, lines: ["dk = dkPKE  ||  ek  ||  H(ek)  ||  z"] });
-        addRefNode(svg, { id: "dkpke_mid", role: "data", x: 630, y: 112, w: 92, h: 44, label: "dkPKE" });
-        addRefNode(svg, { id: "h_pk", role: "calc", x: 842, y: 112, w: 56, h: 44, label: "H" });
-        addRefNode(svg, { id: "z_mid", role: "input", x: 955, y: 112, w: 62, h: 44, label: "z" });
-        addRefNode(svg, { id: "d_mid", role: "input", x: 590, y: 182, w: 58, h: 44, label: "d" });
-        addRefNode(svg, { id: "kpke_keygen", role: "process", x: 674, y: 180, w: 154, h: 46, label: "K-PKE.KeyGen" });
-        addRefNode(svg, { id: "ekpke_mid", role: "data", x: 846, y: 182, w: 82, h: 44, label: "ekPKE" });
-        addRefNode(svg, { id: "ek_bar", role: "output", x: 944, y: 182, w: 62, h: 44, label: "ek" });
-        addRefNode(svg, { id: "dk_bar", role: "output", x: 744, y: 286, w: 90, h: 44, label: "dk" });
+        // Panel 3: K-PKE.KeyGen
+        const x0 = 1060, y0 = 58;
+        addRefNode(svg, { id: "k_box", role: "calc", x: x0+8, y: y0, w: 50, h: 42, label: "k" });
+        addRefNode(svg, { id: "d_box", role: "input", x: x0+66, y: y0, w: 50, h: 42, label: "d" });
+        addRefNode(svg, { id: "hash_g_box", role: "process", x: x0+8, y: y0+58, w: 130, h: 42, label: "G(d||k)" });
+        addRefNode(svg, { id: "rho_box", role: "data", x: x0+8, y: y0+212, w: 54, h: 42, label: "rho" });
+        addRefNode(svg, { id: "sigma_box", role: "data", x: x0+152, y: y0+58, w: 56, h: 42, label: "sigma" });
+        addRefNode(svg, { id: "loop_s", role: "process", x: x0+78, y: y0+116, w: 88, h: 40, lines: ["For i in", "(0..k)"] });
+        addRefNode(svg, { id: "loop_a", role: "process", x: x0+78, y: y0+174, w: 88, h: 40, lines: ["For j in", "(0..k)"] });
 
-        // Panel 3 (bounded version matching the provided image structure)
-        const x0 = 1114, y0 = 44;
-        addRefNode(svg, { id: "k_box", role: "calc", x: x0,      y: y0,     w: 46, h: 38, label: "k" });
-        addRefNode(svg, { id: "d_box", role: "input", x: x0+58,   y: y0,     w: 46, h: 38, label: "d" });
-        addRefNode(svg, { id: "hash_g_box", role: "process", x: x0, y: y0+52, w: 148, h: 40, label: "G(d||k)" });
-        addRefNode(svg, { id: "rho_box", role: "data", x: x0,      y: y0+106, w: 54, h: 38, label: "rho" });
-        addRefNode(svg, { id: "sigma_box", role: "data", x: x0+160, y: y0+52, w: 54, h: 38, label: "sigma" });
-        addRefNode(svg, { id: "loop_s", role: "process", x: x0+66, y: y0+106, w: 88, h: 40, lines: ["For i in", "(0..k)"] });
+        addRefNode(svg, { id: "prf_s", role: "process", x: x0+236, y: y0, w: 108, h: 42, label: "PRF(sigma,N)" });
+        addRefNode(svg, { id: "n_box", role: "data", x: x0+236, y: y0+58, w: 46, h: 38, label: "N" });
+        addRefNode(svg, { id: "n1_box", role: "process", x: x0+292, y: y0+58, w: 54, h: 38, label: "N+1" });
+        addRefNode(svg, { id: "prf_e", role: "process", x: x0+236, y: y0+116, w: 108, h: 42, label: "PRF(sigma,N)" });
+        addRefNode(svg, { id: "sample_ntt", role: "process", x: x0+226, y: y0+174, w: 178, h: 42, label: "SampleNTT(rho|j|i)" });
 
-        addRefNode(svg, { id: "prf_s", role: "process", x: x0+220, y: y0,     w: 118, h: 40, label: "PRF(sigma,N)" });
-        addRefNode(svg, { id: "cbd_s", role: "process", x: x0+352, y: y0,     w: 160, h: 40, label: "SamplePolyCBD" });
-        addRefNode(svg, { id: "s_box", role: "data", x: x0+526,   y: y0,     w: 42, h: 40, label: "s" });
-        addRefNode(svg, { id: "ntt_s", role: "process", x: x0+580, y: y0,     w: 48, h: 40, label: "NTT" });
-        addRefNode(svg, { id: "s_hat_box", role: "data", x: x0+642, y: y0,    w: 50, h: 40, label: "s^" });
+        addRefNode(svg, { id: "cbd_s", role: "process", x: x0+356, y: y0, w: 124, h: 42, label: "SamplePolyCBD" });
+        addRefNode(svg, { id: "cbd_e", role: "process", x: x0+356, y: y0+116, w: 124, h: 42, label: "SamplePolyCBD" });
+        addRefNode(svg, { id: "matrix_A", role: "data", x: x0+414, y: y0+174, w: 58, h: 42, label: "A^" });
 
-        addRefNode(svg, { id: "n_box", role: "data", x: x0+220, y: y0+54,     w: 46, h: 38, label: "N" });
-        addRefNode(svg, { id: "n1_box", role: "process", x: x0+278, y: y0+54,  w: 56, h: 38, label: "N+1" });
-        addRefNode(svg, { id: "prf_e", role: "process", x: x0+220, y: y0+106,  w: 118, h: 40, label: "PRF(sigma,N)" });
-        addRefNode(svg, { id: "cbd_e", role: "process", x: x0+352, y: y0+106,  w: 160, h: 40, label: "SamplePolyCBD" });
-        addRefNode(svg, { id: "e_box", role: "data", x: x0+526, y: y0+106,     w: 42, h: 40, label: "e" });
-        addRefNode(svg, { id: "ntt_e", role: "process", x: x0+580, y: y0+106,  w: 48, h: 40, label: "NTT" });
-        addRefNode(svg, { id: "e_hat_box", role: "data", x: x0+642, y: y0+106, w: 50, h: 40, label: "e^" });
+        addRefNode(svg, { id: "s_box", role: "data", x: x0+492, y: y0, w: 34, h: 42, label: "s" });
+        addRefNode(svg, { id: "e_box", role: "data", x: x0+492, y: y0+116, w: 34, h: 42, label: "e" });
+        addRefNode(svg, { id: "ntt_s", role: "process", x: x0+536, y: y0, w: 44, h: 42, label: "NTT" });
+        addRefNode(svg, { id: "ntt_e", role: "process", x: x0+536, y: y0+116, w: 44, h: 42, label: "NTT" });
+        addRefNode(svg, { id: "s_hat_box", role: "data", x: x0+590, y: y0, w: 40, h: 42, label: "s^" });
+        addRefNode(svg, { id: "e_hat_box", role: "data", x: x0+590, y: y0+116, w: 40, h: 42, label: "e^" });
+        addRefNode(svg, { id: "t_calc", role: "process", x: x0+488, y: y0+174, w: 154, h: 42, label: "t^ = A^ o s^ + e^" });
+        addRefNode(svg, { id: "t_hat_box", role: "data", x: x0+652, y: y0+174, w: 40, h: 42, label: "t^" });
 
-        addRefNode(svg, { id: "loop_a", role: "process", x: x0+66, y: y0+166, w: 88, h: 40, lines: ["For j in", "(0..k)"] });
-        addRefNode(svg, { id: "sample_ntt", role: "process", x: x0+220, y: y0+164, w: 192, h: 40, label: "SampleNTT(rho|j|i)" });
-        addRefNode(svg, { id: "matrix_A", role: "data", x: x0+430, y: y0+164, w: 70, h: 40, label: "A^" });
-        addRefNode(svg, { id: "t_calc", role: "process", x: x0+514, y: y0+164, w: 164, h: 40, label: "t^ = A^ o s^ + e^" });
-        addRefNode(svg, { id: "t_hat_box", role: "data", x: x0+692, y: y0+164, w: 56, h: 40, label: "t^" });
-        addRefNode(svg, { id: "byteencode_pk", role: "process", x: x0+762, y: y0+164, w: 120, h: 40, label: "ByteEncode" });
-        addRefNode(svg, { id: "ekpke_out", role: "output", x: x0+894, y: y0+142, w: 94, h: 40, lines: ["ekPKE", "(t^ || rho)"] });
-        addRefNode(svg, { id: "byteencode_sk", role: "process", x: x0+762, y: y0+52, w: 120, h: 40, label: "ByteEncode" });
-        addRefNode(svg, { id: "dkpke_out", role: "output", x: x0+894, y: y0+52, w: 94, h: 40, label: "dkPKE" });
+        addRefNode(svg, { id: "byteencode_sk", role: "process", x: x0+694, y: y0, w: 110, h: 42, label: "ByteEncode" });
+        addRefNode(svg, { id: "dkpke_out", role: "output", x: x0+816, y: y0, w: 82, h: 42, label: "dkPKE" });
+        addRefNode(svg, { id: "byteencode_pk", role: "process", x: x0+694, y: y0+174, w: 110, h: 42, label: "ByteEncode" });
+        addRefEkPkeGroup(svg, { id: "ekpke_out", x: x0+808, y: y0+162, w: 90, h: 64 });
 
-        // Arrows: Panel 1
-        addRefArrow(svg, {x:132,y:72}, {x:170,y:72});
-        addRefArrow(svg, {x:226,y:72}, {x:314,y:72});
-        addRefArrow(svg, {x:374,y:72}, {x:402,y:72});
-        addRefArrow(svg, {x:132,y:208}, {x:170,y:208});
-        addRefArrow(svg, {x:226,y:208}, {x:314,y:208});
-        addRefArrow(svg, {x:374,y:208}, {x:402,y:208});
-        addRefArrow(svg, {x:226,y:72}, {x:296,y:138}, {d: "M 226 72 C 255 72, 260 120, 296 138"});
-        addRefArrow(svg, {x:226,y:208}, {x:296,y:138}, {d: "M 226 208 C 255 208, 260 156, 296 138"});
-        addRefArrow(svg, {x:436,y:138}, {x:314,y:208}, {d: "M 436 138 C 430 180, 380 190, 344 206"});
-        addRefArrow(svg, {x:436,y:138}, {x:314,y:72}, {d: "M 436 138 C 430 94, 380 82, 344 72"});
-        addRefArrow(svg, {x:78,y:94}, {x:78,y:114});
-        addRefArrow(svg, {x:78,y:184}, {x:78,y:163});
+        // Panel 1 connectors
+        addRefConnector(svg, {id:"ifnull_d", side:"right"}, {id:"rand_d", side:"left"});
+        addRefConnector(svg, {id:"rand_d", side:"right"}, {id:"dk_out", side:"left"});
+        addRefConnector(svg, {id:"dk_out", side:"right"}, {id:"save_decaps", side:"left"});
+        addRefConnector(svg, {id:"ifnull_z", side:"right"}, {id:"rand_z", side:"left"});
+        addRefConnector(svg, {id:"rand_z", side:"right"}, {id:"ek_out", side:"left"});
+        addRefConnector(svg, {id:"ek_out", side:"right"}, {id:"send_bob", side:"left"});
+        addRefConnector(svg, {id:"ifnull_d", side:"bottom", dx:-10}, {id:"return_bottom", side:"top", dx:-10}, {mode:"vh"});
+        addRefConnector(svg, {id:"ifnull_z", side:"top", dx:-10}, {id:"return_bottom", side:"bottom", dx:-10}, {mode:"vh"});
+        addRefConnector(svg, {id:"rand_d", side:"bottom"}, {id:"mlkem_keygen_internal", side:"top", dx:-64}, {mode:"vh"});
+        addRefConnector(svg, {id:"rand_z", side:"top"}, {id:"mlkem_keygen_internal", side:"bottom", dx:-64}, {mode:"vh"});
+        addRefConnector(svg, {id:"mlkem_keygen_internal", side:"right", dy:-12}, {id:"dk_out", side:"bottom"}, {
+            mode:"curve", c1:{x:470,y:130}, c2:{x:356,y:110}
+        });
+        addRefConnector(svg, {id:"mlkem_keygen_internal", side:"right", dy:12}, {id:"ek_out", side:"top"}, {
+            mode:"curve", c1:{x:470,y:162}, c2:{x:356,y:188}
+        });
 
-        // Cross-panel dashed link P1 -> P2 and P2 -> P3
-        addRefArrow(svg, {x:438,y:138}, {x:590,y:204}, {d: "M 438 138 C 505 138, 520 204, 590 204", dashed: true});
-        addRefArrow(svg, {x:828,y:204}, {x:1114,y:184}, {d: "M 828 204 C 940 204, 985 184, 1114 184", dashed: true});
+        // KEM internal + cross-panel links
+        addRefConnector(svg, {id:"mlkem_keygen_internal", side:"right"}, {id:"kpke_keygen", side:"left"}, {
+            dashed:true,
+            points:[
+                { x: p2.x - 18, y: refAnchor("mlkem_keygen_internal", "right").y },
+                { x: p2.x - 18, y: refAnchor("kpke_keygen", "left").y }
+            ]
+        });
+        addRefConnector(svg, {id:"rand_d", side:"top"}, {id:"d_mid", side:"left"}, {
+            dashed:true,
+            points:[
+                { x: refAnchor("rand_d", "top").x, y: p1.y + 36 },
+                { x: p2.x - 28, y: p1.y + 36 },
+                { x: p2.x - 28, y: refAnchor("d_mid", "left").y }
+            ]
+        });
+        addRefConnector(svg, {id:"rand_z", side:"bottom"}, {id:"z_mid", side:"left"}, {
+            dashed:true,
+            points:[
+                { x: refAnchor("rand_z", "bottom").x, y: p2.y + p2.h + 14 },
+                { x: p2.x - 10, y: p2.y + p2.h + 14 },
+                { x: p2.x - 10, y: refAnchor("z_mid", "left").y }
+            ]
+        });
+        addRefConnector(svg, {id:"d_mid", side:"right"}, {id:"kpke_keygen", side:"left"});
+        addRefConnector(svg, {id:"kpke_keygen", side:"right"}, {id:"ekpke_mid", side:"left"});
+        addRefConnector(svg, {id:"ekpke_mid", side:"right"}, {id:"ek_bar", side:"left"});
+        addRefConnector(svg, {id:"ek_bar", side:"top"}, {id:"h_pk", side:"bottom"}, {mode:"vh"});
+        addRefConnector(svg, {id:"kpke_keygen", side:"top", dx:-46}, {id:"dkpke_mid", side:"bottom", dx:6}, {
+            mode:"curve", c1:{x:650,y:218}, c2:{x:626,y:174}
+        });
+        addRefConnector(svg, {id:"dkpke_mid", side:"top"}, {id:"dk_fields", side:"dkpke-bottom"}, {mode:"vh"});
+        addRefConnector(svg, {id:"ek_bar", side:"top"}, {id:"dk_fields", side:"ek-bottom"}, {mode:"vh"});
+        addRefConnector(svg, {id:"h_pk", side:"top"}, {id:"dk_fields", side:"hek-bottom"}, {mode:"vh"});
+        addRefConnector(svg, {id:"z_mid", side:"top"}, {id:"dk_fields", side:"z-bottom"}, {mode:"vh"});
 
-        // Panel 2 arrows
-        addRefArrow(svg, {x:648,y:204}, {x:674,y:204});
-        addRefArrow(svg, {x:828,y:204}, {x:846,y:204});
-        addRefArrow(svg, {x:928,y:204}, {x:944,y:204});
-        addRefArrow(svg, {x:876,y:156}, {x:870,y:112}, {d: "M 874 182 L 874 156"});
-        addRefArrow(svg, {x:986,y:156}, {x:986,y:112}, {d: "M 986 182 L 986 156"});
-        addRefArrow(svg, {x:670,y:132}, {x:744,y:308}, {d: "M 676 132 C 690 190, 700 260, 744 308"});
-        addRefArrow(svg, {x:722,y:134}, {x:646,y:134}, {d: "M 722 134 L 646 134"});
+        addRefConnector(svg, {id:"dk_fields", side:"left"}, {id:"dk_out", side:"right"}, {
+            dashed:true,
+            points:[
+                { x: p1.x + p1.w + 18, y: refAnchor("dk_fields", "left").y },
+                { x: p1.x + p1.w + 18, y: p1.y + 36 },
+                { x: refAnchor("dk_out", "right").x + 18, y: p1.y + 36 },
+                { x: refAnchor("dk_out", "right").x + 18, y: refAnchor("dk_out", "right").y }
+            ]
+        });
+        addRefConnector(svg, {id:"ek_bar", side:"left"}, {id:"ek_out", side:"right"}, {
+            dashed:true,
+            points:[
+                { x: p2.x - 20, y: refAnchor("ek_bar", "left").y },
+                { x: p2.x - 20, y: refAnchor("ek_out", "bottom").y + 16 },
+                { x: refAnchor("ek_out", "right").x + 18, y: refAnchor("ek_out", "bottom").y + 16 },
+                { x: refAnchor("ek_out", "right").x + 18, y: refAnchor("ek_out", "right").y }
+            ]
+        });
+        addRefConnector(svg, {id:"kpke_keygen", side:"right"}, {id:"hash_g_box", side:"left"}, {
+            dashed:true,
+            points:[
+                { x: p3.x - 16, y: refAnchor("kpke_keygen", "right").y },
+                { x: p3.x - 16, y: refAnchor("hash_g_box", "left").y }
+            ]
+        });
+        addRefConnector(svg, {id:"dkpke_out", side:"top"}, {id:"dkpke_mid", side:"right"}, {
+            dashed:true,
+            points:[
+                { x: refAnchor("dkpke_out", "top").x, y: p3.y + 36 },
+                { x: p3.x - 18, y: p3.y + 36 },
+                { x: p3.x - 18, y: refAnchor("dkpke_mid", "right").y }
+            ]
+        });
+        addRefConnector(svg, {id:"ekpke_out", side:"bottom"}, {id:"ekpke_mid", side:"right"}, {
+            dashed:true,
+            points:[
+                { x: refAnchor("ekpke_out", "bottom").x, y: p2.y + p2.h + 14 },
+                { x: p3.x - 18, y: p2.y + p2.h + 14 },
+                { x: p3.x - 18, y: refAnchor("ekpke_mid", "right").y }
+            ]
+        });
 
-        // Panel 3 arrows (core flow)
-        addRefArrow(svg, {x:x0+46, y:y0+19}, {x:x0+74, y:y0+72}, {d:`M ${x0+46} ${y0+19} C ${x0+50} ${y0+42}, ${x0+68} ${y0+56}, ${x0+74} ${y0+72}`});
-        addRefArrow(svg, {x:x0+104, y:y0+19}, {x:x0+108, y:y0+72}, {d:`M ${x0+104} ${y0+19} C ${x0+104} ${y0+40}, ${x0+108} ${y0+56}, ${x0+108} ${y0+72}`});
-        addRefArrow(svg, {x:x0+148, y:y0+72}, {x:x0+160, y:y0+72});
-        addRefArrow(svg, {x:x0+148, y:y0+72}, {x:x0+27, y:y0+125}, {d:`M ${x0+148} ${y0+72} C ${x0+120} ${y0+96}, ${x0+60} ${y0+120}, ${x0+27} ${y0+125}`});
-        addRefArrow(svg, {x:x0+188, y:y0+72}, {x:x0+220, y:y0+20});
-        addRefArrow(svg, {x:x0+214, y:y0+72}, {x:x0+220, y:y0+126});
-        addRefArrow(svg, {x:x0+154, y:y0+126}, {x:x0+220, y:y0+184});
-        addRefArrow(svg, {x:x0+338, y:y0+20}, {x:x0+352, y:y0+20});
-        addRefArrow(svg, {x:x0+512, y:y0+20}, {x:x0+526, y:y0+20});
-        addRefArrow(svg, {x:x0+568, y:y0+20}, {x:x0+580, y:y0+20});
-        addRefArrow(svg, {x:x0+628, y:y0+20}, {x:x0+642, y:y0+20});
-        addRefArrow(svg, {x:x0+338, y:y0+126}, {x:x0+352, y:y0+126});
-        addRefArrow(svg, {x:x0+512, y:y0+126}, {x:x0+526, y:y0+126});
-        addRefArrow(svg, {x:x0+568, y:y0+126}, {x:x0+580, y:y0+126});
-        addRefArrow(svg, {x:x0+628, y:y0+126}, {x:x0+642, y:y0+126});
+        // Panel 3 connectors (all snapped to node borders)
+        addRefConnector(svg, {id:"k_box", side:"bottom"}, {id:"hash_g_box", side:"top", dx:-34}, {mode:"vh"});
+        addRefConnector(svg, {id:"d_box", side:"bottom"}, {id:"hash_g_box", side:"top", dx:22}, {mode:"vh"});
+        addRefConnector(svg, {id:"hash_g_box", side:"right"}, {id:"sigma_box", side:"left"});
+        addRefConnector(svg, {id:"hash_g_box", side:"bottom", dx:-34}, {id:"rho_box", side:"top"}, {mode:"vh"});
+        addRefConnector(svg, {id:"sigma_box", side:"bottom"}, {id:"loop_s", side:"top", dx:16}, {mode:"vh"});
+        addRefConnector(svg, {id:"rho_box", side:"right"}, {id:"loop_a", side:"left"}, {mode:"hv"});
 
-        addRefArrow(svg, {x:x0+154, y:y0+186}, {x:x0+220, y:y0+184});
-        addRefArrow(svg, {x:x0+412, y:y0+184}, {x:x0+430, y:y0+184});
-        addRefArrow(svg, {x:x0+500, y:y0+184}, {x:x0+514, y:y0+184});
-        addRefArrow(svg, {x:x0+678, y:y0+184}, {x:x0+692, y:y0+184});
-        addRefArrow(svg, {x:x0+748, y:y0+184}, {x:x0+762, y:y0+184});
-        addRefArrow(svg, {x:x0+882, y:y0+184}, {x:x0+894, y:y0+162});
+        addRefConnector(svg, {id:"loop_s", side:"right", dy:-10}, {id:"prf_s", side:"left", dy:10}, {mode:"hv"});
+        addRefConnector(svg, {id:"loop_s", side:"right", dy:10}, {id:"prf_e", side:"left"}, {mode:"hv"});
+        addRefConnector(svg, {id:"prf_s", side:"bottom"}, {id:"n_box", side:"top"}, {mode:"vh"});
+        addRefConnector(svg, {id:"n_box", side:"right"}, {id:"n1_box", side:"left"});
+        addRefConnector(svg, {id:"n1_box", side:"bottom"}, {id:"prf_e", side:"top"}, {mode:"vh"});
 
-        addRefArrow(svg, {x:x0+692, y:y0+20}, {x:x0+762, y:y0+72}, {d:`M ${x0+692} ${y0+20} C ${x0+724} ${y0+24}, ${x0+736} ${y0+54}, ${x0+762} ${y0+72}`});
-        addRefArrow(svg, {x:x0+882, y:y0+72}, {x:x0+894, y:y0+72});
-        addRefArrow(svg, {x:x0+54, y:y0+183}, {x:x0+54, y:y0+144}, {d:`M ${x0+54} ${y0+183} L ${x0+54} ${y0+144}`});
+        addRefConnector(svg, {id:"prf_s", side:"right"}, {id:"cbd_s", side:"left"});
+        addRefConnector(svg, {id:"cbd_s", side:"right"}, {id:"s_box", side:"left"});
+        addRefConnector(svg, {id:"s_box", side:"right"}, {id:"ntt_s", side:"left"});
+        addRefConnector(svg, {id:"ntt_s", side:"right"}, {id:"s_hat_box", side:"left"});
+        addRefConnector(svg, {id:"s_hat_box", side:"right"}, {id:"byteencode_sk", side:"left"}, {
+            mode:"curve", c1:{x:x0+680,y:y0+20}, c2:{x:x0+695,y:y0+20}
+        });
+        addRefConnector(svg, {id:"byteencode_sk", side:"right"}, {id:"dkpke_out", side:"left"});
 
-        // KEM/PKE outputs and finalization arrows
-        addRefArrow(svg, {x:998, y:204}, {x:744, y:308}, {d:"M 998 204 C 940 228, 860 272, 790 308"});
-        addRefArrow(svg, {x:839, y:204}, {x:944, y:204}, {d:"M 839 204 L 944 204"});
-        addRefArrow(svg, {x:744, y:308}, {x:745, y:308});
-        addRefArrow(svg, {x:744, y:308}, {x:620, y:68}, {d:"M 789 308 C 728 288, 690 220, 640 88"});
-        addRefArrow(svg, {x:875, y:134}, {x:842, y:134});
-        addRefArrow(svg, {x:898, y:134}, {x:955, y:134});
+        addRefConnector(svg, {id:"prf_e", side:"right"}, {id:"cbd_e", side:"left"});
+        addRefConnector(svg, {id:"cbd_e", side:"right"}, {id:"e_box", side:"left"});
+        addRefConnector(svg, {id:"e_box", side:"right"}, {id:"ntt_e", side:"left"});
+        addRefConnector(svg, {id:"ntt_e", side:"right"}, {id:"e_hat_box", side:"left"});
 
-        // Panel 1 final arrows from internal to outputs
-        addRefArrow(svg, {x:590, y:204}, {x:438, y:138}, {d:"M 590 204 C 520 204, 500 138, 438 138", dashed:true});
+        addRefConnector(svg, {id:"loop_a", side:"right"}, {id:"sample_ntt", side:"left"}, {mode:"hv"});
+        addRefConnector(svg, {id:"rho_box", side:"right"}, {id:"sample_ntt", side:"left", dy:12}, {
+            mode:"curve", c1:{x:x0+170,y:y0+232}, c2:{x:x0+214,y:y0+232}
+        });
+        addRefConnector(svg, {id:"sample_ntt", side:"right"}, {id:"matrix_A", side:"left"});
+        addRefConnector(svg, {id:"matrix_A", side:"right"}, {id:"t_calc", side:"left"});
+        addRefConnector(svg, {id:"s_hat_box", side:"bottom"}, {id:"t_calc", side:"top", dx:-42}, {mode:"vh"});
+        addRefConnector(svg, {id:"e_hat_box", side:"bottom"}, {id:"t_calc", side:"top", dx:26}, {mode:"vh"});
+        addRefConnector(svg, {id:"t_calc", side:"right"}, {id:"t_hat_box", side:"left"});
+        addRefConnector(svg, {id:"t_hat_box", side:"right"}, {id:"byteencode_pk", side:"left"});
+        addRefConnector(svg, {id:"byteencode_pk", side:"right"}, {id:"ekpke_out", side:"body-left"});
+        addRefConnector(svg, {id:"rho_box", side:"bottom"}, {id:"ekpke_out", side:"rho-bottom"}, {
+            points: [
+                { x: refAnchor("rho_box", "bottom").x, y: p3.y + p3.h - 10 },
+                { x: refAnchor("ekpke_out", "rho-bottom").x, y: p3.y + p3.h - 10 }
+            ]
+        });
 
         container.appendChild(svg);
         setupPrimaryReferenceNodeMap(svg);
