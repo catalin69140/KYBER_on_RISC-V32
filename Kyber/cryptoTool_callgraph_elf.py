@@ -514,9 +514,11 @@ def write_html_animation(
         f.write("  min-width: 0;\n")
         f.write("  min-height: 0;\n")
         f.write("  display: flex;\n")
-        f.write("  align-items: stretch;\n")
-        f.write("  justify-content: flex-start;\n")
+        f.write("  align-items: center;\n")
+        f.write("  justify-content: center;\n")
         f.write("  overflow: auto;\n")
+        f.write("  padding: 16px;\n")
+        f.write("  box-sizing: border-box;\n")
         f.write("  background: #0b1220;\n")
         f.write("}\n")
         
@@ -638,7 +640,7 @@ def write_html_animation(
             #graph .primary-ref-root {
                 flex: 0 0 auto;
                 width: auto;
-                height: 100%;
+                height: auto;
                 min-width: 0;
                 min-height: 0;
                 max-width: none;
@@ -1158,6 +1160,7 @@ def write_html_animation(
     let primaryRefNodeEls = {};  // diagram nodeId -> <g>
     let primaryRefNodeBoxes = {}; // diagram nodeId -> {x,y,w,h}
     let primaryRefConnectorBuffer = null; // deferred connector specs (for port planning)
+    let primaryRefDrawnSegments = []; // segments used for crossing bridge rendering
 
     function setupGraphAnimation(svgElement) {
         svgRoot = svgElement;
@@ -2511,14 +2514,14 @@ def write_html_animation(
         return !!(b && b.anchors && b.anchors[side]);
     }
 
-    function orthPathFromPoints(a, b, viaPoints, fromSide, toSide) {
+    function orthPolylineFromPoints(a, b, viaPoints, fromSide, toSide) {
         const pts = [a, ...(viaPoints || []), b];
-        let d = `M ${pts[0].x} ${pts[0].y}`;
+        const out = [{ x: pts[0].x, y: pts[0].y }];
         for (let i = 1; i < pts.length; i++) {
             const prev = pts[i - 1];
             const next = pts[i];
             if (prev.x === next.x || prev.y === next.y) {
-                d += ` L ${next.x} ${next.y}`;
+                out.push({ x: next.x, y: next.y });
                 continue;
             }
 
@@ -2532,12 +2535,161 @@ def write_html_animation(
             }
 
             if (horizFirst) {
-                d += ` L ${next.x} ${prev.y} L ${next.x} ${next.y}`;
+                out.push({ x: next.x, y: prev.y });
+                out.push({ x: next.x, y: next.y });
             } else {
-                d += ` L ${prev.x} ${next.y} L ${next.x} ${next.y}`;
+                out.push({ x: prev.x, y: next.y });
+                out.push({ x: next.x, y: next.y });
             }
         }
-        return d;
+        return out;
+    }
+
+    function compressOrthPolyline(points) {
+        if (!Array.isArray(points) || !points.length) return [];
+        const out = [{ x: points[0].x, y: points[0].y }];
+        for (let i = 1; i < points.length; i++) {
+            const p = points[i];
+            const last = out[out.length - 1];
+            if (p.x === last.x && p.y === last.y) continue;
+            out.push({ x: p.x, y: p.y });
+            while (out.length >= 3) {
+                const a = out[out.length - 3];
+                const b = out[out.length - 2];
+                const c = out[out.length - 1];
+                if ((a.x === b.x && b.x === c.x) || (a.y === b.y && b.y === c.y)) {
+                    out.splice(out.length - 2, 1);
+                } else {
+                    break;
+                }
+            }
+        }
+        return out;
+    }
+
+    function refSideNormal(side) {
+        if (side === "left") return { x: -1, y: 0 };
+        if (side === "right") return { x: 1, y: 0 };
+        if (side === "top") return { x: 0, y: -1 };
+        if (side === "bottom") return { x: 0, y: 1 };
+        return { x: 0, y: 0 };
+    }
+
+    function buildRefConnectorPolyline(a, b, fromSide, toSide, opts = {}) {
+        const clearance = (opts.clearance != null) ? opts.clearance : 7;
+        const nFrom = refSideNormal(fromSide);
+        const nTo = refSideNormal(toSide);
+        const aOut = { x: a.x + nFrom.x * clearance, y: a.y + nFrom.y * clearance };
+        const bIn  = { x: b.x + nTo.x   * clearance, y: b.y + nTo.y   * clearance };
+        let middle = [];
+
+        if (opts.points && Array.isArray(opts.points) && opts.points.length) {
+            middle = orthPolylineFromPoints(aOut, bIn, opts.points, fromSide, toSide);
+        } else if (opts.mode === "vh") {
+            middle = [{ x: aOut.x, y: aOut.y }, { x: aOut.x, y: bIn.y }, { x: bIn.x, y: bIn.y }];
+        } else if (opts.mode === "hv") {
+            middle = [{ x: aOut.x, y: aOut.y }, { x: bIn.x, y: aOut.y }, { x: bIn.x, y: bIn.y }];
+        } else {
+            // Orthogonal default. "curve" is intentionally normalized to orth routing.
+            if (aOut.x === bIn.x || aOut.y === bIn.y) {
+                middle = [{ x: aOut.x, y: aOut.y }, { x: bIn.x, y: bIn.y }];
+            } else if (toSide === "left" || toSide === "right") {
+                middle = [{ x: aOut.x, y: aOut.y }, { x: aOut.x, y: bIn.y }, { x: bIn.x, y: bIn.y }];
+            } else {
+                middle = [{ x: aOut.x, y: aOut.y }, { x: bIn.x, y: aOut.y }, { x: bIn.x, y: bIn.y }];
+            }
+        }
+
+        const all = [a, aOut, ...(middle || []).slice(1), bIn, b];
+        return compressOrthPolyline(all);
+    }
+
+    function buildRefPathWithBridges(polyline, bridgeSeed = 0) {
+        const bridgeRadius = 4;
+        const bridgeLift = 4;
+        if (!Array.isArray(polyline) || polyline.length < 2) return { d: "", segments: [] };
+
+        const builtSegs = [];
+        let d = `M ${polyline[0].x} ${polyline[0].y}`;
+
+        const almostEq = (u, v) => Math.abs(u - v) < 0.001;
+        const betweenOpen = (v, a, b) => v > Math.min(a, b) + 0.001 && v < Math.max(a, b) - 0.001;
+
+        for (let i = 1; i < polyline.length; i++) {
+            const p0 = polyline[i - 1];
+            const p1 = polyline[i];
+            if (almostEq(p0.x, p1.x) && almostEq(p0.y, p1.y)) continue;
+
+            const horiz = almostEq(p0.y, p1.y);
+            const vert = almostEq(p0.x, p1.x);
+            if (!horiz && !vert) {
+                d += ` L ${p1.x} ${p1.y}`;
+                continue;
+            }
+
+            const crossings = [];
+            for (const s of primaryRefDrawnSegments) {
+                if (horiz && s.orient === "v") {
+                    if (!betweenOpen(s.x, p0.x, p1.x)) continue;
+                    if (!betweenOpen(p0.y, s.y1, s.y2)) continue;
+                    if (Math.abs(s.x - p0.x) <= bridgeRadius + 1 || Math.abs(s.x - p1.x) <= bridgeRadius + 1) continue;
+                    crossings.push(s.x);
+                } else if (vert && s.orient === "h") {
+                    if (!betweenOpen(s.y, p0.y, p1.y)) continue;
+                    if (!betweenOpen(p0.x, s.x1, s.x2)) continue;
+                    if (Math.abs(s.y - p0.y) <= bridgeRadius + 1 || Math.abs(s.y - p1.y) <= bridgeRadius + 1) continue;
+                    crossings.push(s.y);
+                }
+            }
+
+            if (!crossings.length) {
+                d += ` L ${p1.x} ${p1.y}`;
+            } else if (horiz) {
+                const sign = (p1.x >= p0.x) ? 1 : -1;
+                const liftSign = ((bridgeSeed + i) % 2 === 0) ? -1 : 1;
+                const sorted = crossings.slice().sort((a, b) => sign * (a - b));
+                let cursorX = p0.x;
+                for (const xc of sorted) {
+                    const preX = xc - sign * bridgeRadius;
+                    const postX = xc + sign * bridgeRadius;
+                    d += ` L ${preX} ${p0.y}`;
+                    d += ` Q ${xc} ${p0.y + liftSign * bridgeLift} ${postX} ${p0.y}`;
+                    cursorX = postX;
+                }
+                d += ` L ${p1.x} ${p1.y}`;
+            } else {
+                const sign = (p1.y >= p0.y) ? 1 : -1;
+                const liftSign = ((bridgeSeed + i) % 2 === 0) ? 1 : -1;
+                const sorted = crossings.slice().sort((a, b) => sign * (a - b));
+                let cursorY = p0.y;
+                for (const yc of sorted) {
+                    const preY = yc - sign * bridgeRadius;
+                    const postY = yc + sign * bridgeRadius;
+                    d += ` L ${p0.x} ${preY}`;
+                    d += ` Q ${p0.x + liftSign * bridgeLift} ${yc} ${p0.x} ${postY}`;
+                    cursorY = postY;
+                }
+                d += ` L ${p1.x} ${p1.y}`;
+            }
+
+            if (horiz) {
+                builtSegs.push({
+                    orient: "h",
+                    y: p0.y,
+                    x1: Math.min(p0.x, p1.x),
+                    x2: Math.max(p0.x, p1.x)
+                });
+            } else {
+                builtSegs.push({
+                    orient: "v",
+                    x: p0.x,
+                    y1: Math.min(p0.y, p1.y),
+                    y2: Math.max(p0.y, p1.y)
+                });
+            }
+        }
+
+        return { d, segments: builtSegs };
     }
 
     function drawRefConnectorInternal(svg, fromSpec, toSpec, opts = {}) {
@@ -2547,32 +2699,12 @@ def write_html_animation(
         const toSide = canonicalRefBorderSide(toRawSide) || "left";
         const a = refAnchor(fromSpec.id, fromSpec.side || "right", fromSpec.dx || 0, fromSpec.dy || 0);
         const b = refAnchor(toSpec.id, toSpec.side || "left", toSpec.dx || 0, toSpec.dy || 0);
-        let d = "";
-
-        if (opts.points && Array.isArray(opts.points) && opts.points.length) {
-            d = orthPathFromPoints(a, b, opts.points, fromSide, toSide);
-        } else if (opts.mode === "vh") {
-            d = `M ${a.x} ${a.y} L ${a.x} ${b.y} L ${b.x} ${b.y}`;
-        } else if (opts.mode === "hv") {
-            d = `M ${a.x} ${a.y} L ${b.x} ${a.y} L ${b.x} ${b.y}`;
-        } else if (opts.mode === "curve") {
-            // Curved routing is disallowed in the reference diagram; use orthogonal routing instead.
-            d = (toSide === "left" || toSide === "right")
-                ? `M ${a.x} ${a.y} L ${a.x} ${b.y} L ${b.x} ${b.y}`
-                : `M ${a.x} ${a.y} L ${b.x} ${a.y} L ${b.x} ${b.y}`;
-        } else {
-            // Default routing is orthogonal and determined by the target border orientation.
-            if (a.x === b.x || a.y === b.y) {
-                d = `M ${a.x} ${a.y} L ${b.x} ${b.y}`;
-            } else if (toSide === "left" || toSide === "right") {
-                d = `M ${a.x} ${a.y} L ${a.x} ${b.y} L ${b.x} ${b.y}`;
-            } else {
-                d = `M ${a.x} ${a.y} L ${b.x} ${a.y} L ${b.x} ${b.y}`;
-            }
-        }
+        const polyline = buildRefConnectorPolyline(a, b, fromSide, toSide, opts || {});
+        const bridgeBuilt = buildRefPathWithBridges(polyline, opts.bridgeSeed || 0);
+        primaryRefDrawnSegments.push(...bridgeBuilt.segments);
 
         return addRefArrow(svg, a, b, {
-            d,
+            d: bridgeBuilt.d,
             dashed: !!opts.dashed,
             color: opts.color,
             width: opts.width
@@ -2695,6 +2827,19 @@ def write_html_animation(
         } else {
             panZoom = null;
         }
+
+        // Center the large, height-fitted SVG inside the scrollable canvas on first render.
+        try {
+            const graphEl = document.getElementById("graph");
+            if (graphEl) {
+                requestAnimationFrame(() => {
+                    graphEl.scrollLeft = Math.max(0, Math.round((graphEl.scrollWidth - graphEl.clientWidth) / 2));
+                    graphEl.scrollTop = Math.max(0, Math.round((graphEl.scrollHeight - graphEl.clientHeight) / 2));
+                });
+            }
+        } catch (e) {
+            console.warn("Could not center graph viewport:", e);
+        }
     }
 
     function renderPrimaryReferenceDiagram() {
@@ -2703,13 +2848,25 @@ def write_html_animation(
         container.innerHTML = "";
         primaryRefNodeEls = {};
         primaryRefNodeBoxes = {};
+        primaryRefDrawnSegments = [];
 
         const svg = createSvgEl("svg", {
             id: "primary-ref-svg",
             class: "primary-ref-root",
             viewBox: "0 0 1980 410",
-            preserveAspectRatio: "xMinYMin meet"
+            preserveAspectRatio: "xMidYMid meet"
         });
+
+        // Fit to available canvas height (not width) to avoid thin-strip rendering for wide diagrams.
+        const canvasPad = 24;
+        const availW = Math.max(320, (container.clientWidth || 1200) - canvasPad * 2);
+        const availH = Math.max(240, (container.clientHeight || 600) - canvasPad * 2);
+        const vbW = 1980, vbH = 410;
+        const scaleByHeight = availH / vbH;
+        const targetW = Math.round(vbW * scaleByHeight);
+        const targetH = Math.round(vbH * scaleByHeight);
+        svg.setAttribute("width", String(targetW));
+        svg.setAttribute("height", String(targetH));
 
         const defs = createSvgEl("defs");
         const marker = createSvgEl("marker", {
