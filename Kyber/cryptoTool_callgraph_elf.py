@@ -1173,6 +1173,8 @@ def write_html_animation(
     let primaryRefNodeBoxes = {}; // diagram nodeId -> {x,y,w,h}
     let primaryRefConnectorBuffer = null; // deferred connector specs (for port planning)
     let primaryRefDrawnSegments = []; // segments used for crossing bridge rendering
+    const REF_MAX_POLY_POINTS = 140;
+    const REF_MAX_SEGMENTS_FOR_BRIDGES = 1200;
 
     function setupGraphAnimation(svgElement) {
         svgRoot = svgElement;
@@ -2735,6 +2737,7 @@ def write_html_animation(
         if (!rects.length) return polyline;
 
         let cur = compressOrthPolyline(polyline);
+        if (cur.length > REF_MAX_POLY_POINTS) return cur;
         for (let iter = 0; iter < 24; iter++) {
             let changed = false;
             const next = [cur[0]];
@@ -2755,6 +2758,9 @@ def write_html_animation(
                 }
             }
             const compressed = compressOrthPolyline(next);
+            if (compressed.length > REF_MAX_POLY_POINTS) {
+                return compressOrthPolyline(polyline);
+            }
             cur = compressed;
             if (!changed) break;
         }
@@ -2765,6 +2771,7 @@ def write_html_animation(
         const bridgeRadius = 4;
         const bridgeLift = 4;
         if (!Array.isArray(polyline) || polyline.length < 2) return { d: "", segments: [] };
+        const useBridges = primaryRefDrawnSegments.length < REF_MAX_SEGMENTS_FOR_BRIDGES;
 
         const builtSegs = [];
         let d = `M ${polyline[0].x} ${polyline[0].y}`;
@@ -2785,17 +2792,19 @@ def write_html_animation(
             }
 
             const crossings = [];
-            for (const s of primaryRefDrawnSegments) {
-                if (horiz && s.orient === "v") {
-                    if (!betweenOpen(s.x, p0.x, p1.x)) continue;
-                    if (!betweenOpen(p0.y, s.y1, s.y2)) continue;
-                    if (Math.abs(s.x - p0.x) <= bridgeRadius + 1 || Math.abs(s.x - p1.x) <= bridgeRadius + 1) continue;
-                    crossings.push(s.x);
-                } else if (vert && s.orient === "h") {
-                    if (!betweenOpen(s.y, p0.y, p1.y)) continue;
-                    if (!betweenOpen(p0.x, s.x1, s.x2)) continue;
-                    if (Math.abs(s.y - p0.y) <= bridgeRadius + 1 || Math.abs(s.y - p1.y) <= bridgeRadius + 1) continue;
-                    crossings.push(s.y);
+            if (useBridges) {
+                for (const s of primaryRefDrawnSegments) {
+                    if (horiz && s.orient === "v") {
+                        if (!betweenOpen(s.x, p0.x, p1.x)) continue;
+                        if (!betweenOpen(p0.y, s.y1, s.y2)) continue;
+                        if (Math.abs(s.x - p0.x) <= bridgeRadius + 1 || Math.abs(s.x - p1.x) <= bridgeRadius + 1) continue;
+                        crossings.push(s.x);
+                    } else if (vert && s.orient === "h") {
+                        if (!betweenOpen(s.y, p0.y, p1.y)) continue;
+                        if (!betweenOpen(p0.x, s.x1, s.x2)) continue;
+                        if (Math.abs(s.y - p0.y) <= bridgeRadius + 1 || Math.abs(s.y - p1.y) <= bridgeRadius + 1) continue;
+                        crossings.push(s.y);
+                    }
                 }
             }
 
@@ -2856,20 +2865,34 @@ def write_html_animation(
         const toSide = canonicalRefBorderSide(toRawSide) || "left";
         const a = refAnchor(fromSpec.id, fromSpec.side || "right", fromSpec.dx || 0, fromSpec.dy || 0);
         const b = refAnchor(toSpec.id, toSpec.side || "left", toSpec.dx || 0, toSpec.dy || 0);
-        let polyline = buildRefConnectorPolyline(a, b, fromSide, toSide, opts || {});
-        polyline = refAvoidObstaclesInPolyline(polyline, [fromSpec.id, toSpec.id], {
-            obstaclePad: (opts.obstaclePad != null) ? opts.obstaclePad : 6,
-            lanePad: (opts.lanePad != null) ? opts.lanePad : 12
-        });
-        const bridgeBuilt = buildRefPathWithBridges(polyline, opts.bridgeSeed || 0);
-        primaryRefDrawnSegments.push(...bridgeBuilt.segments);
+        try {
+            let polyline = buildRefConnectorPolyline(a, b, fromSide, toSide, opts || {});
+            polyline = refAvoidObstaclesInPolyline(polyline, [fromSpec.id, toSpec.id], {
+                obstaclePad: (opts.obstaclePad != null) ? opts.obstaclePad : 6,
+                lanePad: (opts.lanePad != null) ? opts.lanePad : 12
+            });
+            const bridgeBuilt = buildRefPathWithBridges(polyline, opts.bridgeSeed || 0);
+            primaryRefDrawnSegments.push(...bridgeBuilt.segments);
 
-        return addRefArrow(svg, a, b, {
-            d: bridgeBuilt.d,
-            dashed: false,
-            color: opts.color,
-            width: opts.width
-        });
+            return addRefArrow(svg, a, b, {
+                d: bridgeBuilt.d,
+                dashed: false,
+                color: opts.color,
+                width: opts.width
+            });
+        } catch (e) {
+            console.warn("Connector routing fallback:", fromSpec.id, "->", toSpec.id, e);
+            // Safe fallback: simple orthogonal connector with no obstacle/crossing enhancements.
+            const d = (toSide === "left" || toSide === "right")
+                ? `M ${a.x} ${a.y} L ${a.x} ${b.y} L ${b.x} ${b.y}`
+                : `M ${a.x} ${a.y} L ${b.x} ${a.y} L ${b.x} ${b.y}`;
+            return addRefArrow(svg, a, b, {
+                d,
+                dashed: false,
+                color: opts.color,
+                width: opts.width
+            });
+        }
     }
 
     function addRefConnector(svg, fromSpec, toSpec, opts = {}) {
@@ -3282,7 +3305,18 @@ def write_html_animation(
     } catch (error) {
         console.error(error);
         const container = document.getElementById('graph');
-        if (container) container.textContent = "Error rendering reference diagram: " + error;
+        if (container) {
+            container.innerHTML = "";
+            const pre = document.createElement('pre');
+            pre.style.color = '#ffb4b4';
+            pre.style.background = '#1a1010';
+            pre.style.border = '1px solid #9b3a3a';
+            pre.style.padding = '12px';
+            pre.style.margin = '12px';
+            pre.style.whiteSpace = 'pre-wrap';
+            pre.textContent = "Error rendering reference diagram: " + (error && (error.stack || error.message || String(error)));
+            container.appendChild(pre);
+        }
     }
         """)
         f.write("</script>\n")
