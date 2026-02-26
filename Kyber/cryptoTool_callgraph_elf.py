@@ -1175,6 +1175,10 @@ def write_html_animation(
     let primaryRefDrawnSegments = []; // segments used for crossing bridge rendering
     const REF_MAX_POLY_POINTS = 140;
     const REF_MAX_SEGMENTS_FOR_BRIDGES = 1200;
+    // Performance guard: keep routing deterministic and fast by default.
+    // Turn these on only after the base layout is stable and performance is acceptable.
+    const REF_ENABLE_OBSTACLE_AVOID = false;
+    const REF_ENABLE_LINE_BRIDGES = false;
 
     function setupGraphAnimation(svgElement) {
         svgRoot = svgElement;
@@ -2858,6 +2862,11 @@ def write_html_animation(
         return { d, segments: builtSegs };
     }
 
+    function refPolylineToPath(polyline) {
+        if (!Array.isArray(polyline) || !polyline.length) return "";
+        return `M ${polyline[0].x} ${polyline[0].y}` + polyline.slice(1).map(p => ` L ${p.x} ${p.y}`).join("");
+    }
+
     function drawRefConnectorInternal(svg, fromSpec, toSpec, opts = {}) {
         const fromRawSide = fromSpec.side || "right";
         const toRawSide = toSpec.side || "left";
@@ -2867,15 +2876,24 @@ def write_html_animation(
         const b = refAnchor(toSpec.id, toSpec.side || "left", toSpec.dx || 0, toSpec.dy || 0);
         try {
             let polyline = buildRefConnectorPolyline(a, b, fromSide, toSide, opts || {});
-            polyline = refAvoidObstaclesInPolyline(polyline, [fromSpec.id, toSpec.id], {
-                obstaclePad: (opts.obstaclePad != null) ? opts.obstaclePad : 6,
-                lanePad: (opts.lanePad != null) ? opts.lanePad : 12
-            });
-            const bridgeBuilt = buildRefPathWithBridges(polyline, opts.bridgeSeed || 0);
-            primaryRefDrawnSegments.push(...bridgeBuilt.segments);
+            if (REF_ENABLE_OBSTACLE_AVOID) {
+                polyline = refAvoidObstaclesInPolyline(polyline, [fromSpec.id, toSpec.id], {
+                    obstaclePad: (opts.obstaclePad != null) ? opts.obstaclePad : 6,
+                    lanePad: (opts.lanePad != null) ? opts.lanePad : 12
+                });
+            }
+
+            let pathD = "";
+            if (REF_ENABLE_LINE_BRIDGES) {
+                const bridgeBuilt = buildRefPathWithBridges(polyline, opts.bridgeSeed || 0);
+                primaryRefDrawnSegments.push(...bridgeBuilt.segments);
+                pathD = bridgeBuilt.d;
+            } else {
+                pathD = refPolylineToPath(polyline);
+            }
 
             return addRefArrow(svg, a, b, {
-                d: bridgeBuilt.d,
+                d: pathD,
                 dashed: false,
                 color: opts.color,
                 width: opts.width
@@ -2994,28 +3012,9 @@ def write_html_animation(
             });
         });
 
-        if (typeof svgPanZoom !== "undefined") {
-            try {
-                panZoom = svgPanZoom(svg, {
-                    controlIconsEnabled: false,
-                    zoomScaleSensitivity: 0.25,
-                    dblClickZoomEnabled: false,
-                    fit: false,
-                    center: false,
-                    minZoom: 0.5,
-                    maxZoom: 6
-                });
-                if (panZoom && panZoom.resize) panZoom.resize();
-                if (panZoom && panZoom.updateBBox) panZoom.updateBBox();
-                if (panZoom && panZoom.zoom) panZoom.zoom(1);
-                if (panZoom && panZoom.pan) panZoom.pan({ x: 0, y: 0 });
-            } catch (e) {
-                console.warn("svgPanZoom unavailable for reference diagram:", e);
-                panZoom = null;
-            }
-        } else {
-            panZoom = null;
-        }
+        // The reference diagram uses a scrollable canvas. Pan/zoom is disabled here for faster startup
+        // and to avoid unnecessary layout work on large inline SVGs.
+        panZoom = null;
 
         // Center the large, height-fitted SVG inside the scrollable canvas on first render.
         try {
