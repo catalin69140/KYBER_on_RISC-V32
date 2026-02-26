@@ -501,12 +501,18 @@ def write_html_animation(
         f.write("  flex: 1;\n")
         f.write("  width: auto;\n")
         f.write("  min-width: 0;\n")
+        f.write("  background: #0b1220;\n")
         f.write("}\n")
 
 
         f.write("#graph {\n")
         f.write("  width: 100%;\n")
         f.write("  height: 100%;\n")
+        f.write("  display: flex;\n")
+        f.write("  align-items: flex-start;\n")
+        f.write("  justify-content: flex-start;\n")
+        f.write("  overflow: auto;\n")
+        f.write("  background: #0b1220;\n")
         f.write("}\n")
         
         f.write("""
@@ -617,28 +623,91 @@ def write_html_animation(
             .var-bytes     { background:#ffd400; color:#111; border-color:#ffd400; } /* Bytes */
             .var-calc      { background:#00bcd4; color:#111; border-color:#00bcd4; } /* Calculation */
 
-            #flow-panel {
-                border-top: 1px solid #ccc;
-                border-bottom: 1px solid #ccc;
-                background: #0f1729;
-                color: #dbe2ff;
-                padding: 8px 10px 10px 10px;
+            /* Old callgraph controls are hidden in the new reference-first layout */
+            #controls,
+            #node-info-container {
+                display: none !important;
             }
 
-            #flow-legend {
-                display: flex;
-                flex-wrap: wrap;
-                gap: 6px;
-                margin-bottom: 8px;
-            }
-
-            #flow-canvas {
+            /* Primary reference diagram (recreated from the supplied image) */
+            #graph .primary-ref-root {
                 width: 100%;
-                height: 260px;
-                background: #111b31;
-                border: 1px solid #2d3e63;
-                border-radius: 10px;
-                overflow: hidden;
+                min-width: 1200px;
+                min-height: 520px;
+                height: auto;
+                display: block;
+                background: #0b1220;
+            }
+
+            .ref-panel-frame {
+                fill: #0d172a;
+                stroke: #eef3ff;
+                stroke-width: 2.2;
+                rx: 8;
+                ry: 8;
+            }
+
+            .ref-panel-titlebar {
+                fill: #0a0f18;
+                stroke: #eef3ff;
+                stroke-width: 1.2;
+            }
+
+            .ref-panel-title {
+                font-family: Georgia, "Times New Roman", serif;
+                font-size: 15px;
+                font-weight: 700;
+                fill: #eef3ff;
+                text-anchor: middle;
+                dominant-baseline: middle;
+            }
+
+            .ref-node rect {
+                fill: #1a2947;
+                stroke: #8fb2ff;
+                stroke-width: 1.5;
+                rx: 6;
+                ry: 6;
+            }
+
+            .ref-node text {
+                font-family: Georgia, "Times New Roman", serif;
+                font-size: 13px;
+                fill: #f4f7ff;
+                text-anchor: middle;
+                dominant-baseline: middle;
+                pointer-events: none;
+            }
+
+            .ref-node .sub {
+                font-size: 10px;
+                fill: #c8d4f8;
+                font-family: sans-serif;
+            }
+
+            .ref-node.role-process rect { fill: #3a2d55; stroke: #b997f6; }
+            .ref-node.role-data rect    { fill: #1c2f4f; stroke: #80b6ff; }
+            .ref-node.role-input rect   { fill: #15362f; stroke: #43d17e; }
+            .ref-node.role-output rect  { fill: #542f2f; stroke: #ff8f86; }
+            .ref-node.role-usage rect   { fill: #3f5667; stroke: #bdd9ef; }
+            .ref-node.role-random rect  { fill: #5e3b00; stroke: #ffb34e; }
+            .ref-node.role-calc rect    { fill: #253f57; stroke: #5ee1ff; }
+
+            .ref-node.step-highlight rect {
+                stroke: #ffd76b !important;
+                stroke-width: 3.2 !important;
+                filter: drop-shadow(0 0 4px rgba(255, 215, 107, 0.45));
+            }
+
+            .ref-arrow {
+                stroke: #e8efff;
+                stroke-width: 1.7;
+                fill: none;
+                marker-end: url(#ref-arrow-head);
+            }
+
+            .ref-arrow-dashed {
+                stroke-dasharray: 5 4;
             }
 
             .flow-node-rect {
@@ -699,10 +768,10 @@ def write_html_animation(
         
         f.write("</style>\n</head>\n<body>\n")
 
-        f.write(f'<h3 style="font-size:20px; margin:10px 0;">Call graph animation for <code>{elf_name}</code></h3>\n')
+        f.write(f'<h3 style="font-size:20px; margin:10px 0;">Kyber KeyGen Reference Visualization for <code>{elf_name}</code></h3>\n')
         f.write(
-            "<p>Layout and clusters match the Graphviz PNG. "
-            "Use the controls to animate calls from <code>main</code> and explore neighbors of each function.</p>\n"
+            "<p>The central diagram is a recreated ML-KEM/Kyber KeyGen reference layout (based on the provided KeyGen flow image). "
+            "Tabs only change the step documentation and variable details.</p>\n"
         )
 
         # Controls
@@ -790,13 +859,6 @@ def write_html_animation(
             '      <div class="tab active" data-tab="keygen">KeyGen</div>'
             '      <div class="tab" data-tab="encap">Encap</div>'
             '      <div class="tab" data-tab="decap">Decap</div>'
-            '    </div>'
-
-            # Flow panel
-            '    <div id="flow-panel">'
-            '      <div style="font-size:13px; margin-bottom:6px;">Colors indicate the data type. Click a node or variable to print its value.</div>'
-            '      <div id="flow-legend"></div>'
-            '      <svg id="flow-canvas" viewBox="0 0 760 260" preserveAspectRatio="xMinYMin meet"></svg>'
             '    </div>'
 
             # Steps container
@@ -1031,7 +1093,7 @@ def write_html_animation(
         """)
 
         f.write(r"""
-    let viz = new Viz();
+    let viz = (typeof Viz !== "undefined") ? new Viz() : null;
     let edgeElements = [];
     let currentIndex = -1;        // index of the "current" edge in animation order
     let playingDirection = null;  // "forward" | "backward" | null
@@ -1048,6 +1110,7 @@ def write_html_animation(
     let selectedVarKey = null; // "StepTitle::VarName" (used to toggle-highlight chips)
 
     let nodeMap = {};   // symbol -> <g.node> (global so all functions can use it)
+    let primaryRefNodeEls = {};  // diagram nodeId -> <g>
 
     function setupGraphAnimation(svgElement) {
         svgRoot = svgElement;
@@ -1229,8 +1292,10 @@ def write_html_animation(
                 if (lastHighlightedNode) {
                     const prev = lastHighlightedNode.querySelectorAll('ellipse,polygon,rect');
                     prev.forEach(s => {
-                        s.setAttribute('stroke', '#000000');
-                        s.setAttribute('stroke-width', '1');
+                        const baseStroke = s.getAttribute('data-base-stroke') || '#000000';
+                        const baseWidth = s.getAttribute('data-base-stroke-width') || '1';
+                        s.setAttribute('stroke', baseStroke);
+                        s.setAttribute('stroke-width', baseWidth);
                     });
                     lastHighlightedNode = null;
                 }
@@ -1448,8 +1513,10 @@ def write_html_animation(
         if (lastHighlightedNode && lastHighlightedNode !== node) {
             const prevShapes = lastHighlightedNode.querySelectorAll('ellipse,polygon,rect');
             prevShapes.forEach(s => {
-                s.setAttribute('stroke', '#000000');
-                s.setAttribute('stroke-width', '1');
+                const baseStroke = s.getAttribute('data-base-stroke') || '#000000';
+                const baseWidth = s.getAttribute('data-base-stroke-width') || '1';
+                s.setAttribute('stroke', baseStroke);
+                s.setAttribute('stroke-width', baseWidth);
             });
         }
 
@@ -2084,12 +2151,14 @@ def write_html_animation(
     }
 
     function onStepSelected(step) {
-        // 1) Highlight/jump to function node in callgraph
+        // 1) Highlight/jump to function node in the primary reference diagram
         if (step.funcs && step.funcs.length) {
             jumpToFunction(step.funcs[0]);
             highlightFunctions(step.funcs);
         }
-        // 2) Sync side flow graph with this step
+        // 2) Highlight conceptual nodes in the primary reference diagram
+        highlightPrimaryReferenceForStep(step);
+        // 3) Legacy side flow graph (no-op when hidden/removed)
         renderFlowGraphForStep(step);
         highlightFlowNodesForStep(step);
     }
@@ -2116,32 +2185,369 @@ def write_html_animation(
         });
     }
 
-    // Render graph with Viz.js (single global graph, tabs only change steps)
-    viz.renderSVGElement(dotSrc)
-        .then(
-            function(svgElement) {
-            const container = document.getElementById('graph');
-            container.innerHTML = "";
-            container.appendChild(svgElement);
-            setupGraphAnimation(svgElement);
-            renderFlowLegend();
-            renderTabs();
-            renderSteps();
-            renderFlowGraphForStep(null);
-            renderTraceSteps();
-        })
-        .catch(
-            function(error) {
-            console.error(error);
-            const container = document.getElementById('graph');
-            container.textContent = "Error rendering graph: " + error;
+    const PRIMARY_REF_FUNC_ALIASES = {
+        mlkem_keygen: ["crypto_kem_keypair"],
+        mlkem_keygen_internal: ["crypto_kem_keypair"],
+        kpke_keygen: ["indcpa_keypair"],
+        rand_d: ["randombytes"],
+        rand_z: ["randombytes"],
+        hash_g_box: ["hash_g", "sha3_512"],
+        sigma_box: ["hash_g", "sha3_512"],
+        rho_box: ["hash_g", "sha3_512"],
+        prf_s: ["shake256", "prf", "poly_getnoise_eta1", "poly_getnoise"],
+        cbd_s: ["cbd", "poly_getnoise_eta1", "poly_getnoise"],
+        ntt_s: ["polyvec_ntt", "poly_ntt"],
+        prf_e: ["shake256", "prf", "poly_getnoise_eta1", "poly_getnoise"],
+        cbd_e: ["cbd", "poly_getnoise_eta1", "poly_getnoise"],
+        ntt_e: ["polyvec_ntt", "poly_ntt"],
+        sample_ntt: ["gen_matrix", "shake128_absorb", "shake128_squeezeblocks", "xof_absorb", "xof_squeezeblocks"],
+        matrix_A: ["gen_matrix"],
+        t_calc: ["polyvec_pointwise_acc", "polyvec_basemul_acc_montgomery", "polyvec_add", "poly_add", "polyvec_invntt"],
+        byteencode_sk: ["pack_sk", "polyvec_tobytes"],
+        byteencode_pk: ["pack_pk", "polyvec_tobytes", "polyvec_compress", "poly_tobytes"],
+        h_pk: ["hash_h", "sha3_256"]
+    };
+
+    const PRIMARY_REF_STEP_MAP = {
+        keygen: {
+            kg01_setup_randomness: ["rand_d", "rand_z", "mlkem_keygen"],
+            kg02_enter_k_pke_keygen: ["mlkem_keygen_internal", "kpke_keygen"],
+            kg03_derive_rho_sigma: ["hash_g_box", "rho_box", "sigma_box"],
+            kg04_generate_s_e: ["prf_s", "cbd_s", "prf_e", "cbd_e", "s_box", "e_box"],
+            kg05_ntt_conversion: ["ntt_s", "ntt_e", "s_hat_box", "e_hat_box"],
+            kg06_generate_matrix_A_hat: ["sample_ntt", "matrix_A", "rho_box"],
+            kg07_compute_t_hat: ["t_calc", "t_hat_box"],
+            kg08_encode_keys: ["byteencode_sk", "byteencode_pk", "dkpke_out", "ekpke_out"],
+            kg09_build_kem_secret_key: ["h_pk", "dk_bar", "ek_bar", "z_mid", "dk_fields"],
+            kg10_return_keys: ["ek_out", "dk_out", "save_decaps", "send_bob"]
+        },
+        encap: {},
+        decap: {}
+    };
+
+    function createSvgEl(tag, attrs = {}) {
+        const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+        Object.entries(attrs).forEach(([k,v]) => el.setAttribute(k, String(v)));
+        return el;
+    }
+
+    function refNodeColors(role) {
+        const m = {
+            process: { fill: "#3a2d55", stroke: "#b997f6" },
+            data:    { fill: "#1c2f4f", stroke: "#80b6ff" },
+            input:   { fill: "#15362f", stroke: "#43d17e" },
+            output:  { fill: "#542f2f", stroke: "#ff8f86" },
+            usage:   { fill: "#3f5667", stroke: "#bdd9ef" },
+            random:  { fill: "#5e3b00", stroke: "#ffb34e" },
+            calc:    { fill: "#253f57", stroke: "#5ee1ff" }
+        };
+        return m[role] || m.data;
+    }
+
+    function addRefText(g, x, y, text, cls = "") {
+        const t = createSvgEl("text", { x, y, class: cls });
+        t.textContent = text;
+        g.appendChild(t);
+        return t;
+    }
+
+    function addRefNode(svg, spec) {
+        const { fill, stroke } = refNodeColors(spec.role || "data");
+        const g = createSvgEl("g", {
+            class: `ref-node role-${spec.role || "data"}`,
+            "data-node-id": spec.id
         });
+        const rect = createSvgEl("rect", {
+            x: spec.x, y: spec.y, width: spec.w, height: spec.h
+        });
+        rect.setAttribute("fill", fill);
+        rect.setAttribute("stroke", stroke);
+        rect.setAttribute("stroke-width", "1.5");
+        rect.setAttribute("rx", "6");
+        rect.setAttribute("ry", "6");
+        rect.setAttribute("data-base-stroke", stroke);
+        rect.setAttribute("data-base-stroke-width", "1.5");
+        g.appendChild(rect);
+
+        if (Array.isArray(spec.lines)) {
+            const lineYStart = spec.y + spec.h / 2 - ((spec.lines.length - 1) * 13) / 2;
+            spec.lines.forEach((line, idx) => {
+                const cls = (idx > 0) ? "sub" : "";
+                addRefText(g, spec.x + spec.w / 2, lineYStart + idx * 13, line, cls);
+            });
+        } else if (spec.label) {
+            addRefText(g, spec.x + spec.w / 2, spec.y + spec.h / 2, spec.label);
+        }
+
+        g.style.cursor = "pointer";
+        g.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            const aliases = PRIMARY_REF_FUNC_ALIASES[spec.id] || [];
+            const sym = aliases[0] || spec.id;
+            selectedNode = sym;
+            emphasizeNode(g);
+            focusOnNode(g);
+            const nodeNameInput = document.getElementById('node-name');
+            const nodePathInput = document.getElementById('node-path');
+            if (nodeNameInput) nodeNameInput.value = sym;
+            if (nodePathInput) {
+                const info = sym2Info[sym];
+                nodePathInput.value = info ? info.path : "reference-diagram";
+            }
+        });
+
+        svg.appendChild(g);
+        primaryRefNodeEls[spec.id] = g;
+        return g;
+    }
+
+    function addRefArrow(svg, from, to, opts = {}) {
+        const path = createSvgEl("path", {
+            d: opts.d || `M ${from.x} ${from.y} L ${to.x} ${to.y}`,
+            class: "ref-arrow" + (opts.dashed ? " ref-arrow-dashed" : "")
+        });
+        if (opts.color) path.setAttribute("stroke", opts.color);
+        if (opts.width) path.setAttribute("stroke-width", String(opts.width));
+        svg.appendChild(path);
+        return path;
+    }
+
+    function addRefPanel(svg, p) {
+        const frame = createSvgEl("rect", {
+            x: p.x, y: p.y, width: p.w, height: p.h, class: "ref-panel-frame"
+        });
+        svg.appendChild(frame);
+        const titleBar = createSvgEl("rect", {
+            x: p.x + 2, y: p.y + 2, width: p.w - 4, height: 28, class: "ref-panel-titlebar"
+        });
+        svg.appendChild(titleBar);
+        const title = createSvgEl("text", {
+            x: p.x + p.w / 2, y: p.y + 16, class: "ref-panel-title"
+        });
+        title.textContent = p.title;
+        svg.appendChild(title);
+    }
+
+    function setupPrimaryReferenceNodeMap(svg) {
+        svgRoot = svg;
+        edgeElements = [];
+        nodeMap = {};
+
+        Object.entries(PRIMARY_REF_FUNC_ALIASES).forEach(([nodeId, fns]) => {
+            const el = primaryRefNodeEls[nodeId];
+            if (!el) return;
+            (fns || []).forEach(fn => {
+                if (fn && !nodeMap[fn]) nodeMap[fn] = el;
+            });
+        });
+
+        if (typeof svgPanZoom !== "undefined") {
+            try {
+                panZoom = svgPanZoom(svg, {
+                    controlIconsEnabled: false,
+                    zoomScaleSensitivity: 0.25,
+                    dblClickZoomEnabled: false,
+                    minZoom: 0.5,
+                    maxZoom: 6
+                });
+                if (panZoom && panZoom.reset) panZoom.reset();
+            } catch (e) {
+                console.warn("svgPanZoom unavailable for reference diagram:", e);
+                panZoom = null;
+            }
+        } else {
+            panZoom = null;
+        }
+    }
+
+    function renderPrimaryReferenceDiagram() {
+        const container = document.getElementById("graph");
+        if (!container) return;
+        container.innerHTML = "";
+        primaryRefNodeEls = {};
+
+        const svg = createSvgEl("svg", {
+            id: "primary-ref-svg",
+            class: "primary-ref-root",
+            viewBox: "0 0 1960 560",
+            preserveAspectRatio: "xMinYMin meet"
+        });
+
+        const defs = createSvgEl("defs");
+        const marker = createSvgEl("marker", {
+            id: "ref-arrow-head", viewBox: "0 0 10 10",
+            refX: 9, refY: 5, markerWidth: 7, markerHeight: 7,
+            orient: "auto-start-reverse"
+        });
+        marker.appendChild(createSvgEl("path", { d: "M 0 0 L 10 5 L 0 10 z", fill: "#e8efff" }));
+        defs.appendChild(marker);
+        svg.appendChild(defs);
+
+        svg.appendChild(createSvgEl("rect", { x: 0, y: 0, width: 1960, height: 560, fill: "#0b1220" }));
+
+        addRefPanel(svg, { x: 10, y: 10,  w: 540, h: 250, title: "[19] ML-KEM.KeyGen (Initiator Alice)" });
+        addRefPanel(svg, { x: 570, y: 10, w: 510, h: 250, title: "[16] ML-KEM.KeyGen_internal (Initiator Alice)" });
+        addRefPanel(svg, { x: 1100, y: 10, w: 850, h: 250, title: "[13] K-PKE.KeyGen (Initiator Alice)" });
+
+        // Panel content (compact bounded layout matching the provided reference image)
+
+        // Panel 1 (compact)
+        addRefNode(svg, { id: "ifnull_d", role: "process", x: 26, y: 50, w: 106, h: 44, label: "if NULL" });
+        addRefNode(svg, { id: "rand_d", role: "random", x: 170, y: 48, w: 56, h: 48, label: "d" });
+        addRefNode(svg, { id: "dk_out", role: "output", x: 314, y: 48, w: 60, h: 48, label: "dk" });
+        addRefNode(svg, { id: "save_decaps", role: "usage", x: 402, y: 46, w: 132, h: 52, lines: ["Save for", "Decaps"] });
+        addRefNode(svg, { id: "return_bottom", role: "output", x: 26, y: 114, w: 106, h: 48, lines: ["return", "bottom"] });
+        addRefNode(svg, { id: "mlkem_keygen_internal", role: "process", x: 156, y: 114, w: 280, h: 48, label: "ML-KEM.KeyGen_internal" });
+        addRefNode(svg, { id: "ifnull_z", role: "process", x: 26, y: 184, w: 106, h: 44, label: "if NULL" });
+        addRefNode(svg, { id: "rand_z", role: "random", x: 170, y: 182, w: 56, h: 48, label: "z" });
+        addRefNode(svg, { id: "ek_out", role: "output", x: 314, y: 182, w: 60, h: 48, label: "ek" });
+        addRefNode(svg, { id: "send_bob", role: "usage", x: 402, y: 180, w: 132, h: 52, label: "Send to Bob" });
+
+        // Panel 2
+        addRefNode(svg, { id: "dk_fields", role: "output", x: 593, y: 44, w: 464, h: 44, lines: ["dk = dkPKE  ||  ek  ||  H(ek)  ||  z"] });
+        addRefNode(svg, { id: "dkpke_mid", role: "data", x: 630, y: 112, w: 92, h: 44, label: "dkPKE" });
+        addRefNode(svg, { id: "h_pk", role: "calc", x: 842, y: 112, w: 56, h: 44, label: "H" });
+        addRefNode(svg, { id: "z_mid", role: "input", x: 955, y: 112, w: 62, h: 44, label: "z" });
+        addRefNode(svg, { id: "d_mid", role: "input", x: 590, y: 182, w: 58, h: 44, label: "d" });
+        addRefNode(svg, { id: "kpke_keygen", role: "process", x: 674, y: 180, w: 154, h: 46, label: "K-PKE.KeyGen" });
+        addRefNode(svg, { id: "ekpke_mid", role: "data", x: 846, y: 182, w: 82, h: 44, label: "ekPKE" });
+        addRefNode(svg, { id: "ek_bar", role: "output", x: 944, y: 182, w: 62, h: 44, label: "ek" });
+        addRefNode(svg, { id: "dk_bar", role: "output", x: 744, y: 286, w: 90, h: 44, label: "dk" });
+
+        // Panel 3 (bounded version matching the provided image structure)
+        const x0 = 1114, y0 = 44;
+        addRefNode(svg, { id: "k_box", role: "calc", x: x0,      y: y0,     w: 46, h: 38, label: "k" });
+        addRefNode(svg, { id: "d_box", role: "input", x: x0+58,   y: y0,     w: 46, h: 38, label: "d" });
+        addRefNode(svg, { id: "hash_g_box", role: "process", x: x0, y: y0+52, w: 148, h: 40, label: "G(d||k)" });
+        addRefNode(svg, { id: "rho_box", role: "data", x: x0,      y: y0+106, w: 54, h: 38, label: "rho" });
+        addRefNode(svg, { id: "sigma_box", role: "data", x: x0+160, y: y0+52, w: 54, h: 38, label: "sigma" });
+        addRefNode(svg, { id: "loop_s", role: "process", x: x0+66, y: y0+106, w: 88, h: 40, lines: ["For i in", "(0..k)"] });
+
+        addRefNode(svg, { id: "prf_s", role: "process", x: x0+220, y: y0,     w: 118, h: 40, label: "PRF(sigma,N)" });
+        addRefNode(svg, { id: "cbd_s", role: "process", x: x0+352, y: y0,     w: 160, h: 40, label: "SamplePolyCBD" });
+        addRefNode(svg, { id: "s_box", role: "data", x: x0+526,   y: y0,     w: 42, h: 40, label: "s" });
+        addRefNode(svg, { id: "ntt_s", role: "process", x: x0+580, y: y0,     w: 48, h: 40, label: "NTT" });
+        addRefNode(svg, { id: "s_hat_box", role: "data", x: x0+642, y: y0,    w: 50, h: 40, label: "s^" });
+
+        addRefNode(svg, { id: "n_box", role: "data", x: x0+220, y: y0+54,     w: 46, h: 38, label: "N" });
+        addRefNode(svg, { id: "n1_box", role: "process", x: x0+278, y: y0+54,  w: 56, h: 38, label: "N+1" });
+        addRefNode(svg, { id: "prf_e", role: "process", x: x0+220, y: y0+106,  w: 118, h: 40, label: "PRF(sigma,N)" });
+        addRefNode(svg, { id: "cbd_e", role: "process", x: x0+352, y: y0+106,  w: 160, h: 40, label: "SamplePolyCBD" });
+        addRefNode(svg, { id: "e_box", role: "data", x: x0+526, y: y0+106,     w: 42, h: 40, label: "e" });
+        addRefNode(svg, { id: "ntt_e", role: "process", x: x0+580, y: y0+106,  w: 48, h: 40, label: "NTT" });
+        addRefNode(svg, { id: "e_hat_box", role: "data", x: x0+642, y: y0+106, w: 50, h: 40, label: "e^" });
+
+        addRefNode(svg, { id: "loop_a", role: "process", x: x0+66, y: y0+166, w: 88, h: 40, lines: ["For j in", "(0..k)"] });
+        addRefNode(svg, { id: "sample_ntt", role: "process", x: x0+220, y: y0+164, w: 192, h: 40, label: "SampleNTT(rho|j|i)" });
+        addRefNode(svg, { id: "matrix_A", role: "data", x: x0+430, y: y0+164, w: 70, h: 40, label: "A^" });
+        addRefNode(svg, { id: "t_calc", role: "process", x: x0+514, y: y0+164, w: 164, h: 40, label: "t^ = A^ o s^ + e^" });
+        addRefNode(svg, { id: "t_hat_box", role: "data", x: x0+692, y: y0+164, w: 56, h: 40, label: "t^" });
+        addRefNode(svg, { id: "byteencode_pk", role: "process", x: x0+762, y: y0+164, w: 120, h: 40, label: "ByteEncode" });
+        addRefNode(svg, { id: "ekpke_out", role: "output", x: x0+894, y: y0+142, w: 94, h: 40, lines: ["ekPKE", "(t^ || rho)"] });
+        addRefNode(svg, { id: "byteencode_sk", role: "process", x: x0+762, y: y0+52, w: 120, h: 40, label: "ByteEncode" });
+        addRefNode(svg, { id: "dkpke_out", role: "output", x: x0+894, y: y0+52, w: 94, h: 40, label: "dkPKE" });
+
+        // Arrows: Panel 1
+        addRefArrow(svg, {x:132,y:72}, {x:170,y:72});
+        addRefArrow(svg, {x:226,y:72}, {x:314,y:72});
+        addRefArrow(svg, {x:374,y:72}, {x:402,y:72});
+        addRefArrow(svg, {x:132,y:208}, {x:170,y:208});
+        addRefArrow(svg, {x:226,y:208}, {x:314,y:208});
+        addRefArrow(svg, {x:374,y:208}, {x:402,y:208});
+        addRefArrow(svg, {x:226,y:72}, {x:296,y:138}, {d: "M 226 72 C 255 72, 260 120, 296 138"});
+        addRefArrow(svg, {x:226,y:208}, {x:296,y:138}, {d: "M 226 208 C 255 208, 260 156, 296 138"});
+        addRefArrow(svg, {x:436,y:138}, {x:314,y:208}, {d: "M 436 138 C 430 180, 380 190, 344 206"});
+        addRefArrow(svg, {x:436,y:138}, {x:314,y:72}, {d: "M 436 138 C 430 94, 380 82, 344 72"});
+        addRefArrow(svg, {x:78,y:94}, {x:78,y:114});
+        addRefArrow(svg, {x:78,y:184}, {x:78,y:163});
+
+        // Cross-panel dashed link P1 -> P2 and P2 -> P3
+        addRefArrow(svg, {x:438,y:138}, {x:590,y:204}, {d: "M 438 138 C 505 138, 520 204, 590 204", dashed: true});
+        addRefArrow(svg, {x:828,y:204}, {x:1114,y:184}, {d: "M 828 204 C 940 204, 985 184, 1114 184", dashed: true});
+
+        // Panel 2 arrows
+        addRefArrow(svg, {x:648,y:204}, {x:674,y:204});
+        addRefArrow(svg, {x:828,y:204}, {x:846,y:204});
+        addRefArrow(svg, {x:928,y:204}, {x:944,y:204});
+        addRefArrow(svg, {x:876,y:156}, {x:870,y:112}, {d: "M 874 182 L 874 156"});
+        addRefArrow(svg, {x:986,y:156}, {x:986,y:112}, {d: "M 986 182 L 986 156"});
+        addRefArrow(svg, {x:670,y:132}, {x:744,y:308}, {d: "M 676 132 C 690 190, 700 260, 744 308"});
+        addRefArrow(svg, {x:722,y:134}, {x:646,y:134}, {d: "M 722 134 L 646 134"});
+
+        // Panel 3 arrows (core flow)
+        addRefArrow(svg, {x:x0+46, y:y0+19}, {x:x0+74, y:y0+72}, {d:`M ${x0+46} ${y0+19} C ${x0+50} ${y0+42}, ${x0+68} ${y0+56}, ${x0+74} ${y0+72}`});
+        addRefArrow(svg, {x:x0+104, y:y0+19}, {x:x0+108, y:y0+72}, {d:`M ${x0+104} ${y0+19} C ${x0+104} ${y0+40}, ${x0+108} ${y0+56}, ${x0+108} ${y0+72}`});
+        addRefArrow(svg, {x:x0+148, y:y0+72}, {x:x0+160, y:y0+72});
+        addRefArrow(svg, {x:x0+148, y:y0+72}, {x:x0+27, y:y0+125}, {d:`M ${x0+148} ${y0+72} C ${x0+120} ${y0+96}, ${x0+60} ${y0+120}, ${x0+27} ${y0+125}`});
+        addRefArrow(svg, {x:x0+188, y:y0+72}, {x:x0+220, y:y0+20});
+        addRefArrow(svg, {x:x0+214, y:y0+72}, {x:x0+220, y:y0+126});
+        addRefArrow(svg, {x:x0+154, y:y0+126}, {x:x0+220, y:y0+184});
+        addRefArrow(svg, {x:x0+338, y:y0+20}, {x:x0+352, y:y0+20});
+        addRefArrow(svg, {x:x0+512, y:y0+20}, {x:x0+526, y:y0+20});
+        addRefArrow(svg, {x:x0+568, y:y0+20}, {x:x0+580, y:y0+20});
+        addRefArrow(svg, {x:x0+628, y:y0+20}, {x:x0+642, y:y0+20});
+        addRefArrow(svg, {x:x0+338, y:y0+126}, {x:x0+352, y:y0+126});
+        addRefArrow(svg, {x:x0+512, y:y0+126}, {x:x0+526, y:y0+126});
+        addRefArrow(svg, {x:x0+568, y:y0+126}, {x:x0+580, y:y0+126});
+        addRefArrow(svg, {x:x0+628, y:y0+126}, {x:x0+642, y:y0+126});
+
+        addRefArrow(svg, {x:x0+154, y:y0+186}, {x:x0+220, y:y0+184});
+        addRefArrow(svg, {x:x0+412, y:y0+184}, {x:x0+430, y:y0+184});
+        addRefArrow(svg, {x:x0+500, y:y0+184}, {x:x0+514, y:y0+184});
+        addRefArrow(svg, {x:x0+678, y:y0+184}, {x:x0+692, y:y0+184});
+        addRefArrow(svg, {x:x0+748, y:y0+184}, {x:x0+762, y:y0+184});
+        addRefArrow(svg, {x:x0+882, y:y0+184}, {x:x0+894, y:y0+162});
+
+        addRefArrow(svg, {x:x0+692, y:y0+20}, {x:x0+762, y:y0+72}, {d:`M ${x0+692} ${y0+20} C ${x0+724} ${y0+24}, ${x0+736} ${y0+54}, ${x0+762} ${y0+72}`});
+        addRefArrow(svg, {x:x0+882, y:y0+72}, {x:x0+894, y:y0+72});
+        addRefArrow(svg, {x:x0+54, y:y0+183}, {x:x0+54, y:y0+144}, {d:`M ${x0+54} ${y0+183} L ${x0+54} ${y0+144}`});
+
+        // KEM/PKE outputs and finalization arrows
+        addRefArrow(svg, {x:998, y:204}, {x:744, y:308}, {d:"M 998 204 C 940 228, 860 272, 790 308"});
+        addRefArrow(svg, {x:839, y:204}, {x:944, y:204}, {d:"M 839 204 L 944 204"});
+        addRefArrow(svg, {x:744, y:308}, {x:745, y:308});
+        addRefArrow(svg, {x:744, y:308}, {x:620, y:68}, {d:"M 789 308 C 728 288, 690 220, 640 88"});
+        addRefArrow(svg, {x:875, y:134}, {x:842, y:134});
+        addRefArrow(svg, {x:898, y:134}, {x:955, y:134});
+
+        // Panel 1 final arrows from internal to outputs
+        addRefArrow(svg, {x:590, y:204}, {x:438, y:138}, {d:"M 590 204 C 520 204, 500 138, 438 138", dashed:true});
+
+        container.appendChild(svg);
+        setupPrimaryReferenceNodeMap(svg);
+    }
+
+    function highlightPrimaryReferenceForStep(step) {
+        Object.values(primaryRefNodeEls).forEach(el => el.classList.remove("step-highlight"));
+        if (!step) return;
+        const tabMap = PRIMARY_REF_STEP_MAP[currentTab] || {};
+        const ids = tabMap[step.id] || [];
+        ids.forEach(id => {
+            const el = primaryRefNodeEls[id];
+            if (el) el.classList.add("step-highlight");
+        });
+    }
+
+    // Render the recreated KeyGen reference diagram as the central visualization.
+    // Tabs remain step-specific; the main graph is global.
+    try {
+        renderPrimaryReferenceDiagram();
+        renderFlowLegend();          // no-op when flow panel is not present
+        renderTabs();
+        renderSteps();
+        renderFlowGraphForStep(null); // no-op when flow panel is not present
+        renderTraceSteps();
+    } catch (error) {
+        console.error(error);
+        const container = document.getElementById('graph');
+        if (container) container.textContent = "Error rendering reference diagram: " + error;
+    }
         """)
         f.write("</script>\n")
         f.write("</body>\n</html>\n")
 
-    print(f"Wrote animated HTML to {html_path}")
-    print("Open it in a browser (with internet access for the JS libs) to watch the calls animate.")
+    print(f"Wrote HTML visualization to {html_path}")
+    print("Open it in a browser to view the primary KeyGen reference diagram with tab-specific steps.")
 
 
 
