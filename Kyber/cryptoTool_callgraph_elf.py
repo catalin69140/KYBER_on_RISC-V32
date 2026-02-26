@@ -1157,6 +1157,7 @@ def write_html_animation(
     let nodeMap = {};   // symbol -> <g.node> (global so all functions can use it)
     let primaryRefNodeEls = {};  // diagram nodeId -> <g>
     let primaryRefNodeBoxes = {}; // diagram nodeId -> {x,y,w,h}
+    let primaryRefConnectorBuffer = null; // deferred connector specs (for port planning)
 
     function setupGraphAnimation(svgElement) {
         svgRoot = svgElement;
@@ -2492,26 +2493,82 @@ def write_html_animation(
         return { x: b.x + b.w / 2 + dx, y: b.y + b.h / 2 + dy };
     }
 
-    function addRefConnector(svg, fromSpec, toSpec, opts = {}) {
+    function canonicalRefBorderSide(side) {
+        if (!side) return null;
+        if (side === "left" || side === "right" || side === "top" || side === "bottom") return side;
+        if (typeof side === "string") {
+            if (side.endsWith("-left")) return "left";
+            if (side.endsWith("-right")) return "right";
+            if (side.endsWith("-top")) return "top";
+            if (side.endsWith("-bottom")) return "bottom";
+        }
+        return null;
+    }
+
+    function isCustomNamedRefAnchor(nodeId, side) {
+        if (!side || side === "left" || side === "right" || side === "top" || side === "bottom") return false;
+        const b = primaryRefNodeBoxes[nodeId];
+        return !!(b && b.anchors && b.anchors[side]);
+    }
+
+    function orthPathFromPoints(a, b, viaPoints, fromSide, toSide) {
+        const pts = [a, ...(viaPoints || []), b];
+        let d = `M ${pts[0].x} ${pts[0].y}`;
+        for (let i = 1; i < pts.length; i++) {
+            const prev = pts[i - 1];
+            const next = pts[i];
+            if (prev.x === next.x || prev.y === next.y) {
+                d += ` L ${next.x} ${next.y}`;
+                continue;
+            }
+
+            let horizFirst = true;
+            if (i === 1) {
+                horizFirst = (fromSide === "left" || fromSide === "right");
+            }
+            if (i === pts.length - 1) {
+                // Ensure the final segment approaches perpendicular to the target border.
+                horizFirst = !(toSide === "left" || toSide === "right");
+            }
+
+            if (horizFirst) {
+                d += ` L ${next.x} ${prev.y} L ${next.x} ${next.y}`;
+            } else {
+                d += ` L ${prev.x} ${next.y} L ${next.x} ${next.y}`;
+            }
+        }
+        return d;
+    }
+
+    function drawRefConnectorInternal(svg, fromSpec, toSpec, opts = {}) {
+        const fromRawSide = fromSpec.side || "right";
+        const toRawSide = toSpec.side || "left";
+        const fromSide = canonicalRefBorderSide(fromRawSide) || "right";
+        const toSide = canonicalRefBorderSide(toRawSide) || "left";
         const a = refAnchor(fromSpec.id, fromSpec.side || "right", fromSpec.dx || 0, fromSpec.dy || 0);
         const b = refAnchor(toSpec.id, toSpec.side || "left", toSpec.dx || 0, toSpec.dy || 0);
         let d = "";
 
         if (opts.points && Array.isArray(opts.points) && opts.points.length) {
-            const pts = [a, ...opts.points, b];
-            d = `M ${pts[0].x} ${pts[0].y}` + pts.slice(1).map(p => ` L ${p.x} ${p.y}`).join("");
+            d = orthPathFromPoints(a, b, opts.points, fromSide, toSide);
         } else if (opts.mode === "vh") {
             d = `M ${a.x} ${a.y} L ${a.x} ${b.y} L ${b.x} ${b.y}`;
         } else if (opts.mode === "hv") {
             d = `M ${a.x} ${a.y} L ${b.x} ${a.y} L ${b.x} ${b.y}`;
         } else if (opts.mode === "curve") {
-            const c1x = (opts.c1 && opts.c1.x != null) ? opts.c1.x : (a.x + b.x) / 2;
-            const c1y = (opts.c1 && opts.c1.y != null) ? opts.c1.y : a.y;
-            const c2x = (opts.c2 && opts.c2.x != null) ? opts.c2.x : (a.x + b.x) / 2;
-            const c2y = (opts.c2 && opts.c2.y != null) ? opts.c2.y : b.y;
-            d = `M ${a.x} ${a.y} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${b.x} ${b.y}`;
+            // Curved routing is disallowed in the reference diagram; use orthogonal routing instead.
+            d = (toSide === "left" || toSide === "right")
+                ? `M ${a.x} ${a.y} L ${a.x} ${b.y} L ${b.x} ${b.y}`
+                : `M ${a.x} ${a.y} L ${b.x} ${a.y} L ${b.x} ${b.y}`;
         } else {
-            d = `M ${a.x} ${a.y} L ${b.x} ${b.y}`;
+            // Default routing is orthogonal and determined by the target border orientation.
+            if (a.x === b.x || a.y === b.y) {
+                d = `M ${a.x} ${a.y} L ${b.x} ${b.y}`;
+            } else if (toSide === "left" || toSide === "right") {
+                d = `M ${a.x} ${a.y} L ${a.x} ${b.y} L ${b.x} ${b.y}`;
+            } else {
+                d = `M ${a.x} ${a.y} L ${b.x} ${a.y} L ${b.x} ${b.y}`;
+            }
         }
 
         return addRefArrow(svg, a, b, {
@@ -2519,6 +2576,87 @@ def write_html_animation(
             dashed: !!opts.dashed,
             color: opts.color,
             width: opts.width
+        });
+    }
+
+    function addRefConnector(svg, fromSpec, toSpec, opts = {}) {
+        if (Array.isArray(primaryRefConnectorBuffer)) {
+            const clonedOpts = { ...(opts || {}) };
+            if (Array.isArray(clonedOpts.points)) {
+                clonedOpts.points = clonedOpts.points.map(p => ({ ...p }));
+            }
+            primaryRefConnectorBuffer.push({
+                fromSpec: { ...(fromSpec || {}) },
+                toSpec: { ...(toSpec || {}) },
+                opts: clonedOpts
+            });
+            return null;
+        }
+        return drawRefConnectorInternal(svg, fromSpec, toSpec, opts);
+    }
+
+    function flushRefConnectors(svg) {
+        if (!Array.isArray(primaryRefConnectorBuffer) || !primaryRefConnectorBuffer.length) {
+            primaryRefConnectorBuffer = null;
+            return;
+        }
+
+        const buffered = primaryRefConnectorBuffer;
+        primaryRefConnectorBuffer = null;
+
+        const portCounts = {};
+        const portSeen = {};
+
+        function registerEndpointCount(spec, fallbackSide) {
+            const rawSide = spec.side || fallbackSide;
+            const side = canonicalRefBorderSide(rawSide);
+            if (!side) return;
+            if (isCustomNamedRefAnchor(spec.id, rawSide)) return;
+            if (spec.dx != null || spec.dy != null) return; // explicit override
+            const key = `${spec.id}|${side}`;
+            portCounts[key] = (portCounts[key] || 0) + 1;
+        }
+
+        buffered.forEach(({ fromSpec, toSpec }) => {
+            registerEndpointCount(fromSpec, "right");
+            registerEndpointCount(toSpec, "left");
+        });
+
+        function portOffsetFor(spec, fallbackSide) {
+            const rawSide = spec.side || fallbackSide;
+            const side = canonicalRefBorderSide(rawSide);
+            if (!side) return { dx: spec.dx || 0, dy: spec.dy || 0 };
+            if (isCustomNamedRefAnchor(spec.id, rawSide)) return { dx: spec.dx || 0, dy: spec.dy || 0 };
+            if (spec.dx != null || spec.dy != null) return { dx: spec.dx || 0, dy: spec.dy || 0 };
+
+            const key = `${spec.id}|${side}`;
+            const total = portCounts[key] || 1;
+            const idx = portSeen[key] || 0;
+            portSeen[key] = idx + 1;
+
+            if (total <= 1) return { dx: 0, dy: 0 };
+
+            const box = primaryRefNodeBoxes[spec.id];
+            const len = box ? ((side === "left" || side === "right") ? box.h : box.w) : 40;
+            const reach = Math.max(6, len * 0.28);
+            const step = Math.min(14, Math.max(8, reach / Math.max(1, (total - 1) / 2)));
+            const centeredIndex = idx - (total - 1) / 2;
+            const offset = centeredIndex * step;
+
+            if (side === "left" || side === "right") return { dx: 0, dy: offset };
+            return { dx: offset, dy: 0 };
+        }
+
+        buffered.forEach(({ fromSpec, toSpec, opts }) => {
+            const fromAdj = { ...fromSpec };
+            const toAdj = { ...toSpec };
+            const fromOff = portOffsetFor(fromAdj, "right");
+            const toOff = portOffsetFor(toAdj, "left");
+            if (fromAdj.dx == null) fromAdj.dx = fromOff.dx;
+            if (fromAdj.dy == null) fromAdj.dy = fromOff.dy;
+            if (toAdj.dx == null) toAdj.dx = toOff.dx;
+            if (toAdj.dy == null) toAdj.dy = toOff.dy;
+            drawRefConnectorInternal(svg, fromAdj, toAdj, opts || {});
         });
     }
 
@@ -2647,6 +2785,9 @@ def write_html_animation(
         addRefNode(svg, { id: "dkpke_out", role: "output", x: x0+816, y: y0, w: 82, h: 42, label: "dkPKE" });
         addRefNode(svg, { id: "byteencode_pk", role: "process", x: x0+694, y: y0+174, w: 110, h: 42, label: "ByteEncode" });
         addRefEkPkeGroup(svg, { id: "ekpke_out", x: x0+808, y: y0+162, w: 90, h: 64 });
+
+        // Queue connectors first so border ports can be distributed consistently.
+        primaryRefConnectorBuffer = [];
 
         // Panel 1 connectors
         addRefConnector(svg, {id:"ifnull_d", side:"right"}, {id:"rand_d", side:"left"});
@@ -2790,6 +2931,7 @@ def write_html_animation(
             ]
         });
 
+        flushRefConnectors(svg);
         container.appendChild(svg);
         setupPrimaryReferenceNodeMap(svg);
     }
