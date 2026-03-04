@@ -3091,8 +3091,8 @@ def write_html_animation(
 
         svg.appendChild(createSvgEl("rect", { x: 0, y: 0, width: 1980, height: 410, fill: "#0b1220" }));
 
-        const p1 = { x: 16, y: 16, w: 510, h: 350 };
-        const p2 = { x: 540, y: 16, w: 500, h: 350 };
+        const p1 = { x: 16, y: 16, w: 510, h: 228 };
+        const p2 = { x: 540, y: 16, w: 500, h: 280 };
         const p3 = { x: 1054, y: 16, w: 910, h: 350 };
         addRefPanel(svg, { ...p1, title: "[19] ML-KEM.KeyGen (Initiator Alice)" });
         addRefPanel(svg, { ...p2, title: "[16] ML-KEM.KeyGen_internal (Initiator Alice)" });
@@ -3105,20 +3105,20 @@ def write_html_animation(
         addRefNode(svg, { id: "save_decaps", role: "usage", x: 380, y: 54, w: 128, h: 48, lines: ["Save for", "Decaps"] });
         addRefNode(svg, { id: "return_bottom", role: "output", x: 30, y: 122, w: 96, h: 46, lines: ["return", "bottom"] });
         addRefNode(svg, { id: "mlkem_keygen_internal", role: "process", x: 142, y: 122, w: 270, h: 46, label: "ML-KEM.KeyGen_internal" });
-        addRefNode(svg, { id: "ifnull_z", role: "process", x: 30, y: 198, w: 96, h: 40, label: "if NULL" });
-        addRefNode(svg, { id: "rand_z", role: "random", x: 150, y: 194, w: 44, h: 48, label: "z" });
-        addRefNode(svg, { id: "ek_out", role: "output", x: 300, y: 194, w: 54, h: 48, label: "ek" });
-        addRefNode(svg, { id: "send_bob", role: "usage", x: 380, y: 194, w: 128, h: 48, label: "Send to Bob" });
+        addRefNode(svg, { id: "ifnull_z", role: "process", x: 30, y: 192, w: 96, h: 40, label: "if NULL" });
+        addRefNode(svg, { id: "rand_z", role: "random", x: 150, y: 188, w: 44, h: 48, label: "z" });
+        addRefNode(svg, { id: "ek_out", role: "output", x: 300, y: 188, w: 54, h: 48, label: "ek" });
+        addRefNode(svg, { id: "send_bob", role: "usage", x: 380, y: 188, w: 128, h: 48, label: "Send to Bob" });
 
         // Panel 2: ML-KEM.KeyGen_internal
         addRefDkGroup(svg, { id: "dk_fields", x: 556, y: 54, w: 468, h: 62 });
-        addRefNode(svg, { id: "dkpke_mid", role: "data", x: 608, y: 146, w: 86, h: 40, label: "dkPKE" });
-        addRefNode(svg, { id: "h_pk", role: "calc", x: 812, y: 142, w: 56, h: 48, label: "H" });
-        addRefNode(svg, { id: "z_mid", role: "input", x: 920, y: 142, w: 56, h: 48, label: "z" });
-        addRefNode(svg, { id: "d_mid", role: "input", x: 556, y: 246, w: 46, h: 40, label: "d" });
+        addRefNode(svg, { id: "dkpke_mid", role: "data", x: 595, y: 146, w: 86, h: 48, label: "dkPKE" });
+        addRefNode(svg, { id: "h_pk", role: "calc", x: 845, y: 146, w: 48, h: 48, label: "H" });
+        addRefNode(svg, { id: "z_mid", role: "input", x: 947, y: 146, w: 48, h: 48, label: "z" });
+        addRefNode(svg, { id: "d_mid", role: "input", x: 556, y: 242, w: 48, h: 48, label: "d" });
         addRefNode(svg, { id: "kpke_keygen", role: "process", x: 622, y: 242, w: 154, h: 48, label: "K-PKE.KeyGen" });
-        addRefNode(svg, { id: "ekpke_mid", role: "data", x: 810, y: 246, w: 80, h: 40, label: "ekPKE" });
-        addRefNode(svg, { id: "ek_bar", role: "output", x: 912, y: 246, w: 50, h: 40, label: "ek" });
+        addRefNode(svg, { id: "ekpke_mid", role: "data", x: 828, y: 242, w: 80, h: 48, label: "ekPKE" });
+        addRefNode(svg, { id: "ek_bar", role: "output", x: 947, y: 242, w: 48, h: 48, label: "ek" });
 
         // Panel 3: K-PKE.KeyGen
         const x0 = 1060, y0 = 58;
@@ -3159,115 +3159,45 @@ def write_html_animation(
 
         // Panel 1 connectors
         addRefConnector(svg, {id:"ifnull_d", side:"right"}, {id:"rand_d", side:"left"});
-        addRefConnector(svg, {id:"rand_d", side:"right"}, {id:"dk_out", side:"left"});
         addRefConnector(svg, {id:"dk_out", side:"right"}, {id:"save_decaps", side:"left"});
         addRefConnector(svg, {id:"ifnull_z", side:"right"}, {id:"rand_z", side:"left"});
-        addRefConnector(svg, {id:"rand_z", side:"right"}, {id:"ek_out", side:"left"});
         addRefConnector(svg, {id:"ek_out", side:"right"}, {id:"send_bob", side:"left"});
-        addRefConnector(svg, {id:"ifnull_d", side:"bottom", dx:-10}, {id:"return_bottom", side:"top", dx:-10}, {mode:"vh"});
+        addRefConnector(svg, {id:"ifnull_d", side:"bottom"}, {id:"return_bottom", side:"top"}, {mode:"vh"});
         addRefConnector(svg, {id:"ifnull_z", side:"top", dx:-10}, {id:"return_bottom", side:"bottom", dx:-10}, {mode:"vh"});
-        addRefConnector(svg, {id:"rand_d", side:"bottom"}, {id:"mlkem_keygen_internal", side:"top", dx:-64}, {mode:"vh"});
-        addRefConnector(svg, {id:"rand_z", side:"top"}, {id:"mlkem_keygen_internal", side:"bottom", dx:-64}, {mode:"vh"});
-        addRefConnector(svg, {id:"mlkem_keygen_internal", side:"right", dy:-12}, {id:"dk_out", side:"bottom"}, {
+        addRefConnector(svg, {id:"rand_d", side:"bottom"}, {id:"mlkem_keygen_internal", side:"top", dx:-105}, {mode:"vh"});
+        addRefConnector(svg, {id:"rand_z", side:"top"}, {id:"mlkem_keygen_internal", side:"bottom", dx:-105}, {mode:"vh"});
+        addRefConnector(svg, {id:"mlkem_keygen_internal", side:"top", dx:50}, {id:"dk_out", side:"bottom"}, {
             mode:"curve", c1:{x:470,y:130}, c2:{x:356,y:110}
         });
-        addRefConnector(svg, {id:"mlkem_keygen_internal", side:"right", dy:12}, {id:"ek_out", side:"top"}, {
+        addRefConnector(svg, {id:"mlkem_keygen_internal", side:"bottom", dx:50}, {id:"ek_out", side:"top"}, {
             mode:"curve", c1:{x:470,y:162}, c2:{x:356,y:188}
         });
-
-        // KEM internal + cross-panel links
-        addRefConnector(svg, {id:"mlkem_keygen_internal", side:"right"}, {id:"kpke_keygen", side:"left"}, {
-            dashed:true,
-            points:[
-                { x: p2.x - 18, y: refAnchor("mlkem_keygen_internal", "right").y },
-                { x: p2.x - 18, y: refAnchor("kpke_keygen", "left").y }
-            ]
-        });
-        addRefConnector(svg, {id:"rand_d", side:"top"}, {id:"d_mid", side:"left"}, {
-            dashed:true,
-            points:[
-                { x: refAnchor("rand_d", "top").x, y: p1.y + 36 },
-                { x: p2.x - 28, y: p1.y + 36 },
-                { x: p2.x - 28, y: refAnchor("d_mid", "left").y }
-            ]
-        });
-        addRefConnector(svg, {id:"rand_z", side:"bottom"}, {id:"z_mid", side:"left"}, {
-            dashed:true,
-            points:[
-                { x: refAnchor("rand_z", "bottom").x, y: p2.y + p2.h + 14 },
-                { x: p2.x - 10, y: p2.y + p2.h + 14 },
-                { x: p2.x - 10, y: refAnchor("z_mid", "left").y }
-            ]
-        });
+        
+        // Panel 2 connectors
         addRefConnector(svg, {id:"d_mid", side:"right"}, {id:"kpke_keygen", side:"left"});
         addRefConnector(svg, {id:"kpke_keygen", side:"right"}, {id:"ekpke_mid", side:"left"});
         addRefConnector(svg, {id:"ekpke_mid", side:"right"}, {id:"ek_bar", side:"left"});
-        addRefConnector(svg, {id:"ek_bar", side:"top"}, {id:"h_pk", side:"bottom"}, {mode:"vh"});
-        addRefConnector(svg, {id:"kpke_keygen", side:"top", dx:-46}, {id:"dkpke_mid", side:"bottom", dx:6}, {
-            mode:"curve", c1:{x:650,y:218}, c2:{x:626,y:174}
-        });
+        addRefConnector(svg, {id:"ekpke_mid", side:"top"}, {id:"h_pk", side:"bottom"}, {mode:"vh"});
+        addRefConnector(svg, {id:"kpke_keygen", side:"top"}, {id:"dkpke_mid", side:"right"}, {mode:"vh"});
         addRefConnector(svg, {id:"dkpke_mid", side:"top"}, {id:"dk_fields", side:"dkpke-bottom"}, {mode:"vh"});
-        addRefConnector(svg, {id:"ek_bar", side:"top"}, {id:"dk_fields", side:"ek-bottom"}, {mode:"vh"});
+        addRefConnector(svg, {id:"ekpke_mid", side:"top"}, {id:"dk_fields", side:"ek-bottom"}, {mode:"vh"});
         addRefConnector(svg, {id:"h_pk", side:"top"}, {id:"dk_fields", side:"hek-bottom"}, {mode:"vh"});
         addRefConnector(svg, {id:"z_mid", side:"top"}, {id:"dk_fields", side:"z-bottom"}, {mode:"vh"});
-
-        addRefConnector(svg, {id:"dk_fields", side:"left"}, {id:"dk_out", side:"right"}, {
-            dashed:true,
-            points:[
-                { x: p1.x + p1.w + 18, y: refAnchor("dk_fields", "left").y },
-                { x: p1.x + p1.w + 18, y: p1.y + 36 },
-                { x: refAnchor("dk_out", "right").x + 18, y: p1.y + 36 },
-                { x: refAnchor("dk_out", "right").x + 18, y: refAnchor("dk_out", "right").y }
-            ]
-        });
-        addRefConnector(svg, {id:"ek_bar", side:"left"}, {id:"ek_out", side:"right"}, {
-            dashed:true,
-            points:[
-                { x: p2.x - 20, y: refAnchor("ek_bar", "left").y },
-                { x: p2.x - 20, y: refAnchor("ek_out", "bottom").y + 16 },
-                { x: refAnchor("ek_out", "right").x + 18, y: refAnchor("ek_out", "bottom").y + 16 },
-                { x: refAnchor("ek_out", "right").x + 18, y: refAnchor("ek_out", "right").y }
-            ]
-        });
-        addRefConnector(svg, {id:"kpke_keygen", side:"right"}, {id:"hash_g_box", side:"left"}, {
-            dashed:true,
-            points:[
-                { x: p3.x - 16, y: refAnchor("kpke_keygen", "right").y },
-                { x: p3.x - 16, y: refAnchor("hash_g_box", "left").y }
-            ]
-        });
-        addRefConnector(svg, {id:"dkpke_out", side:"top"}, {id:"dkpke_mid", side:"right"}, {
-            dashed:true,
-            points:[
-                { x: refAnchor("dkpke_out", "top").x, y: p3.y + 36 },
-                { x: p3.x - 18, y: p3.y + 36 },
-                { x: p3.x - 18, y: refAnchor("dkpke_mid", "right").y }
-            ]
-        });
-        addRefConnector(svg, {id:"ekpke_out", side:"bottom"}, {id:"ekpke_mid", side:"right"}, {
-            dashed:true,
-            points:[
-                { x: refAnchor("ekpke_out", "bottom").x, y: p2.y + p2.h + 14 },
-                { x: p3.x - 18, y: p2.y + p2.h + 14 },
-                { x: p3.x - 18, y: refAnchor("ekpke_mid", "right").y }
-            ]
-        });
 
         // Panel 3 connectors (all snapped to node borders)
         addRefConnector(svg, {id:"k_box", side:"bottom"}, {id:"hash_g_box", side:"top", dx:-34}, {mode:"vh"});
         addRefConnector(svg, {id:"d_box", side:"bottom"}, {id:"hash_g_box", side:"top", dx:22}, {mode:"vh"});
         addRefConnector(svg, {id:"hash_g_box", side:"right"}, {id:"sigma_box", side:"left"});
         addRefConnector(svg, {id:"hash_g_box", side:"bottom", dx:-34}, {id:"rho_box", side:"top"}, {mode:"vh"});
-        addRefConnector(svg, {id:"sigma_box", side:"bottom"}, {id:"loop_s", side:"top", dx:16}, {mode:"vh"});
-        addRefConnector(svg, {id:"rho_box", side:"right"}, {id:"loop_a", side:"left"}, {mode:"hv"});
+        addRefConnector(svg, {id:"sigma_box", side:"top"}, {id:"prf_s", side:"left"}, {mode:"vh"});
+        addRefConnector(svg, {id:"sigma_box", side:"bottom"}, {id:"prf_e", side:"left"}, {mode:"vh"});
 
-        addRefConnector(svg, {id:"loop_s", side:"right", dy:-10}, {id:"prf_s", side:"left", dy:10}, {mode:"hv"});
-        addRefConnector(svg, {id:"loop_s", side:"right", dy:10}, {id:"prf_e", side:"left"}, {mode:"hv"});
-        addRefConnector(svg, {id:"prf_s", side:"bottom"}, {id:"n_box", side:"top"}, {mode:"vh"});
-        addRefConnector(svg, {id:"n_box", side:"right"}, {id:"n1_box", side:"left"});
-        addRefConnector(svg, {id:"n1_box", side:"bottom"}, {id:"prf_e", side:"top"}, {mode:"vh"});
+        addRefConnector(svg, {id:"loop_s", side:"bottom"}, {id:"loop_a", side:"top"}, {mode:"hv"});
+        addRefConnector(svg, {id:"n_box", side:"top"}, {id:"prf_s", side:"bottom"}, {mode:"vh"});
+        addRefConnector(svg, {id:"n_box", side:"bottom"}, {id:"prf_e", side:"top"}, {mode:"vh"});
+        addRefConnector(svg, {id:"n1_box", side:"left"}, {id:"n_box", side:"right"}, {mode:"vh"});
 
-        addRefConnector(svg, {id:"prf_s", side:"right"}, {id:"cbd_s", side:"left"});
+        addRefConnector(svg, {id:"prf_s", side:"right"}, {id:"cbd_s", side:"left"}); // refer also to n1_box(N+1)
         addRefConnector(svg, {id:"cbd_s", side:"right"}, {id:"s_box", side:"left"});
         addRefConnector(svg, {id:"s_box", side:"right"}, {id:"ntt_s", side:"left"});
         addRefConnector(svg, {id:"ntt_s", side:"right"}, {id:"s_hat_box", side:"left"});
@@ -3276,22 +3206,20 @@ def write_html_animation(
         });
         addRefConnector(svg, {id:"byteencode_sk", side:"right"}, {id:"dkpke_out", side:"left"});
 
-        addRefConnector(svg, {id:"prf_e", side:"right"}, {id:"cbd_e", side:"left"});
+        addRefConnector(svg, {id:"prf_e", side:"right"}, {id:"cbd_e", side:"left"}); // refer also to n1_box(N+1)
         addRefConnector(svg, {id:"cbd_e", side:"right"}, {id:"e_box", side:"left"});
         addRefConnector(svg, {id:"e_box", side:"right"}, {id:"ntt_e", side:"left"});
         addRefConnector(svg, {id:"ntt_e", side:"right"}, {id:"e_hat_box", side:"left"});
 
         addRefConnector(svg, {id:"loop_a", side:"right"}, {id:"sample_ntt", side:"left"}, {mode:"hv"});
-        addRefConnector(svg, {id:"rho_box", side:"right"}, {id:"sample_ntt", side:"left", dy:12}, {
-            mode:"curve", c1:{x:x0+170,y:y0+232}, c2:{x:x0+214,y:y0+232}
-        });
+        addRefConnector(svg, {id:"rho_box", side:"right"}, {id:"sample_ntt", side:"left", dy:12}, { mode:"hv"});
         addRefConnector(svg, {id:"sample_ntt", side:"right"}, {id:"matrix_A", side:"left"});
         addRefConnector(svg, {id:"matrix_A", side:"right"}, {id:"t_calc", side:"left"});
         addRefConnector(svg, {id:"s_hat_box", side:"bottom"}, {id:"t_calc", side:"top", dx:-42}, {mode:"vh"});
         addRefConnector(svg, {id:"e_hat_box", side:"bottom"}, {id:"t_calc", side:"top", dx:26}, {mode:"vh"});
         addRefConnector(svg, {id:"t_calc", side:"right"}, {id:"t_hat_box", side:"left"});
         addRefConnector(svg, {id:"t_hat_box", side:"right"}, {id:"byteencode_pk", side:"left"});
-        addRefConnector(svg, {id:"byteencode_pk", side:"right"}, {id:"ekpke_out", side:"body-left"});
+        addRefConnector(svg, {id:"byteencode_pk", side:"bottom"}, {id:"ekpke_out", side:"t-bottom"});
         addRefConnector(svg, {id:"rho_box", side:"bottom"}, {id:"ekpke_out", side:"rho-bottom"}, {
             points: [
                 { x: refAnchor("rho_box", "bottom").x, y: p3.y + p3.h - 10 },
