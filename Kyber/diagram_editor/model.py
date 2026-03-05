@@ -1,0 +1,312 @@
+from __future__ import annotations
+
+import copy
+import re
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+MODEL_VERSION = 1
+DEFAULT_VIEWBOX = {"width": 1980, "height": 410}
+DEFAULT_BACKGROUND = "#0b1220"
+DEFAULT_ANCHOR_STOPS = [0.1, 0.3, 0.5, 0.7, 0.9]
+
+# Existing primary diagram role colors from CryptoTool UI.
+DEFAULT_COLOR_PALETTE = [
+    "#3a2d55",
+    "#1c2f4f",
+    "#15362f",
+    "#542f2f",
+    "#3f5667",
+    "#5e3b00",
+    "#253f57",
+]
+
+DEFAULT_SHAPE_FILL = "#1c2f4f"
+DEFAULT_SHAPE_STROKE = "#80b6ff"
+DEFAULT_TEXT_COLOR = "#f4f7ff"
+DEFAULT_CONTAINER_FILL = "#0d172a"
+DEFAULT_CONTAINER_STROKE = "#eef3ff"
+
+DEFAULT_ARROW_STROKE = "#e8efff"
+DEFAULT_ARROW_WIDTH = 1.7
+
+ID_BAD_CHARS = re.compile(r"[^a-zA-Z0-9_]+")
+ID_MULTI_UNDERSCORE = re.compile(r"_+")
+
+VALID_SIDES = {"left", "right", "top", "bottom"}
+VALID_ROUTINGS = {"straight", "curved", "angled"}
+VALID_LINE_STYLES = {"solid", "dashed"}
+
+
+def sanitize_id(value: Any) -> str:
+    txt = str(value or "").strip().lower()
+    txt = txt.replace("-", "_")
+    txt = ID_BAD_CHARS.sub("_", txt)
+    txt = ID_MULTI_UNDERSCORE.sub("_", txt)
+    txt = txt.strip("_")
+    return txt or "node"
+
+
+def derive_default_shape_id(text: str, container_text: Optional[str] = None) -> str:
+    base = sanitize_id(text or "node")
+    if container_text:
+        container = sanitize_id(container_text)
+        if container:
+            return f"{container}_{base}"
+    return base
+
+
+def default_model(elf_name: str = "") -> Dict[str, Any]:
+    return {
+        "version": MODEL_VERSION,
+        "metadata": {
+            "elf": str(elf_name or ""),
+            "viewBox": dict(DEFAULT_VIEWBOX),
+            "background": DEFAULT_BACKGROUND,
+            "colorPalette": list(DEFAULT_COLOR_PALETTE),
+        },
+        "anchors": {
+            "countPerEdge": len(DEFAULT_ANCHOR_STOPS),
+            "stops": list(DEFAULT_ANCHOR_STOPS),
+        },
+        "shapes": [],
+        "arrows": [],
+    }
+
+
+def _to_float(value: Any, fallback: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(fallback)
+
+
+def _to_int(value: Any, fallback: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return int(fallback)
+
+
+def _as_side(value: Any, fallback: str) -> str:
+    side = str(value or "").strip().lower()
+    if side in VALID_SIDES:
+        return side
+    return fallback
+
+
+def _as_routing(value: Any) -> str:
+    routing = str(value or "").strip().lower()
+    if routing in VALID_ROUTINGS:
+        return routing
+    return "angled"
+
+
+def _as_line_style(value: Any) -> str:
+    style = str(value or "").strip().lower()
+    if style in VALID_LINE_STYLES:
+        return style
+    return "solid"
+
+
+def _shape_defaults(kind: str) -> Tuple[str, str]:
+    if kind == "container":
+        return DEFAULT_CONTAINER_FILL, DEFAULT_CONTAINER_STROKE
+    return DEFAULT_SHAPE_FILL, DEFAULT_SHAPE_STROKE
+
+
+def _dedupe_id(desired: str, used: Iterable[str]) -> str:
+    existing = set(used)
+    if desired not in existing:
+        return desired
+    idx = 2
+    while True:
+        candidate = f"{desired}_{idx}"
+        if candidate not in existing:
+            return candidate
+        idx += 1
+
+
+def _normalize_anchor_stops(raw_stops: Any) -> List[float]:
+    if not isinstance(raw_stops, list):
+        return list(DEFAULT_ANCHOR_STOPS)
+    out: List[float] = []
+    for v in raw_stops:
+        f = _to_float(v, 0.5)
+        f = max(0.0, min(1.0, f))
+        out.append(f)
+    if not out:
+        return list(DEFAULT_ANCHOR_STOPS)
+    return sorted(out)
+
+
+def normalize_model(raw_model: Any, elf_name: str = "") -> Dict[str, Any]:
+    model = default_model(elf_name=elf_name)
+    if not isinstance(raw_model, dict):
+        return model
+
+    src = copy.deepcopy(raw_model)
+    src_meta = src.get("metadata") if isinstance(src.get("metadata"), dict) else {}
+    if src_meta.get("elf"):
+        model["metadata"]["elf"] = str(src_meta.get("elf"))
+    if elf_name:
+        model["metadata"]["elf"] = str(elf_name)
+
+    src_viewbox = src_meta.get("viewBox") if isinstance(src_meta.get("viewBox"), dict) else {}
+    vb_w = _to_float(src_viewbox.get("width"), DEFAULT_VIEWBOX["width"])
+    vb_h = _to_float(src_viewbox.get("height"), DEFAULT_VIEWBOX["height"])
+    model["metadata"]["viewBox"] = {"width": max(100.0, vb_w), "height": max(100.0, vb_h)}
+
+    bg = str(src_meta.get("background") or DEFAULT_BACKGROUND)
+    model["metadata"]["background"] = bg
+
+    raw_palette = src_meta.get("colorPalette")
+    if isinstance(raw_palette, list):
+        model["metadata"]["colorPalette"] = [str(c) for c in raw_palette if str(c).strip()]
+
+    src_anchors = src.get("anchors") if isinstance(src.get("anchors"), dict) else {}
+    stops = _normalize_anchor_stops(src_anchors.get("stops"))
+    model["anchors"]["stops"] = stops
+    model["anchors"]["countPerEdge"] = max(2, _to_int(src_anchors.get("countPerEdge"), len(stops)))
+
+    raw_shapes = src.get("shapes")
+    if not isinstance(raw_shapes, list):
+        raw_shapes = []
+
+    raw_names: Dict[str, str] = {}
+    for idx, shape in enumerate(raw_shapes):
+        if not isinstance(shape, dict):
+            continue
+        sid = shape.get("id")
+        key = str(sid) if sid else f"idx:{idx}"
+        text = str(shape.get("text") or shape.get("label") or ("Container" if shape.get("kind") == "container" else "Node")).strip()
+        raw_names[key] = text
+
+    normalized_shapes: List[Dict[str, Any]] = []
+    used_ids: List[str] = []
+    id_to_text: Dict[str, str] = {}
+
+    for idx, raw_shape in enumerate(raw_shapes):
+        if not isinstance(raw_shape, dict):
+            continue
+        kind = str(raw_shape.get("kind") or "shape").strip().lower()
+        if kind != "container":
+            kind = "shape"
+
+        text = str(raw_shape.get("text") or raw_shape.get("label") or ("Container" if kind == "container" else "Node")).strip()
+        parent_raw = raw_shape.get("parentId")
+        parent_id = str(parent_raw).strip() if parent_raw else None
+        id_manual = bool(raw_shape.get("idManual", False))
+
+        raw_shape_id = raw_shape.get("id")
+        desired_id = sanitize_id(raw_shape_id) if str(raw_shape_id or "").strip() else ""
+        if not desired_id:
+            container_text = None
+            if parent_id:
+                container_text = raw_names.get(parent_id)
+            desired_id = derive_default_shape_id(text, container_text if kind != "container" else None)
+        elif not id_manual and kind != "container" and parent_id:
+            # Keep IDs deterministic when auto-managed by text + container.
+            container_text = raw_names.get(parent_id)
+            desired_id = derive_default_shape_id(text, container_text)
+
+        sid = _dedupe_id(desired_id, used_ids)
+        used_ids.append(sid)
+        id_to_text[sid] = text
+
+        fill_default, stroke_default = _shape_defaults(kind)
+        shape = {
+            "id": sid,
+            "idManual": id_manual,
+            "kind": kind,
+            "text": text,
+            "x": _to_float(raw_shape.get("x"), 60 + idx * 12),
+            "y": _to_float(raw_shape.get("y"), 60 + idx * 10),
+            "width": max(18.0, _to_float(raw_shape.get("width"), raw_shape.get("w", 120))),
+            "height": max(18.0, _to_float(raw_shape.get("height"), raw_shape.get("h", 56))),
+            "fill": str(raw_shape.get("fill") or fill_default),
+            "stroke": str(raw_shape.get("stroke") or stroke_default),
+            "textColor": str(raw_shape.get("textColor") or DEFAULT_TEXT_COLOR),
+            "rounded": bool(raw_shape.get("rounded", True)),
+            "z": _to_int(raw_shape.get("z"), idx),
+            "parentId": parent_id,
+        }
+        normalized_shapes.append(shape)
+
+    all_shape_ids = {s["id"] for s in normalized_shapes}
+    container_ids = {s["id"] for s in normalized_shapes if s["kind"] == "container"}
+    for shape in normalized_shapes:
+        parent_id = shape.get("parentId")
+        if not parent_id:
+            shape["parentId"] = None
+            continue
+        if parent_id not in all_shape_ids or parent_id not in container_ids or parent_id == shape["id"]:
+            shape["parentId"] = None
+
+    raw_arrows = src.get("arrows")
+    if not isinstance(raw_arrows, list):
+        raw_arrows = []
+
+    normalized_arrows: List[Dict[str, Any]] = []
+    used_arrow_ids: List[str] = []
+    for idx, raw_arrow in enumerate(raw_arrows):
+        if not isinstance(raw_arrow, dict):
+            continue
+        from_spec = raw_arrow.get("from") if isinstance(raw_arrow.get("from"), dict) else {}
+        to_spec = raw_arrow.get("to") if isinstance(raw_arrow.get("to"), dict) else {}
+        from_shape = str(from_spec.get("shapeId") or "")
+        to_shape = str(to_spec.get("shapeId") or "")
+        if from_shape not in all_shape_ids or to_shape not in all_shape_ids:
+            continue
+
+        raw_arrow_id = raw_arrow.get("id")
+        desired_id = sanitize_id(raw_arrow_id) if str(raw_arrow_id or "").strip() else sanitize_id(f"arrow_{idx + 1}")
+        aid = _dedupe_id(desired_id, used_arrow_ids)
+        used_arrow_ids.append(aid)
+
+        anchor_count = max(2, model["anchors"]["countPerEdge"])
+        raw_from_anchor = _to_int(from_spec.get("anchorIndex"), anchor_count // 2)
+        raw_to_anchor = _to_int(to_spec.get("anchorIndex"), anchor_count // 2)
+
+        waypoints = []
+        for p in raw_arrow.get("waypoints") or []:
+            if not isinstance(p, dict):
+                continue
+            waypoints.append({"x": _to_float(p.get("x"), 0), "y": _to_float(p.get("y"), 0)})
+
+        control_points = []
+        for p in raw_arrow.get("controlPoints") or []:
+            if not isinstance(p, dict):
+                continue
+            control_points.append({"x": _to_float(p.get("x"), 0), "y": _to_float(p.get("y"), 0)})
+        if len(control_points) > 2:
+            control_points = control_points[:2]
+
+        arrow = {
+            "id": aid,
+            "from": {
+                "shapeId": from_shape,
+                "side": _as_side(from_spec.get("side"), "right"),
+                "anchorIndex": max(0, min(anchor_count - 1, raw_from_anchor)),
+            },
+            "to": {
+                "shapeId": to_shape,
+                "side": _as_side(to_spec.get("side"), "left"),
+                "anchorIndex": max(0, min(anchor_count - 1, raw_to_anchor)),
+            },
+            "lineStyle": _as_line_style(raw_arrow.get("lineStyle")),
+            "routing": _as_routing(raw_arrow.get("routing")),
+            "arrowHead": bool(raw_arrow.get("arrowHead", True)),
+            "stroke": str(raw_arrow.get("stroke") or DEFAULT_ARROW_STROKE),
+            "width": max(0.5, _to_float(raw_arrow.get("width"), DEFAULT_ARROW_WIDTH)),
+            "label": str(raw_arrow.get("label") or ""),
+            "waypoints": waypoints,
+            "controlPoints": control_points,
+        }
+        normalized_arrows.append(arrow)
+
+    normalized_shapes.sort(key=lambda s: (s.get("z", 0), s["kind"] != "container", s["id"]))
+    normalized_arrows.sort(key=lambda a: a["id"])
+
+    model["shapes"] = normalized_shapes
+    model["arrows"] = normalized_arrows
+    return model

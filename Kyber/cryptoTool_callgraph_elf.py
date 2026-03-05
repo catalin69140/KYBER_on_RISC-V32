@@ -6,6 +6,17 @@ from pathlib import Path
 import re
 import json
 
+try:
+    from diagram_editor.storage import (
+        diagram_store_path_for_elf,
+        ensure_generated_renderer_for_elf,
+        load_generated_renderer_source_for_elf,
+    )
+except Exception:
+    diagram_store_path_for_elf = None
+    ensure_generated_renderer_for_elf = None
+    load_generated_renderer_source_for_elf = None
+
 
 def run_cmd(cmd):
     return subprocess.run(
@@ -420,6 +431,18 @@ def write_html_animation(
 
     elf_name = Path(elf).name
     html_path = Path(html_path)
+    generated_primary_renderer_js = None
+    generated_primary_renderer_path = None
+
+    if ensure_generated_renderer_for_elf and diagram_store_path_for_elf:
+        try:
+            diagram_store = diagram_store_path_for_elf(elf_name)
+            if diagram_store.exists():
+                generated_primary_renderer_path, _, generated_primary_renderer_js = ensure_generated_renderer_for_elf(elf_name)
+            elif load_generated_renderer_source_for_elf:
+                generated_primary_renderer_js = load_generated_renderer_source_for_elf(elf_name)
+        except Exception as diagram_err:
+            print(f"[warn] Could not load generated primary renderer for {elf_name}: {diagram_err}")
 
     # Map symbol -> "relative/path/file.c:line" for copyable paths
     proj_root_resolved = project_root.resolve()
@@ -2382,6 +2405,47 @@ def write_html_animation(
         return g;
     }
 
+    function addGeneratedRefShape(svg, spec) {
+        const shapeKind = spec.kind || "shape";
+        const g = createSvgEl("g", {
+            class: `ref-node generated-ref-node kind-${shapeKind}`,
+            "data-node-id": spec.id
+        });
+        const isContainer = shapeKind === "container";
+        const fill = spec.fill || (isContainer ? "#0d172a" : "#1c2f4f");
+        const stroke = spec.stroke || (isContainer ? "#eef3ff" : "#80b6ff");
+        const rounded = (spec.rounded === false) ? 0 : 7;
+
+        const rect = createSvgEl("rect", {
+            x: spec.x, y: spec.y, width: spec.w, height: spec.h
+        });
+        rect.setAttribute("fill", fill);
+        rect.setAttribute("stroke", stroke);
+        rect.setAttribute("stroke-width", isContainer ? "1.8" : "1.5");
+        rect.setAttribute("rx", String(rounded));
+        rect.setAttribute("ry", String(rounded));
+        if (isContainer) rect.setAttribute("stroke-dasharray", "8 4");
+        rect.setAttribute("data-base-stroke", stroke);
+        rect.setAttribute("data-base-stroke-width", isContainer ? "1.8" : "1.5");
+        g.appendChild(rect);
+
+        const text = createSvgEl("text", {
+            x: isContainer ? (spec.x + 10) : (spec.x + spec.w / 2),
+            y: isContainer ? (spec.y + 14) : (spec.y + spec.h / 2)
+        });
+        text.textContent = spec.label || spec.id;
+        text.setAttribute("fill", spec.textColor || "#f4f7ff");
+        text.setAttribute("font-size", isContainer ? "13" : "13");
+        text.setAttribute("text-anchor", isContainer ? "start" : "middle");
+        text.setAttribute("dominant-baseline", "middle");
+        text.setAttribute("pointer-events", "none");
+        g.appendChild(text);
+
+        svg.appendChild(g);
+        registerRefInteractiveNode(g, spec.id, spec.x, spec.y, spec.w, spec.h);
+        return g;
+    }
+
     function addRefArrow(svg, from, to, opts = {}) {
         const path = createSvgEl("path", {
             d: opts.d || `M ${from.x} ${from.y} L ${to.x} ${to.y}`,
@@ -2389,7 +2453,22 @@ def write_html_animation(
         });
         if (opts.color) path.setAttribute("stroke", opts.color);
         if (opts.width) path.setAttribute("stroke-width", String(opts.width));
+        if (opts.arrowHead === false) path.setAttribute("marker-end", "none");
         svg.appendChild(path);
+
+        if (opts.label) {
+            const t = createSvgEl("text", {
+                x: (from.x + to.x) / 2,
+                y: (from.y + to.y) / 2 - 8,
+                fill: "#f4f7ff",
+                "font-size": "11",
+                "text-anchor": "middle",
+                "dominant-baseline": "middle",
+                "pointer-events": "none"
+            });
+            t.textContent = opts.label;
+            svg.appendChild(t);
+        }
         return path;
     }
 
@@ -2875,28 +2954,54 @@ def write_html_animation(
         const a = refAnchor(fromSpec.id, fromSpec.side || "right", fromSpec.dx || 0, fromSpec.dy || 0);
         const b = refAnchor(toSpec.id, toSpec.side || "left", toSpec.dx || 0, toSpec.dy || 0);
         try {
-            let polyline = buildRefConnectorPolyline(a, b, fromSide, toSide, opts || {});
-            if (REF_ENABLE_OBSTACLE_AVOID) {
-                polyline = refAvoidObstaclesInPolyline(polyline, [fromSpec.id, toSpec.id], {
-                    obstaclePad: (opts.obstaclePad != null) ? opts.obstaclePad : 6,
-                    lanePad: (opts.lanePad != null) ? opts.lanePad : 12
-                });
-            }
+            const impliedRouting = (opts.mode === "curve") ? "curved" : opts.mode;
+            const routingRaw = String(opts.routing || impliedRouting || "angled").toLowerCase();
+            const routing = (routingRaw === "straight" || routingRaw === "curved" || routingRaw === "angled")
+                ? routingRaw
+                : "angled";
 
             let pathD = "";
-            if (REF_ENABLE_LINE_BRIDGES) {
-                const bridgeBuilt = buildRefPathWithBridges(polyline, opts.bridgeSeed || 0);
-                primaryRefDrawnSegments.push(...bridgeBuilt.segments);
-                pathD = bridgeBuilt.d;
+            if (routing === "straight") {
+                pathD = `M ${a.x} ${a.y} L ${b.x} ${b.y}`;
+            } else if (routing === "curved") {
+                const defaultBend = Math.max(28, Math.min(140, Math.hypot(b.x - a.x, b.y - a.y) * 0.28));
+                const c1 = opts.c1 || (
+                    fromSide === "left" ? { x: a.x - defaultBend, y: a.y } :
+                    fromSide === "right" ? { x: a.x + defaultBend, y: a.y } :
+                    fromSide === "top" ? { x: a.x, y: a.y - defaultBend } :
+                    { x: a.x, y: a.y + defaultBend }
+                );
+                const c2 = opts.c2 || (
+                    toSide === "left" ? { x: b.x - defaultBend, y: b.y } :
+                    toSide === "right" ? { x: b.x + defaultBend, y: b.y } :
+                    toSide === "top" ? { x: b.x, y: b.y - defaultBend } :
+                    { x: b.x, y: b.y + defaultBend }
+                );
+                pathD = `M ${a.x} ${a.y} C ${c1.x} ${c1.y} ${c2.x} ${c2.y} ${b.x} ${b.y}`;
             } else {
-                pathD = refPolylineToPath(polyline);
+                let polyline = buildRefConnectorPolyline(a, b, fromSide, toSide, opts || {});
+                if (REF_ENABLE_OBSTACLE_AVOID) {
+                    polyline = refAvoidObstaclesInPolyline(polyline, [fromSpec.id, toSpec.id], {
+                        obstaclePad: (opts.obstaclePad != null) ? opts.obstaclePad : 6,
+                        lanePad: (opts.lanePad != null) ? opts.lanePad : 12
+                    });
+                }
+                if (REF_ENABLE_LINE_BRIDGES) {
+                    const bridgeBuilt = buildRefPathWithBridges(polyline, opts.bridgeSeed || 0);
+                    primaryRefDrawnSegments.push(...bridgeBuilt.segments);
+                    pathD = bridgeBuilt.d;
+                } else {
+                    pathD = refPolylineToPath(polyline);
+                }
             }
 
             return addRefArrow(svg, a, b, {
                 d: pathD,
-                dashed: false,
+                dashed: !!opts.dashed,
                 color: opts.color,
-                width: opts.width
+                width: opts.width,
+                arrowHead: (opts.arrowHead !== false),
+                label: opts.label
             });
         } catch (e) {
             console.warn("Connector routing fallback:", fromSpec.id, "->", toSpec.id, e);
@@ -2906,9 +3011,11 @@ def write_html_animation(
                 : `M ${a.x} ${a.y} L ${b.x} ${a.y} L ${b.x} ${b.y}`;
             return addRefArrow(svg, a, b, {
                 d,
-                dashed: false,
+                dashed: !!opts.dashed,
                 color: opts.color,
-                width: opts.width
+                width: opts.width,
+                arrowHead: (opts.arrowHead !== false),
+                label: opts.label
             });
         }
     }
@@ -3269,10 +3376,18 @@ def write_html_animation(
         }
     }
         """)
+        if generated_primary_renderer_js:
+            f.write("\n/* Generated primary renderer override */\n")
+            f.write(generated_primary_renderer_js)
+            f.write("\n")
         f.write("</script>\n")
         f.write("</body>\n</html>\n")
 
     print(f"Wrote HTML visualization to {html_path}")
+    if generated_primary_renderer_path:
+        print(f"Loaded generated primary renderer from {generated_primary_renderer_path}")
+    elif generated_primary_renderer_js:
+        print("Loaded generated primary renderer from existing generated file.")
     print("Open it in a browser to view the primary KeyGen reference diagram with tab-specific steps.")
 
 

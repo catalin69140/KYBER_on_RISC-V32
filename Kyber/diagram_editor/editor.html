@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kyber Primary Diagram Editor</title>
+  <style>
+    :root {
+      --bg: #0b1220;
+      --panel: #121c2f;
+      --panel-border: #2a3a5a;
+      --text: #eef3ff;
+      --muted: #9cb3dd;
+      --accent: #80b6ff;
+      --danger: #ff8f86;
+      --ok: #43d17e;
+      --input-bg: #0e1728;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      font-family: Georgia, "Times New Roman", serif;
+      background: radial-gradient(circle at 25% 15%, #182947 0%, var(--bg) 55%);
+      color: var(--text);
+    }
+
+    #app {
+      display: flex;
+      flex-direction: column;
+      width: 100%;
+      height: 100%;
+      min-height: 0;
+    }
+
+    #topbar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--panel-border);
+      background: rgba(13, 23, 42, 0.95);
+      backdrop-filter: blur(2px);
+      flex-wrap: wrap;
+    }
+
+    #topbar input[type="text"] {
+      min-width: 320px;
+    }
+
+    #main {
+      flex: 1;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 220px 1fr 330px;
+      gap: 10px;
+      padding: 10px;
+    }
+
+    .panel {
+      background: linear-gradient(180deg, rgba(18, 28, 47, 0.96), rgba(10, 18, 32, 0.98));
+      border: 1px solid var(--panel-border);
+      border-radius: 12px;
+      padding: 10px;
+      min-height: 0;
+    }
+
+    #toolbar {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      overflow: auto;
+    }
+
+    #canvas-shell {
+      position: relative;
+      overflow: hidden;
+      padding: 0;
+      background: #08101d;
+    }
+
+    #canvas-toolbar {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 10;
+      display: flex;
+      gap: 6px;
+      background: rgba(4, 10, 20, 0.75);
+      border: 1px solid #2c446c;
+      border-radius: 8px;
+      padding: 6px;
+    }
+
+    #canvas-scroll {
+      width: 100%;
+      height: 100%;
+      overflow: auto;
+      padding: 18px;
+    }
+
+    #diagram-canvas {
+      display: block;
+      background: #0b1220;
+      border: 1px solid #1f3556;
+      border-radius: 10px;
+      touch-action: none;
+      user-select: none;
+      min-width: 980px;
+      min-height: 420px;
+    }
+
+    #inspector {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      overflow: auto;
+    }
+
+    h2, h3 {
+      margin: 0 0 8px;
+      font-size: 16px;
+      letter-spacing: 0.2px;
+    }
+
+    h3 {
+      font-size: 14px;
+      margin-top: 8px;
+      color: var(--muted);
+    }
+
+    .row {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .grid2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    label {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+
+    input[type="text"],
+    input[type="number"],
+    select {
+      width: 100%;
+      background: var(--input-bg);
+      border: 1px solid #2c446c;
+      color: var(--text);
+      border-radius: 8px;
+      padding: 7px 8px;
+      font-family: inherit;
+      font-size: 13px;
+    }
+
+    input[type="checkbox"] {
+      transform: translateY(1px);
+    }
+
+    input[type="color"] {
+      width: 100%;
+      height: 34px;
+      border-radius: 8px;
+      border: 1px solid #2c446c;
+      background: var(--input-bg);
+      padding: 2px;
+    }
+
+    button {
+      border: 1px solid #2c446c;
+      color: var(--text);
+      background: linear-gradient(180deg, #1a2b47, #11203a);
+      border-radius: 8px;
+      padding: 7px 10px;
+      font-family: inherit;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    button:hover {
+      border-color: var(--accent);
+    }
+
+    button.active {
+      border-color: var(--ok);
+      box-shadow: 0 0 0 1px rgba(67, 209, 126, 0.45) inset;
+    }
+
+    button.danger {
+      border-color: #91403a;
+      background: linear-gradient(180deg, #592a25, #3f1a17);
+      color: #ffd6d1;
+    }
+
+    .hint {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .palette {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .swatch {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      border: 2px solid rgba(255, 255, 255, 0.25);
+      cursor: pointer;
+    }
+
+    .swatch.active {
+      border-color: #fff;
+      box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.75);
+    }
+
+    #status {
+      border-top: 1px solid var(--panel-border);
+      min-height: 36px;
+      padding: 8px 12px;
+      color: var(--muted);
+      font-size: 12px;
+      background: rgba(11, 18, 32, 0.92);
+    }
+
+    .empty-state {
+      border: 1px dashed #3b5787;
+      border-radius: 8px;
+      padding: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid #3b5787;
+      font-size: 11px;
+      color: #d4e4ff;
+      background: rgba(26, 45, 76, 0.85);
+      margin-right: 6px;
+      margin-bottom: 6px;
+    }
+
+    @media (max-width: 1320px) {
+      #main {
+        grid-template-columns: 190px 1fr 300px;
+      }
+    }
+
+    @media (max-width: 1080px) {
+      #main {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto minmax(380px, 1fr) auto;
+      }
+
+      #toolbar, #inspector {
+        max-height: 220px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="topbar">
+      <strong>Kyber Primary Diagram Editor</strong>
+      <label for="elf-input" style="margin:0 0 0 10px;color:#c9dbff;">ELF key</label>
+      <input id="elf-input" type="text" placeholder="crypto_kem_kyber768_kyber768r1_hashing.elf" />
+      <button id="load-btn">Load</button>
+      <button id="save-btn">Save Store</button>
+      <button id="generate-btn">Generate renderPrimaryReferenceDiagram()</button>
+    </div>
+
+    <div id="main">
+      <aside id="toolbar" class="panel">
+        <h2>Tools</h2>
+        <button id="tool-select" class="active">Select / Move</button>
+        <button id="tool-connect">Connect Arrows</button>
+        <button id="add-shape-btn">Add Rectangle</button>
+        <button id="add-container-btn">Add Container</button>
+        <button id="delete-btn" class="danger">Delete Selected</button>
+        <div class="hint">
+          Drag to move shapes.
+          Resize using corner handles.
+          In connect mode: click source shape, then target shape.
+        </div>
+      </aside>
+
+      <section id="canvas-shell" class="panel">
+        <div id="canvas-toolbar">
+          <button id="fit-btn">Fit</button>
+          <span id="selection-chip" class="chip">Selection: none</span>
+        </div>
+        <div id="canvas-scroll">
+          <svg id="diagram-canvas" xmlns="http://www.w3.org/2000/svg"></svg>
+        </div>
+      </section>
+
+      <aside id="inspector" class="panel">
+        <h2>Inspector</h2>
+        <div id="inspector-content" class="empty-state">Select a shape or arrow to edit properties.</div>
+      </aside>
+    </div>
+
+    <div id="status">Ready.</div>
+  </div>
+
+  <script src="/editor.js"></script>
+</body>
+</html>
