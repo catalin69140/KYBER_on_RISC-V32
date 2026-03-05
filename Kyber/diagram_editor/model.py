@@ -4,10 +4,10 @@ import copy
 import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-MODEL_VERSION = 1
-DEFAULT_VIEWBOX = {"width": 1980, "height": 410}
+MODEL_VERSION = 2
+DEFAULT_VIEWBOX = {"width": 1980.0, "height": 410.0}
 DEFAULT_BACKGROUND = "#0b1220"
-DEFAULT_ANCHOR_STOPS = [0.1, 0.3, 0.5, 0.7, 0.9]
+DEFAULT_ANCHOR_STOPS = [0.0, 0.25, 0.5, 0.75, 1.0]
 
 # Existing primary diagram role colors from CryptoTool UI.
 DEFAULT_COLOR_PALETTE = [
@@ -32,9 +32,22 @@ DEFAULT_ARROW_WIDTH = 1.7
 ID_BAD_CHARS = re.compile(r"[^a-zA-Z0-9_]+")
 ID_MULTI_UNDERSCORE = re.compile(r"_+")
 
+VALID_SHAPE_KINDS = {
+    "square",
+    "triangle",
+    "circle",
+    "container",
+    "header_container",
+    "dk_group",
+    "ekpke_group",
+}
+VALID_CONTAINER_KINDS = {"container", "header_container"}
 VALID_SIDES = {"left", "right", "top", "bottom"}
 VALID_ROUTINGS = {"straight", "curved", "angled"}
 VALID_LINE_STYLES = {"solid", "dashed"}
+VALID_BORDER_STYLES = {"solid", "dashed"}
+VALID_TEXT_ALIGN = {"left", "center", "right"}
+VALID_CONNECTION_TYPES = {"arrow", "bi", "line"}
 
 
 def sanitize_id(value: Any) -> str:
@@ -53,6 +66,18 @@ def derive_default_shape_id(text: str, container_text: Optional[str] = None) -> 
         if container:
             return f"{container}_{base}"
     return base
+
+
+def _default_shape_text(kind: str) -> str:
+    if kind == "container":
+        return "Container"
+    if kind == "header_container":
+        return "Header"
+    if kind == "dk_group":
+        return "dk"
+    if kind == "ekpke_group":
+        return "ekPKE"
+    return "Node"
 
 
 def default_model(elf_name: str = "") -> Dict[str, Any]:
@@ -94,6 +119,15 @@ def _as_side(value: Any, fallback: str) -> str:
     return fallback
 
 
+def _as_shape_kind(value: Any) -> str:
+    kind = str(value or "").strip().lower()
+    if kind == "shape":
+        return "square"
+    if kind in VALID_SHAPE_KINDS:
+        return kind
+    return "square"
+
+
 def _as_routing(value: Any) -> str:
     routing = str(value or "").strip().lower()
     if routing in VALID_ROUTINGS:
@@ -108,8 +142,34 @@ def _as_line_style(value: Any) -> str:
     return "solid"
 
 
+def _as_border_style(value: Any) -> str:
+    style = str(value or "").strip().lower()
+    if style in VALID_BORDER_STYLES:
+        return style
+    return "solid"
+
+
+def _as_text_align(value: Any) -> str:
+    align = str(value or "").strip().lower()
+    if align in VALID_TEXT_ALIGN:
+        return align
+    return "center"
+
+
+def _as_connection_type(value: Any, fallback_arrow_head: Any = None) -> str:
+    conn = str(value or "").strip().lower()
+    if conn in VALID_CONNECTION_TYPES:
+        return conn
+    # Legacy compatibility:
+    # - arrowHead=false implies line
+    # - otherwise default to single arrow.
+    if fallback_arrow_head is False:
+        return "line"
+    return "arrow"
+
+
 def _shape_defaults(kind: str) -> Tuple[str, str]:
-    if kind == "container":
+    if kind in VALID_CONTAINER_KINDS or kind in {"dk_group", "ekpke_group"}:
         return DEFAULT_CONTAINER_FILL, DEFAULT_CONTAINER_STROKE
     return DEFAULT_SHAPE_FILL, DEFAULT_SHAPE_STROKE
 
@@ -136,7 +196,10 @@ def _normalize_anchor_stops(raw_stops: Any) -> List[float]:
         out.append(f)
     if not out:
         return list(DEFAULT_ANCHOR_STOPS)
-    return sorted(out)
+    unique = sorted(set(out))
+    if len(unique) < 2:
+        return list(DEFAULT_ANCHOR_STOPS)
+    return unique
 
 
 def normalize_model(raw_model: Any, elf_name: str = "") -> Dict[str, Any]:
@@ -178,21 +241,19 @@ def normalize_model(raw_model: Any, elf_name: str = "") -> Dict[str, Any]:
             continue
         sid = shape.get("id")
         key = str(sid) if sid else f"idx:{idx}"
-        text = str(shape.get("text") or shape.get("label") or ("Container" if shape.get("kind") == "container" else "Node")).strip()
+        kind = _as_shape_kind(shape.get("kind"))
+        text = str(shape.get("text") or shape.get("label") or _default_shape_text(kind)).strip()
         raw_names[key] = text
 
     normalized_shapes: List[Dict[str, Any]] = []
     used_ids: List[str] = []
-    id_to_text: Dict[str, str] = {}
 
     for idx, raw_shape in enumerate(raw_shapes):
         if not isinstance(raw_shape, dict):
             continue
-        kind = str(raw_shape.get("kind") or "shape").strip().lower()
-        if kind != "container":
-            kind = "shape"
 
-        text = str(raw_shape.get("text") or raw_shape.get("label") or ("Container" if kind == "container" else "Node")).strip()
+        kind = _as_shape_kind(raw_shape.get("kind"))
+        text = str(raw_shape.get("text") or raw_shape.get("label") or _default_shape_text(kind)).strip()
         parent_raw = raw_shape.get("parentId")
         parent_id = str(parent_raw).strip() if parent_raw else None
         id_manual = bool(raw_shape.get("idManual", False))
@@ -201,19 +262,25 @@ def normalize_model(raw_model: Any, elf_name: str = "") -> Dict[str, Any]:
         desired_id = sanitize_id(raw_shape_id) if str(raw_shape_id or "").strip() else ""
         if not desired_id:
             container_text = None
-            if parent_id:
+            if parent_id and kind not in VALID_CONTAINER_KINDS:
                 container_text = raw_names.get(parent_id)
-            desired_id = derive_default_shape_id(text, container_text if kind != "container" else None)
-        elif not id_manual and kind != "container" and parent_id:
+            desired_id = derive_default_shape_id(text, container_text)
+        elif not id_manual and kind not in VALID_CONTAINER_KINDS and parent_id:
             # Keep IDs deterministic when auto-managed by text + container.
             container_text = raw_names.get(parent_id)
             desired_id = derive_default_shape_id(text, container_text)
 
         sid = _dedupe_id(desired_id, used_ids)
         used_ids.append(sid)
-        id_to_text[sid] = text
 
         fill_default, stroke_default = _shape_defaults(kind)
+        width = max(18.0, _to_float(raw_shape.get("width"), raw_shape.get("w", 120)))
+        height = max(18.0, _to_float(raw_shape.get("height"), raw_shape.get("h", 56)))
+        if kind in {"square", "circle"}:
+            side = max(width, height)
+            width = side
+            height = side
+
         shape = {
             "id": sid,
             "idManual": id_manual,
@@ -221,19 +288,21 @@ def normalize_model(raw_model: Any, elf_name: str = "") -> Dict[str, Any]:
             "text": text,
             "x": _to_float(raw_shape.get("x"), 60 + idx * 12),
             "y": _to_float(raw_shape.get("y"), 60 + idx * 10),
-            "width": max(18.0, _to_float(raw_shape.get("width"), raw_shape.get("w", 120))),
-            "height": max(18.0, _to_float(raw_shape.get("height"), raw_shape.get("h", 56))),
+            "width": width,
+            "height": height,
             "fill": str(raw_shape.get("fill") or fill_default),
             "stroke": str(raw_shape.get("stroke") or stroke_default),
+            "borderStyle": _as_border_style(raw_shape.get("borderStyle")),
             "textColor": str(raw_shape.get("textColor") or DEFAULT_TEXT_COLOR),
             "rounded": bool(raw_shape.get("rounded", True)),
+            "textAlign": _as_text_align(raw_shape.get("textAlign")),
             "z": _to_int(raw_shape.get("z"), idx),
             "parentId": parent_id,
         }
         normalized_shapes.append(shape)
 
     all_shape_ids = {s["id"] for s in normalized_shapes}
-    container_ids = {s["id"] for s in normalized_shapes if s["kind"] == "container"}
+    container_ids = {s["id"] for s in normalized_shapes if s["kind"] in VALID_CONTAINER_KINDS}
     for shape in normalized_shapes:
         parent_id = shape.get("parentId")
         if not parent_id:
@@ -295,16 +364,17 @@ def normalize_model(raw_model: Any, elf_name: str = "") -> Dict[str, Any]:
             },
             "lineStyle": _as_line_style(raw_arrow.get("lineStyle")),
             "routing": _as_routing(raw_arrow.get("routing")),
-            "arrowHead": bool(raw_arrow.get("arrowHead", True)),
+            "connectionType": _as_connection_type(raw_arrow.get("connectionType"), raw_arrow.get("arrowHead")),
             "stroke": str(raw_arrow.get("stroke") or DEFAULT_ARROW_STROKE),
             "width": max(0.5, _to_float(raw_arrow.get("width"), DEFAULT_ARROW_WIDTH)),
-            "label": str(raw_arrow.get("label") or ""),
             "waypoints": waypoints,
             "controlPoints": control_points,
         }
         normalized_arrows.append(arrow)
 
-    normalized_shapes.sort(key=lambda s: (s.get("z", 0), s["kind"] != "container", s["id"]))
+    normalized_shapes.sort(
+        key=lambda s: (s.get("z", 0), s["kind"] not in VALID_CONTAINER_KINDS, s["id"])
+    )
     normalized_arrows.sort(key=lambda a: a["id"])
 
     model["shapes"] = normalized_shapes

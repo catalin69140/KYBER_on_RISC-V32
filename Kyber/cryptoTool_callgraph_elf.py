@@ -734,22 +734,17 @@ def write_html_animation(
 
             .ref-dk-group .outer,
             .ref-ekpke-group .outer {
-                fill: none;
-                stroke: #ff8f86;
-                stroke-width: 1.5;
                 rx: 6;
                 ry: 6;
             }
 
             .ref-dk-group .head-fill,
             .ref-ekpke-group .head-fill {
-                fill: #542f2f;
                 stroke: none;
             }
 
             .ref-dk-group .body-fill,
             .ref-ekpke-group .body-fill {
-                fill: #131f37;
                 stroke: none;
             }
 
@@ -757,7 +752,6 @@ def write_html_animation(
             .ref-ekpke-group .header {
                 font-family: Georgia, "Times New Roman", serif;
                 font-size: 14px;
-                fill: #f4f7ff;
                 text-anchor: middle;
                 dominant-baseline: middle;
                 font-style: italic;
@@ -766,7 +760,6 @@ def write_html_animation(
 
             .ref-dk-group .cell-sep,
             .ref-ekpke-group .cell-sep {
-                stroke: #f0f4ff;
                 stroke-width: 1.1;
                 opacity: 0.85;
             }
@@ -775,7 +768,6 @@ def write_html_animation(
             .ref-ekpke-group .cell-text {
                 font-family: Georgia, "Times New Roman", serif;
                 font-size: 12px;
-                fill: #f4f7ff;
                 text-anchor: middle;
                 dominant-baseline: middle;
                 pointer-events: none;
@@ -785,7 +777,6 @@ def write_html_animation(
                 stroke: #e8efff;
                 stroke-width: 1.7;
                 fill: none;
-                marker-end: url(#ref-arrow-head);
             }
 
             .ref-arrow-dashed {
@@ -2350,6 +2341,28 @@ def write_html_animation(
         return t;
     }
 
+    function refTextAnchorForAlign(align) {
+        if (align === "left") return "start";
+        if (align === "right") return "end";
+        return "middle";
+    }
+
+    function refTextXForAlign(spec, align, pad) {
+        if (align === "left") return spec.x + pad;
+        if (align === "right") return spec.x + spec.w - pad;
+        return spec.x + spec.w / 2;
+    }
+
+    function refDarkenHex(hex, amount) {
+        const raw = String(hex || "").replace("#", "");
+        if (!/^[0-9a-fA-F]{6}$/.test(raw)) return "#1a2a45";
+        const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+        const r = clamp(parseInt(raw.slice(0, 2), 16) + amount, 0, 255);
+        const g = clamp(parseInt(raw.slice(2, 4), 16) + amount, 0, 255);
+        const b = clamp(parseInt(raw.slice(4, 6), 16) + amount, 0, 255);
+        return "#" + [r, g, b].map(v => v.toString(16).padStart(2, "0")).join("");
+    }
+
     function registerRefInteractiveNode(g, id, x, y, w, h) {
         primaryRefNodeEls[id] = g;
         primaryRefNodeBoxes[id] = { x, y, w, h };
@@ -2406,39 +2419,116 @@ def write_html_animation(
     }
 
     function addGeneratedRefShape(svg, spec) {
-        const shapeKind = spec.kind || "shape";
+        const shapeKindRaw = String(spec.kind || "square");
+        const shapeKind = shapeKindRaw === "shape" ? "square" : shapeKindRaw;
+        if (shapeKind === "dk_group") return addRefDkGroup(svg, spec);
+        if (shapeKind === "ekpke_group") return addRefEkPkeGroup(svg, spec);
+
         const g = createSvgEl("g", {
             class: `ref-node generated-ref-node kind-${shapeKind}`,
             "data-node-id": spec.id
         });
-        const isContainer = shapeKind === "container";
+        const isContainer = (shapeKind === "container" || shapeKind === "header_container");
         const fill = spec.fill || (isContainer ? "#0d172a" : "#1c2f4f");
         const stroke = spec.stroke || (isContainer ? "#eef3ff" : "#80b6ff");
         const rounded = (spec.rounded === false) ? 0 : 7;
+        const borderStyle = String(spec.borderStyle || "solid").toLowerCase() === "dashed" ? "dashed" : "solid";
+        const dash = borderStyle === "dashed" ? "7 4" : "";
 
-        const rect = createSvgEl("rect", {
-            x: spec.x, y: spec.y, width: spec.w, height: spec.h
-        });
-        rect.setAttribute("fill", fill);
-        rect.setAttribute("stroke", stroke);
-        rect.setAttribute("stroke-width", isContainer ? "1.8" : "1.5");
-        rect.setAttribute("rx", String(rounded));
-        rect.setAttribute("ry", String(rounded));
-        if (isContainer) rect.setAttribute("stroke-dasharray", "8 4");
-        rect.setAttribute("data-base-stroke", stroke);
-        rect.setAttribute("data-base-stroke-width", isContainer ? "1.8" : "1.5");
-        g.appendChild(rect);
+        if (shapeKind === "triangle") {
+            const points = [
+                `${spec.x + spec.w / 2},${spec.y}`,
+                `${spec.x + spec.w},${spec.y + spec.h}`,
+                `${spec.x},${spec.y + spec.h}`
+            ].join(" ");
+            const polygon = createSvgEl("polygon", { points });
+            polygon.setAttribute("fill", fill);
+            polygon.setAttribute("stroke", stroke);
+            polygon.setAttribute("stroke-width", "1.5");
+            if (dash) polygon.setAttribute("stroke-dasharray", dash);
+            polygon.setAttribute("data-base-stroke", stroke);
+            polygon.setAttribute("data-base-stroke-width", "1.5");
+            g.appendChild(polygon);
+        } else if (shapeKind === "circle") {
+            const ellipse = createSvgEl("ellipse", {
+                cx: spec.x + spec.w / 2,
+                cy: spec.y + spec.h / 2,
+                rx: spec.w / 2,
+                ry: spec.h / 2
+            });
+            ellipse.setAttribute("fill", fill);
+            ellipse.setAttribute("stroke", stroke);
+            ellipse.setAttribute("stroke-width", "1.5");
+            if (dash) ellipse.setAttribute("stroke-dasharray", dash);
+            ellipse.setAttribute("data-base-stroke", stroke);
+            ellipse.setAttribute("data-base-stroke-width", "1.5");
+            g.appendChild(ellipse);
+        } else if (shapeKind === "header_container") {
+            const headerH = Math.max(18, Math.min(36, Math.round(spec.h * 0.22)));
+            const rect = createSvgEl("rect", {
+                x: spec.x, y: spec.y, width: spec.w, height: spec.h,
+                rx: rounded, ry: rounded
+            });
+            rect.setAttribute("fill", fill);
+            rect.setAttribute("stroke", stroke);
+            rect.setAttribute("stroke-width", "1.8");
+            if (dash) rect.setAttribute("stroke-dasharray", dash);
+            rect.setAttribute("data-base-stroke", stroke);
+            rect.setAttribute("data-base-stroke-width", "1.8");
+            g.appendChild(rect);
+            g.appendChild(createSvgEl("rect", {
+                x: spec.x + 1,
+                y: spec.y + 1,
+                width: Math.max(1, spec.w - 2),
+                height: Math.max(1, headerH - 1),
+                fill: refDarkenHex(fill, -16),
+                stroke: "none",
+                rx: Math.max(0, rounded - 1),
+                ry: Math.max(0, rounded - 1)
+            }));
+            const sep = createSvgEl("line", {
+                x1: spec.x,
+                y1: spec.y + headerH,
+                x2: spec.x + spec.w,
+                y2: spec.y + headerH
+            });
+            sep.setAttribute("stroke", stroke);
+            sep.setAttribute("stroke-width", "1.3");
+            if (dash) sep.setAttribute("stroke-dasharray", dash);
+            g.appendChild(sep);
+        } else {
+            const rect = createSvgEl("rect", {
+                x: spec.x, y: spec.y, width: spec.w, height: spec.h,
+                rx: rounded, ry: rounded
+            });
+            rect.setAttribute("fill", fill);
+            rect.setAttribute("stroke", stroke);
+            rect.setAttribute("stroke-width", isContainer ? "1.8" : "1.5");
+            if (dash) rect.setAttribute("stroke-dasharray", dash);
+            rect.setAttribute("data-base-stroke", stroke);
+            rect.setAttribute("data-base-stroke-width", isContainer ? "1.8" : "1.5");
+            g.appendChild(rect);
+        }
 
+        const textAlign = String(spec.textAlign || (isContainer ? "left" : "center")).toLowerCase();
+        const align = (textAlign === "left" || textAlign === "right") ? textAlign : "center";
+        const textAnchor = refTextAnchorForAlign(align);
+        const textX = refTextXForAlign(spec, align, 10);
+        let textY = spec.y + spec.h / 2;
+        if (shapeKind === "header_container") {
+            const headerH = Math.max(18, Math.min(36, Math.round(spec.h * 0.22)));
+            textY = spec.y + headerH / 2;
+        }
         const text = createSvgEl("text", {
-            x: isContainer ? (spec.x + 10) : (spec.x + spec.w / 2),
-            y: isContainer ? (spec.y + 14) : (spec.y + spec.h / 2)
+            x: textX,
+            y: textY,
+            fill: spec.textColor || "#f4f7ff",
+            "font-size": (isContainer ? "13" : "12.5"),
+            "text-anchor": textAnchor,
+            "dominant-baseline": "middle",
+            "pointer-events": "none"
         });
         text.textContent = spec.label || spec.id;
-        text.setAttribute("fill", spec.textColor || "#f4f7ff");
-        text.setAttribute("font-size", isContainer ? "13" : "13");
-        text.setAttribute("text-anchor", isContainer ? "start" : "middle");
-        text.setAttribute("dominant-baseline", "middle");
-        text.setAttribute("pointer-events", "none");
         g.appendChild(text);
 
         svg.appendChild(g);
@@ -2447,28 +2537,30 @@ def write_html_animation(
     }
 
     function addRefArrow(svg, from, to, opts = {}) {
+        const connectionTypeRaw = String(opts.connectionType || "").toLowerCase();
+        const connectionType = (
+            connectionTypeRaw === "arrow" ||
+            connectionTypeRaw === "bi" ||
+            connectionTypeRaw === "line"
+        ) ? connectionTypeRaw : "arrow";
+
         const path = createSvgEl("path", {
             d: opts.d || `M ${from.x} ${from.y} L ${to.x} ${to.y}`,
             class: "ref-arrow" + (opts.dashed ? " ref-arrow-dashed" : "")
         });
         if (opts.color) path.setAttribute("stroke", opts.color);
         if (opts.width) path.setAttribute("stroke-width", String(opts.width));
-        if (opts.arrowHead === false) path.setAttribute("marker-end", "none");
-        svg.appendChild(path);
-
-        if (opts.label) {
-            const t = createSvgEl("text", {
-                x: (from.x + to.x) / 2,
-                y: (from.y + to.y) / 2 - 8,
-                fill: "#f4f7ff",
-                "font-size": "11",
-                "text-anchor": "middle",
-                "dominant-baseline": "middle",
-                "pointer-events": "none"
-            });
-            t.textContent = opts.label;
-            svg.appendChild(t);
+        if (connectionType === "bi") {
+            path.setAttribute("marker-start", "url(#ref-arrow-head)");
+            path.setAttribute("marker-end", "url(#ref-arrow-head)");
+        } else if (connectionType === "line") {
+            path.setAttribute("marker-start", "none");
+            path.setAttribute("marker-end", "none");
+        } else {
+            path.setAttribute("marker-start", "none");
+            path.setAttribute("marker-end", "url(#ref-arrow-head)");
         }
+        svg.appendChild(path);
         return path;
     }
 
@@ -2491,28 +2583,44 @@ def write_html_animation(
     function addRefDkGroup(svg, spec) {
         const g = createSvgEl("g", { class: "ref-dk-group", "data-node-id": spec.id });
         const headerH = 18;
-        const outerR = 6;
+        const outerR = (spec.rounded === false) ? 0 : 6;
+        const strokeColor = spec.stroke || "#ff8f86";
+        const fillColor = spec.fill || "#542f2f";
+        const bodyFill = refDarkenHex(fillColor, -24);
+        const textColor = spec.textColor || "#f4f7ff";
+        const dash = String(spec.borderStyle || "solid").toLowerCase() === "dashed" ? "7 4" : "";
         const outer = createSvgEl("rect", {
             x: spec.x, y: spec.y, width: spec.w, height: spec.h, class: "outer"
         });
-        outer.setAttribute("data-base-stroke", "#ff8f86");
+        outer.setAttribute("fill", "none");
+        outer.setAttribute("stroke", strokeColor);
+        outer.setAttribute("data-base-stroke", strokeColor);
         outer.setAttribute("data-base-stroke-width", "1.5");
+        outer.setAttribute("stroke-width", "1.5");
+        if (dash) outer.setAttribute("stroke-dasharray", dash);
         outer.setAttribute("rx", String(outerR));
         outer.setAttribute("ry", String(outerR));
         g.appendChild(outer);
 
         g.appendChild(createSvgEl("rect", {
             x: spec.x + 1, y: spec.y + 1, width: spec.w - 2, height: headerH, class: "head-fill",
+            fill: refDarkenHex(fillColor, -14), stroke: "none",
             rx: Math.max(0, outerR - 1), ry: Math.max(0, outerR - 1)
         }));
         g.appendChild(createSvgEl("rect", {
-            x: spec.x + 1, y: spec.y + headerH + 1, width: spec.w - 2, height: spec.h - headerH - 2, class: "body-fill"
+            x: spec.x + 1, y: spec.y + headerH + 1, width: spec.w - 2, height: spec.h - headerH - 2, class: "body-fill",
+            fill: bodyFill, stroke: "none"
         }));
-        g.appendChild(createSvgEl("line", {
+        const topSep = createSvgEl("line", {
             x1: spec.x + 1, y1: spec.y + headerH + 1, x2: spec.x + spec.w - 1, y2: spec.y + headerH + 1, class: "cell-sep"
-        }));
+        });
+        topSep.setAttribute("stroke", strokeColor);
+        topSep.setAttribute("stroke-width", "1.1");
+        if (dash) topSep.setAttribute("stroke-dasharray", dash);
+        g.appendChild(topSep);
 
-        addRefText(g, spec.x + spec.w / 2, spec.y + 12, "dk", "header");
+        const header = addRefText(g, spec.x + spec.w / 2, spec.y + 12, spec.label || "dk", "header");
+        header.setAttribute("fill", textColor);
 
         const innerY = spec.y + headerH + 2;
         const innerH = spec.h - headerH - 4;
@@ -2528,11 +2636,16 @@ def write_html_animation(
         cells.forEach((c, idx) => {
             const w = (idx === cells.length - 1) ? (spec.x + spec.w - 8 - cx) : Math.round(innerW * c.frac);
             if (idx > 0) {
-                g.appendChild(createSvgEl("line", {
+                const sep = createSvgEl("line", {
                     x1: cx, y1: innerY + 2, x2: cx, y2: innerY + innerH - 2, class: "cell-sep"
-                }));
+                });
+                sep.setAttribute("stroke", strokeColor);
+                sep.setAttribute("stroke-width", "1");
+                if (dash) sep.setAttribute("stroke-dasharray", dash);
+                g.appendChild(sep);
             }
-            addRefText(g, cx + w / 2, innerY + innerH / 2 + 1, c.label, "cell-text");
+            const cellText = addRefText(g, cx + w / 2, innerY + innerH / 2 + 1, c.label, "cell-text");
+            cellText.setAttribute("fill", textColor);
             const key = (idx === 0) ? "dkpke" : (idx === 1) ? "ek" : (idx === 2) ? "hek" : "z";
             anchorMap[`${key}-top`] = { x: cx + w / 2, y: spec.y };
             anchorMap[`${key}-bottom`] = { x: cx + w / 2, y: spec.y + spec.h };
@@ -2548,36 +2661,58 @@ def write_html_animation(
     function addRefEkPkeGroup(svg, spec) {
         const g = createSvgEl("g", { class: "ref-ekpke-group", "data-node-id": spec.id });
         const headerH = 18;
-        const outerR = 6;
+        const outerR = (spec.rounded === false) ? 0 : 6;
+        const strokeColor = spec.stroke || "#ff8f86";
+        const fillColor = spec.fill || "#542f2f";
+        const bodyFill = refDarkenHex(fillColor, -24);
+        const textColor = spec.textColor || "#f4f7ff";
+        const dash = String(spec.borderStyle || "solid").toLowerCase() === "dashed" ? "7 4" : "";
         const outer = createSvgEl("rect", {
             x: spec.x, y: spec.y, width: spec.w, height: spec.h, class: "outer"
         });
-        outer.setAttribute("data-base-stroke", "#ff8f86");
+        outer.setAttribute("fill", "none");
+        outer.setAttribute("stroke", strokeColor);
+        outer.setAttribute("data-base-stroke", strokeColor);
         outer.setAttribute("data-base-stroke-width", "1.5");
+        outer.setAttribute("stroke-width", "1.5");
+        if (dash) outer.setAttribute("stroke-dasharray", dash);
         outer.setAttribute("rx", String(outerR));
         outer.setAttribute("ry", String(outerR));
         g.appendChild(outer);
 
         g.appendChild(createSvgEl("rect", {
             x: spec.x + 1, y: spec.y + 1, width: spec.w - 2, height: headerH, class: "head-fill",
+            fill: refDarkenHex(fillColor, -14), stroke: "none",
             rx: Math.max(0, outerR - 1), ry: Math.max(0, outerR - 1)
         }));
         g.appendChild(createSvgEl("rect", {
-            x: spec.x + 1, y: spec.y + headerH + 1, width: spec.w - 2, height: spec.h - headerH - 2, class: "body-fill"
+            x: spec.x + 1, y: spec.y + headerH + 1, width: spec.w - 2, height: spec.h - headerH - 2, class: "body-fill",
+            fill: bodyFill, stroke: "none"
         }));
-        g.appendChild(createSvgEl("line", {
+        const topSep = createSvgEl("line", {
             x1: spec.x + 1, y1: spec.y + headerH + 1, x2: spec.x + spec.w - 1, y2: spec.y + headerH + 1, class: "cell-sep"
-        }));
-        addRefText(g, spec.x + spec.w / 2, spec.y + 12, "ekPKE", "header");
+        });
+        topSep.setAttribute("stroke", strokeColor);
+        topSep.setAttribute("stroke-width", "1.1");
+        if (dash) topSep.setAttribute("stroke-dasharray", dash);
+        g.appendChild(topSep);
+        const header = addRefText(g, spec.x + spec.w / 2, spec.y + 12, spec.label || "ekPKE", "header");
+        header.setAttribute("fill", textColor);
 
         const bodyY = spec.y + headerH + 2;
         const bodyH = spec.h - headerH - 4;
         const splitX = spec.x + Math.round(spec.w * 0.62);
-        g.appendChild(createSvgEl("line", {
+        const split = createSvgEl("line", {
             x1: splitX, y1: bodyY, x2: splitX, y2: bodyY + bodyH, class: "cell-sep"
-        }));
-        addRefText(g, spec.x + (splitX - spec.x) / 2, bodyY + bodyH / 2 + 1, "t^", "cell-text");
-        addRefText(g, splitX + (spec.x + spec.w - splitX) / 2, bodyY + bodyH / 2 + 1, "rho", "cell-text");
+        });
+        split.setAttribute("stroke", strokeColor);
+        split.setAttribute("stroke-width", "1");
+        if (dash) split.setAttribute("stroke-dasharray", dash);
+        g.appendChild(split);
+        const tCell = addRefText(g, spec.x + (splitX - spec.x) / 2, bodyY + bodyH / 2 + 1, "t^", "cell-text");
+        tCell.setAttribute("fill", textColor);
+        const rhoCell = addRefText(g, splitX + (spec.x + spec.w - splitX) / 2, bodyY + bodyH / 2 + 1, "rho", "cell-text");
+        rhoCell.setAttribute("fill", textColor);
 
         svg.appendChild(g);
         registerRefInteractiveNode(g, spec.id, spec.x, spec.y, spec.w, spec.h);
@@ -2953,6 +3088,12 @@ def write_html_animation(
         const toSide = canonicalRefBorderSide(toRawSide) || "left";
         const a = refAnchor(fromSpec.id, fromSpec.side || "right", fromSpec.dx || 0, fromSpec.dy || 0);
         const b = refAnchor(toSpec.id, toSpec.side || "left", toSpec.dx || 0, toSpec.dy || 0);
+        const connRaw = String(opts.connectionType || "").toLowerCase();
+        const connectionType = (
+            connRaw === "arrow" ||
+            connRaw === "bi" ||
+            connRaw === "line"
+        ) ? connRaw : ((opts.arrowHead === false) ? "line" : "arrow");
         try {
             const impliedRouting = (opts.mode === "curve") ? "curved" : opts.mode;
             const routingRaw = String(opts.routing || impliedRouting || "angled").toLowerCase();
@@ -3000,8 +3141,7 @@ def write_html_animation(
                 dashed: !!opts.dashed,
                 color: opts.color,
                 width: opts.width,
-                arrowHead: (opts.arrowHead !== false),
-                label: opts.label
+                connectionType
             });
         } catch (e) {
             console.warn("Connector routing fallback:", fromSpec.id, "->", toSpec.id, e);
@@ -3014,8 +3154,7 @@ def write_html_animation(
                 dashed: !!opts.dashed,
                 color: opts.color,
                 width: opts.width,
-                arrowHead: (opts.arrowHead !== false),
-                label: opts.label
+                connectionType
             });
         }
     }
@@ -3379,7 +3518,17 @@ def write_html_animation(
         if generated_primary_renderer_js:
             f.write("\n/* Generated primary renderer override */\n")
             f.write(generated_primary_renderer_js)
-            f.write("\n")
+            f.write(
+                "\ntry {\n"
+                "    renderPrimaryReferenceDiagram();\n"
+                "    if (typeof highlightPrimaryReferenceForStep === 'function') {\n"
+                "        const _step = (typeof currentStep !== 'undefined') ? currentStep : null;\n"
+                "        highlightPrimaryReferenceForStep(_step);\n"
+                "    }\n"
+                "} catch (generatedOverrideError) {\n"
+                "    console.error('Generated renderer override failed:', generatedOverrideError);\n"
+                "}\n"
+            )
         f.write("</script>\n")
         f.write("</body>\n</html>\n")
 

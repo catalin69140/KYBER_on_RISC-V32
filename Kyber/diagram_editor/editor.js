@@ -11,18 +11,44 @@
     "#253f57",
   ];
 
-  const DEFAULT_ANCHOR_STOPS = [0.1, 0.3, 0.5, 0.7, 0.9];
+  const DEFAULT_ANCHOR_STOPS = [0, 0.25, 0.5, 0.75, 1];
   const HANDLE_SIZE = 8;
   const MIN_SHAPE_SIZE = 24;
+  const HISTORY_LIMIT = 120;
+
+  const CONNECT_MODES = {
+    connect_arrow: "arrow",
+    connect_bi: "bi",
+    connect_line: "line",
+  };
+
+  const CONTAINER_KINDS = new Set(["container", "header_container"]);
+  const SHAPE_KINDS = new Set([
+    "square",
+    "triangle",
+    "circle",
+    "container",
+    "header_container",
+    "dk_group",
+    "ekpke_group",
+  ]);
 
   const state = {
     elf: "",
     model: null,
     mode: "select",
-    selected: null, // {type: "shape"|"arrow", id: "..."}
-    connectFromShapeId: null,
+    selected: null, // {type: "shape" | "arrow", id: "..."}
+    connectSourceId: null,
     drag: null,
     arrowRenderCache: {},
+    history: [],
+    future: [],
+    clipboard: null,
+    view: {
+      zoom: 1,
+      minZoom: 0.35,
+      maxZoom: 3,
+    },
   };
 
   const els = {
@@ -31,16 +57,25 @@
     saveBtn: document.getElementById("save-btn"),
     generateBtn: document.getElementById("generate-btn"),
     toolSelectBtn: document.getElementById("tool-select"),
-    toolConnectBtn: document.getElementById("tool-connect"),
-    addShapeBtn: document.getElementById("add-shape-btn"),
-    addContainerBtn: document.getElementById("add-container-btn"),
+    toolConnectArrowBtn: document.getElementById("tool-connect-arrow"),
+    toolConnectBiBtn: document.getElementById("tool-connect-bi"),
+    toolConnectLineBtn: document.getElementById("tool-connect-line"),
+    addSquareBtn: document.getElementById("add-square-btn"),
+    addTriangleBtn: document.getElementById("add-triangle-btn"),
+    addCircleBtn: document.getElementById("add-circle-btn"),
+    addContainerStandardBtn: document.getElementById("add-container-standard-btn"),
+    addContainerHeaderBtn: document.getElementById("add-container-header-btn"),
+    addDkGroupBtn: document.getElementById("add-dk-group-btn"),
+    addEkPkeGroupBtn: document.getElementById("add-ekpke-group-btn"),
     deleteBtn: document.getElementById("delete-btn"),
-    fitBtn: document.getElementById("fit-btn"),
+    zoomInBtn: document.getElementById("zoom-in-btn"),
+    zoomOutBtn: document.getElementById("zoom-out-btn"),
+    zoomResetBtn: document.getElementById("zoom-reset-btn"),
+    zoomLabel: document.getElementById("zoom-label"),
     canvasScroll: document.getElementById("canvas-scroll"),
     svg: document.getElementById("diagram-canvas"),
     inspector: document.getElementById("inspector-content"),
     status: document.getElementById("status"),
-    selectionChip: document.getElementById("selection-chip"),
   };
 
   function setStatus(msg, type) {
@@ -76,6 +111,29 @@
     return base;
   }
 
+  function deepClone(obj) {
+    return JSON.parse(JSON.stringify(obj));
+  }
+
+  function defaultShapeText(kind) {
+    if (kind === "container") return "Container";
+    if (kind === "header_container") return "Header";
+    if (kind === "dk_group") return "dk";
+    if (kind === "ekpke_group") return "ekPKE";
+    return "Node";
+  }
+
+  function defaultShapeSize(kind) {
+    if (kind === "square") return { width: 90, height: 90 };
+    if (kind === "triangle") return { width: 118, height: 90 };
+    if (kind === "circle") return { width: 92, height: 92 };
+    if (kind === "container") return { width: 240, height: 140 };
+    if (kind === "header_container") return { width: 260, height: 160 };
+    if (kind === "dk_group") return { width: 330, height: 96 };
+    if (kind === "ekpke_group") return { width: 220, height: 96 };
+    return { width: 120, height: 56 };
+  }
+
   function defaultModel(elfName) {
     return {
       version: 1,
@@ -94,10 +152,6 @@
     };
   }
 
-  function deepClone(obj) {
-    return JSON.parse(JSON.stringify(obj));
-  }
-
   function shapeById(id) {
     return (state.model && state.model.shapes || []).find((s) => s.id === id) || null;
   }
@@ -106,16 +160,196 @@
     return (state.model && state.model.arrows || []).find((a) => a.id === id) || null;
   }
 
+  function isContainerKind(kind) {
+    return CONTAINER_KINDS.has(kind);
+  }
+
   function sortedShapes() {
     return (state.model.shapes || []).slice().sort((a, b) => {
       if ((a.z || 0) !== (b.z || 0)) return (a.z || 0) - (b.z || 0);
-      if (a.kind !== b.kind) return a.kind === "container" ? -1 : 1;
+      if (isContainerKind(a.kind) !== isContainerKind(b.kind)) return isContainerKind(a.kind) ? -1 : 1;
       return a.id.localeCompare(b.id);
     });
   }
 
   function sortedArrows() {
     return (state.model.arrows || []).slice().sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  function clamp(v, min, max) {
+    return Math.max(min, Math.min(max, v));
+  }
+
+  function normalizeSide(raw) {
+    const side = String(raw || "").toLowerCase().trim();
+    if (side === "left" || side === "right" || side === "top" || side === "bottom") return side;
+    return "right";
+  }
+
+  function normalizeRouting(raw) {
+    const routing = String(raw || "").toLowerCase().trim();
+    if (routing === "straight" || routing === "curved" || routing === "angled") return routing;
+    return "angled";
+  }
+
+  function normalizeLineStyle(raw) {
+    return String(raw || "").toLowerCase() === "dashed" ? "dashed" : "solid";
+  }
+
+  function normalizeConnectionType(raw) {
+    const t = String(raw || "").toLowerCase().trim();
+    if (t === "arrow" || t === "bi" || t === "line") return t;
+    return "arrow";
+  }
+
+  function normalizeBorderStyle(raw) {
+    return String(raw || "").toLowerCase() === "dashed" ? "dashed" : "solid";
+  }
+
+  function normalizeTextAlign(raw) {
+    const t = String(raw || "").toLowerCase().trim();
+    if (t === "left" || t === "center" || t === "right") return t;
+    return "center";
+  }
+
+  function normalizeColor(color, fallback) {
+    const value = String(color || "").trim();
+    if (/^#[0-9a-fA-F]{6}$/.test(value)) return value;
+    return fallback || "#1c2f4f";
+  }
+
+  function darken(hex, amount) {
+    const h = String(hex || "").replace("#", "");
+    if (!/^[0-9a-fA-F]{6}$/.test(h)) return "#80b6ff";
+    const r = clamp(parseInt(h.slice(0, 2), 16) + amount, 0, 255);
+    const g = clamp(parseInt(h.slice(2, 4), 16) + amount, 0, 255);
+    const b = clamp(parseInt(h.slice(4, 6), 16) + amount, 0, 255);
+    return "#" + [r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("");
+  }
+
+  function ensureModelDefaults() {
+    if (!state.model) state.model = defaultModel(state.elf);
+    if (!state.model.metadata) state.model.metadata = {};
+    if (!state.model.metadata.viewBox) state.model.metadata.viewBox = { width: 1980, height: 410 };
+    if (!state.model.metadata.background) state.model.metadata.background = "#0b1220";
+    if (!Array.isArray(state.model.metadata.colorPalette) || !state.model.metadata.colorPalette.length) {
+      state.model.metadata.colorPalette = DEFAULT_COLOR_PALETTE.slice();
+    }
+
+    if (!state.model.anchors) {
+      state.model.anchors = {
+        countPerEdge: DEFAULT_ANCHOR_STOPS.length,
+        stops: DEFAULT_ANCHOR_STOPS.slice(),
+      };
+    }
+
+    if (!Array.isArray(state.model.anchors.stops) || !state.model.anchors.stops.length) {
+      state.model.anchors.stops = DEFAULT_ANCHOR_STOPS.slice();
+    }
+    state.model.anchors.stops = state.model.anchors.stops
+      .map((v) => Number(v))
+      .filter((v) => Number.isFinite(v))
+      .map((v) => clamp(v, 0, 1))
+      .sort((a, b) => a - b);
+    state.model.anchors.countPerEdge = Math.max(2, Number(state.model.anchors.countPerEdge) || state.model.anchors.stops.length || 5);
+
+    if (!Array.isArray(state.model.shapes)) state.model.shapes = [];
+    if (!Array.isArray(state.model.arrows)) state.model.arrows = [];
+
+    state.model.shapes.forEach((shape, idx) => {
+      shape.kind = SHAPE_KINDS.has(shape.kind) ? shape.kind : "square";
+      shape.text = String(shape.text || defaultShapeText(shape.kind));
+      shape.id = sanitizeId(shape.id || deriveShapeId(shape.text, ""));
+      shape.idManual = !!shape.idManual;
+      shape.x = Number(shape.x) || 0;
+      shape.y = Number(shape.y) || 0;
+      shape.width = Math.max(MIN_SHAPE_SIZE, Number(shape.width) || defaultShapeSize(shape.kind).width);
+      shape.height = Math.max(MIN_SHAPE_SIZE, Number(shape.height) || defaultShapeSize(shape.kind).height);
+      if (shape.kind === "square" || shape.kind === "circle") {
+        const side = Math.max(shape.width, shape.height);
+        shape.width = side;
+        shape.height = side;
+      }
+      shape.fill = normalizeColor(shape.fill, isContainerKind(shape.kind) ? "#0d172a" : "#1c2f4f");
+      shape.stroke = normalizeColor(shape.stroke, isContainerKind(shape.kind) ? "#eef3ff" : "#80b6ff");
+      shape.borderStyle = normalizeBorderStyle(shape.borderStyle);
+      shape.textColor = normalizeColor(shape.textColor, "#f4f7ff");
+      shape.rounded = shape.rounded !== false;
+      shape.textAlign = normalizeTextAlign(shape.textAlign || "center");
+      shape.z = Number(shape.z);
+      if (!Number.isFinite(shape.z)) shape.z = idx;
+      shape.parentId = shape.parentId ? String(shape.parentId) : null;
+    });
+
+    const shapeIds = new Set(state.model.shapes.map((s) => s.id));
+    const containerIds = new Set(state.model.shapes.filter((s) => isContainerKind(s.kind)).map((s) => s.id));
+
+    state.model.shapes.forEach((shape) => {
+      if (!shape.parentId) return;
+      if (!shapeIds.has(shape.parentId) || !containerIds.has(shape.parentId) || shape.parentId === shape.id || isDescendant(shape.parentId, shape.id)) {
+        shape.parentId = null;
+      }
+    });
+
+    state.model.arrows.forEach((arrow, idx) => {
+      arrow.id = sanitizeId(arrow.id || ("arrow_" + (idx + 1)));
+      arrow.from = arrow.from && typeof arrow.from === "object" ? arrow.from : {};
+      arrow.to = arrow.to && typeof arrow.to === "object" ? arrow.to : {};
+      arrow.from.shapeId = String(arrow.from.shapeId || "");
+      arrow.to.shapeId = String(arrow.to.shapeId || "");
+      arrow.from.side = normalizeSide(arrow.from.side || "right");
+      arrow.to.side = normalizeSide(arrow.to.side || "left");
+      const maxAnchor = Math.max(1, state.model.anchors.countPerEdge - 1);
+      arrow.from.anchorIndex = clamp(Math.round(Number(arrow.from.anchorIndex) || maxAnchor / 2), 0, maxAnchor);
+      arrow.to.anchorIndex = clamp(Math.round(Number(arrow.to.anchorIndex) || maxAnchor / 2), 0, maxAnchor);
+      arrow.lineStyle = normalizeLineStyle(arrow.lineStyle);
+      arrow.routing = normalizeRouting(arrow.routing);
+      arrow.connectionType = normalizeConnectionType(arrow.connectionType);
+      arrow.stroke = normalizeColor(arrow.stroke, "#e8efff");
+      arrow.width = Math.max(0.5, Number(arrow.width) || 1.7);
+      if (!Array.isArray(arrow.waypoints)) arrow.waypoints = [];
+      if (!Array.isArray(arrow.controlPoints)) arrow.controlPoints = [];
+      arrow.waypoints = arrow.waypoints.map((p) => ({ x: Number(p.x) || 0, y: Number(p.y) || 0 }));
+      arrow.controlPoints = arrow.controlPoints.slice(0, 2).map((p) => ({ x: Number(p.x) || 0, y: Number(p.y) || 0 }));
+    });
+
+    dedupeShapeIds();
+    dedupeArrowIds();
+    state.model.arrows = state.model.arrows.filter((a) => shapeById(a.from.shapeId) && shapeById(a.to.shapeId));
+  }
+
+  function dedupeShapeIds() {
+    const seen = new Set();
+    state.model.shapes.forEach((shape) => {
+      let desired = sanitizeId(shape.id);
+      if (!desired) desired = "node";
+      let next = desired;
+      let i = 2;
+      while (seen.has(next)) {
+        next = desired + "_" + i;
+        i += 1;
+      }
+      if (next !== shape.id) {
+        renameShapeId(shape.id, next);
+      }
+      seen.add(next);
+    });
+  }
+
+  function dedupeArrowIds() {
+    const seen = new Set();
+    state.model.arrows.forEach((arrow) => {
+      let desired = sanitizeId(arrow.id);
+      if (!desired) desired = "arrow";
+      let next = desired;
+      let i = 2;
+      while (seen.has(next)) {
+        next = desired + "_" + i;
+        i += 1;
+      }
+      arrow.id = next;
+      seen.add(next);
+    });
   }
 
   function uniqueShapeId(base, currentId) {
@@ -180,171 +414,119 @@
     if (state.selected && state.selected.type === "shape" && state.selected.id === oldId) {
       state.selected.id = nextId;
     }
-    if (state.connectFromShapeId === oldId) {
-      state.connectFromShapeId = nextId;
+    if (state.connectSourceId === oldId) {
+      state.connectSourceId = nextId;
     }
   }
 
-  function updateAutoId(shape, previousParentId) {
+  function updateAutoId(shape, oldParentId) {
     if (!shape || shape.idManual) return;
-    const oldId = shape.id;
     const parent = shape.parentId ? shapeById(shape.parentId) : null;
-    const parentText = parent ? parent.text : "";
-    const desired = deriveShapeId(shape.text, parentText);
-    const unique = uniqueShapeId(desired, oldId);
-    renameShapeId(oldId, unique);
-    if (previousParentId && previousParentId !== shape.parentId) {
-      // Keep children linked when the shape itself is a container and ID changed.
+    const desired = deriveShapeId(shape.text, parent ? parent.text : "");
+    const next = uniqueShapeId(desired, shape.id);
+    const previousId = shape.id;
+    renameShapeId(shape.id, next);
+    if (oldParentId && oldParentId !== shape.parentId) {
       state.model.shapes.forEach((s) => {
-        if (s.parentId === oldId) s.parentId = unique;
+        if (s.parentId === previousId) s.parentId = next;
       });
     }
   }
 
-  function ensureModelDefaults() {
-    if (!state.model) state.model = defaultModel(state.elf);
-    if (!state.model.metadata) state.model.metadata = {};
-    if (!state.model.metadata.viewBox) state.model.metadata.viewBox = { width: 1980, height: 410 };
-    if (!Array.isArray(state.model.metadata.colorPalette) || !state.model.metadata.colorPalette.length) {
-      state.model.metadata.colorPalette = DEFAULT_COLOR_PALETTE.slice();
+  function snapshotModel() {
+    return JSON.stringify(state.model);
+  }
+
+  function restoreSnapshot(snapshot) {
+    state.model = JSON.parse(snapshot);
+    ensureModelDefaults();
+  }
+
+  function pushHistory() {
+    state.history.push(snapshotModel());
+    if (state.history.length > HISTORY_LIMIT) state.history.shift();
+    state.future = [];
+  }
+
+  function undo() {
+    if (!state.history.length) {
+      setStatus("Nothing to undo.");
+      return;
     }
-    if (!state.model.anchors) {
-      state.model.anchors = { countPerEdge: DEFAULT_ANCHOR_STOPS.length, stops: DEFAULT_ANCHOR_STOPS.slice() };
+    state.future.push(snapshotModel());
+    const prev = state.history.pop();
+    restoreSnapshot(prev);
+    state.selected = null;
+    state.connectSourceId = null;
+    render();
+    setStatus("Undo applied.", "ok");
+  }
+
+  function copySelectedShapeBundle() {
+    if (!state.selected || state.selected.type !== "shape") {
+      setStatus("Select a shape/container to copy.", "error");
+      return;
     }
-    if (!Array.isArray(state.model.anchors.stops) || !state.model.anchors.stops.length) {
-      state.model.anchors.stops = DEFAULT_ANCHOR_STOPS.slice();
+    const root = shapeById(state.selected.id);
+    if (!root) return;
+    const ids = [root.id].concat(descendantsOf(root.id));
+    const idSet = new Set(ids);
+    const bundle = state.model.shapes
+      .filter((shape) => idSet.has(shape.id))
+      .map((shape) => deepClone(shape));
+    state.clipboard = {
+      type: "shapeBundle",
+      rootId: root.id,
+      shapes: bundle,
+      pasteCount: 0,
+    };
+    setStatus("Copied " + bundle.length + " shape(s).", "ok");
+  }
+
+  function pasteClipboard() {
+    if (!state.clipboard || state.clipboard.type !== "shapeBundle") {
+      setStatus("Clipboard is empty.", "error");
+      return;
     }
-    state.model.anchors.stops = state.model.anchors.stops
-      .map((v) => Number(v))
-      .filter((v) => Number.isFinite(v))
-      .map((v) => Math.max(0, Math.min(1, v)))
-      .sort((a, b) => a - b);
-    state.model.anchors.countPerEdge = Math.max(2, Number(state.model.anchors.countPerEdge) || state.model.anchors.stops.length || 5);
-    if (!Array.isArray(state.model.shapes)) state.model.shapes = [];
-    if (!Array.isArray(state.model.arrows)) state.model.arrows = [];
-    state.model.shapes.forEach((shape, idx) => {
-      shape.kind = shape.kind === "container" ? "container" : "shape";
-      shape.text = String(shape.text || (shape.kind === "container" ? "Container" : "Node"));
-      shape.id = sanitizeId(shape.id || deriveShapeId(shape.text, ""));
-      shape.idManual = !!shape.idManual;
-      shape.x = Number(shape.x) || 0;
-      shape.y = Number(shape.y) || 0;
-      shape.width = Math.max(MIN_SHAPE_SIZE, Number(shape.width) || 120);
-      shape.height = Math.max(MIN_SHAPE_SIZE, Number(shape.height) || 56);
-      shape.fill = String(shape.fill || (shape.kind === "container" ? "#0d172a" : "#1c2f4f"));
-      shape.stroke = String(shape.stroke || (shape.kind === "container" ? "#eef3ff" : "#80b6ff"));
-      shape.textColor = String(shape.textColor || "#f4f7ff");
-      shape.rounded = shape.rounded !== false;
-      shape.z = Number(shape.z);
-      if (!Number.isFinite(shape.z)) shape.z = idx;
-      shape.parentId = shape.parentId ? String(shape.parentId) : null;
+    pushHistory();
+
+    const bundle = deepClone(state.clipboard.shapes || []);
+    if (!bundle.length) return;
+
+    const offset = 24 + state.clipboard.pasteCount * 18;
+    const idMap = {};
+
+    bundle.sort((a, b) => (a.z || 0) - (b.z || 0));
+
+    bundle.forEach((oldShape) => {
+      const base = sanitizeId(oldShape.id || deriveShapeId(oldShape.text, ""));
+      idMap[oldShape.id] = uniqueShapeId(base, null);
     });
-    state.model.arrows.forEach((arrow, idx) => {
-      arrow.id = sanitizeId(arrow.id || ("arrow_" + (idx + 1)));
-      arrow.from = arrow.from && typeof arrow.from === "object" ? arrow.from : {};
-      arrow.to = arrow.to && typeof arrow.to === "object" ? arrow.to : {};
-      arrow.from.shapeId = String(arrow.from.shapeId || "");
-      arrow.to.shapeId = String(arrow.to.shapeId || "");
-      arrow.from.side = normalizeSide(arrow.from.side || "right");
-      arrow.to.side = normalizeSide(arrow.to.side || "left");
-      const maxAnchor = Math.max(1, state.model.anchors.countPerEdge - 1);
-      arrow.from.anchorIndex = clamp(Math.round(Number(arrow.from.anchorIndex) || maxAnchor / 2), 0, maxAnchor);
-      arrow.to.anchorIndex = clamp(Math.round(Number(arrow.to.anchorIndex) || maxAnchor / 2), 0, maxAnchor);
-      arrow.lineStyle = arrow.lineStyle === "dashed" ? "dashed" : "solid";
-      arrow.routing = normalizeRouting(arrow.routing);
-      arrow.arrowHead = arrow.arrowHead !== false;
-      arrow.stroke = String(arrow.stroke || "#e8efff");
-      arrow.width = Math.max(0.5, Number(arrow.width) || 1.7);
-      arrow.label = String(arrow.label || "");
-      if (!Array.isArray(arrow.waypoints)) arrow.waypoints = [];
-      arrow.waypoints = arrow.waypoints.map((p) => ({ x: Number(p.x) || 0, y: Number(p.y) || 0 }));
-      if (!Array.isArray(arrow.controlPoints)) arrow.controlPoints = [];
-      arrow.controlPoints = arrow.controlPoints.slice(0, 2).map((p) => ({ x: Number(p.x) || 0, y: Number(p.y) || 0 }));
+
+    bundle.forEach((oldShape) => {
+      const copied = deepClone(oldShape);
+      copied.id = idMap[oldShape.id];
+      copied.idManual = true;
+      copied.x = Number(copied.x || 0) + offset;
+      copied.y = Number(copied.y || 0) + offset;
+      copied.parentId = copied.parentId && idMap[copied.parentId] ? idMap[copied.parentId] : null;
+      copied.z = (state.model.shapes.length ? Math.max.apply(null, state.model.shapes.map((s) => s.z || 0)) : 0) + 1;
+      state.model.shapes.push(copied);
     });
-    dedupeShapeIds();
-    dedupeArrowIds();
-    cleanupBrokenReferences();
-  }
 
-  function dedupeShapeIds() {
-    const seen = new Set();
-    state.model.shapes.forEach((shape) => {
-      const desired = sanitizeId(shape.id);
-      let id = desired;
-      let i = 2;
-      while (seen.has(id)) {
-        id = desired + "_" + i;
-        i += 1;
-      }
-      if (id !== shape.id) renameShapeId(shape.id, id);
-      seen.add(id);
-    });
-  }
-
-  function dedupeArrowIds() {
-    const seen = new Set();
-    state.model.arrows.forEach((arrow) => {
-      const desired = sanitizeId(arrow.id);
-      let id = desired;
-      let i = 2;
-      while (seen.has(id)) {
-        id = desired + "_" + i;
-        i += 1;
-      }
-      arrow.id = id;
-      seen.add(id);
-    });
-  }
-
-  function cleanupBrokenReferences() {
-    const shapeIds = new Set(state.model.shapes.map((s) => s.id));
-    const containerIds = new Set(state.model.shapes.filter((s) => s.kind === "container").map((s) => s.id));
-    state.model.shapes.forEach((shape) => {
-      if (!shape.parentId) return;
-      if (!shapeIds.has(shape.parentId) || !containerIds.has(shape.parentId) || shape.parentId === shape.id || isDescendant(shape.parentId, shape.id)) {
-        shape.parentId = null;
-      }
-    });
-    state.model.arrows = state.model.arrows.filter((arrow) => shapeIds.has(arrow.from.shapeId) && shapeIds.has(arrow.to.shapeId));
-  }
-
-  function normalizeSide(raw) {
-    const side = String(raw || "").toLowerCase().trim();
-    if (side === "left" || side === "right" || side === "top" || side === "bottom") return side;
-    return "right";
-  }
-
-  function normalizeRouting(raw) {
-    const routing = String(raw || "").toLowerCase().trim();
-    if (routing === "straight" || routing === "curved" || routing === "angled") return routing;
-    return "angled";
-  }
-
-  function clamp(v, min, max) {
-    return Math.max(min, Math.min(max, v));
-  }
-
-  function darken(hex, amount) {
-    const h = String(hex || "").replace("#", "");
-    if (!/^[0-9a-fA-F]{6}$/.test(h)) return "#80b6ff";
-    const r = clamp(parseInt(h.slice(0, 2), 16) + amount, 0, 255);
-    const g = clamp(parseInt(h.slice(2, 4), 16) + amount, 0, 255);
-    const b = clamp(parseInt(h.slice(4, 6), 16) + amount, 0, 255);
-    return "#" + [r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("");
-  }
-
-  function applyViewBox() {
-    const vb = state.model.metadata.viewBox || { width: 1980, height: 410 };
-    els.svg.setAttribute("viewBox", "0 0 " + vb.width + " " + vb.height);
-    els.svg.setAttribute("width", String(vb.width));
-    els.svg.setAttribute("height", String(vb.height));
+    state.clipboard.pasteCount += 1;
+    const rootNewId = idMap[state.clipboard.rootId];
+    if (rootNewId) state.selected = { type: "shape", id: rootNewId };
+    ensureModelDefaults();
+    render();
+    setStatus("Pasted " + bundle.length + " shape(s).", "ok");
   }
 
   function createSvg(tag, attrs) {
     const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
     if (attrs) {
       Object.keys(attrs).forEach((k) => {
-        if (attrs[k] !== undefined && attrs[k] !== null) {
+        if (attrs[k] !== undefined && attrs[k] !== null && attrs[k] !== "") {
           el.setAttribute(k, String(attrs[k]));
         }
       });
@@ -352,9 +534,45 @@
     return el;
   }
 
+  function applyViewBox() {
+    const vb = state.model.metadata.viewBox || { width: 1980, height: 410 };
+    const zoom = state.view.zoom || 1;
+    els.svg.setAttribute("viewBox", "0 0 " + vb.width + " " + vb.height);
+    els.svg.setAttribute("width", String(Math.round(vb.width * zoom)));
+    els.svg.setAttribute("height", String(Math.round(vb.height * zoom)));
+    if (els.zoomLabel) {
+      els.zoomLabel.textContent = Math.round(zoom * 100) + "%";
+    }
+  }
+
+  function setZoom(nextZoom) {
+    const prev = state.view.zoom;
+    const next = clamp(nextZoom, state.view.minZoom, state.view.maxZoom);
+    if (Math.abs(next - prev) < 0.0001) return;
+
+    const scroll = els.canvasScroll;
+    const cx = scroll.scrollLeft + scroll.clientWidth / 2;
+    const cy = scroll.scrollTop + scroll.clientHeight / 2;
+    const ratio = next / prev;
+
+    state.view.zoom = next;
+    render();
+
+    scroll.scrollLeft = Math.max(0, cx * ratio - scroll.clientWidth / 2);
+    scroll.scrollTop = Math.max(0, cy * ratio - scroll.clientHeight / 2);
+  }
+
+  function resetView() {
+    state.view.zoom = 1;
+    render();
+    els.canvasScroll.scrollLeft = 0;
+    els.canvasScroll.scrollTop = 0;
+  }
+
   function ensureDefs() {
     const defs = createSvg("defs");
-    const marker = createSvg("marker", {
+
+    const arrowHead = createSvg("marker", {
       id: "editor-arrow-head",
       viewBox: "0 0 10 10",
       refX: 9,
@@ -363,9 +581,280 @@
       markerHeight: 7,
       orient: "auto-start-reverse",
     });
-    marker.appendChild(createSvg("path", { d: "M 0 0 L 10 5 L 0 10 z", fill: "#e8efff" }));
-    defs.appendChild(marker);
+    arrowHead.appendChild(createSvg("path", { d: "M 0 0 L 10 5 L 0 10 z", fill: "#e8efff" }));
+    defs.appendChild(arrowHead);
+
     els.svg.appendChild(defs);
+  }
+
+  function textAnchorForAlign(align) {
+    if (align === "left") return "start";
+    if (align === "right") return "end";
+    return "middle";
+  }
+
+  function textXForAlign(shape, align, pad) {
+    if (align === "left") return shape.x + pad;
+    if (align === "right") return shape.x + shape.width - pad;
+    return shape.x + shape.width / 2;
+  }
+
+  function renderShapeVisual(group, shape, strokeColor, strokeWidth) {
+    const dash = shape.borderStyle === "dashed" ? "7 4" : "";
+    const commonStroke = {
+      fill: shape.fill,
+      stroke: strokeColor,
+      "stroke-width": strokeWidth,
+      "stroke-dasharray": dash,
+    };
+
+    if (shape.kind === "triangle") {
+      const points = [
+        (shape.x + shape.width / 2) + "," + shape.y,
+        (shape.x + shape.width) + "," + (shape.y + shape.height),
+        shape.x + "," + (shape.y + shape.height),
+      ].join(" ");
+      group.appendChild(createSvg("polygon", Object.assign({ points: points }, commonStroke)));
+    } else if (shape.kind === "circle") {
+      group.appendChild(createSvg("ellipse", Object.assign({
+        cx: shape.x + shape.width / 2,
+        cy: shape.y + shape.height / 2,
+        rx: shape.width / 2,
+        ry: shape.height / 2,
+      }, commonStroke)));
+    } else if (shape.kind === "header_container") {
+      const headerH = Math.max(18, Math.min(36, Math.round(shape.height * 0.22)));
+      group.appendChild(createSvg("rect", Object.assign({
+        x: shape.x,
+        y: shape.y,
+        width: shape.width,
+        height: shape.height,
+        rx: shape.rounded === false ? 0 : 7,
+        ry: shape.rounded === false ? 0 : 7,
+      }, commonStroke)));
+      group.appendChild(createSvg("rect", {
+        x: shape.x + 1,
+        y: shape.y + 1,
+        width: Math.max(1, shape.width - 2),
+        height: Math.max(1, headerH - 1),
+        fill: darken(shape.fill, -16),
+        stroke: "none",
+        rx: shape.rounded === false ? 0 : 6,
+        ry: shape.rounded === false ? 0 : 6,
+      }));
+      group.appendChild(createSvg("line", {
+        x1: shape.x,
+        y1: shape.y + headerH,
+        x2: shape.x + shape.width,
+        y2: shape.y + headerH,
+        stroke: strokeColor,
+        "stroke-width": Math.max(1, strokeWidth * 0.9),
+        "stroke-dasharray": dash,
+      }));
+    } else if (shape.kind === "dk_group") {
+      const headerH = 18;
+      group.appendChild(createSvg("rect", {
+        x: shape.x,
+        y: shape.y,
+        width: shape.width,
+        height: shape.height,
+        fill: "none",
+        stroke: strokeColor,
+        "stroke-width": strokeWidth,
+        "stroke-dasharray": dash,
+        rx: shape.rounded === false ? 0 : 6,
+        ry: shape.rounded === false ? 0 : 6,
+      }));
+      group.appendChild(createSvg("rect", {
+        x: shape.x + 1,
+        y: shape.y + 1,
+        width: Math.max(1, shape.width - 2),
+        height: headerH,
+        fill: darken(shape.fill, -14),
+        stroke: "none",
+        rx: shape.rounded === false ? 0 : 5,
+        ry: shape.rounded === false ? 0 : 5,
+      }));
+      group.appendChild(createSvg("rect", {
+        x: shape.x + 1,
+        y: shape.y + headerH + 1,
+        width: Math.max(1, shape.width - 2),
+        height: Math.max(1, shape.height - headerH - 2),
+        fill: shape.fill,
+        stroke: "none",
+      }));
+      group.appendChild(createSvg("line", {
+        x1: shape.x + 1,
+        y1: shape.y + headerH + 1,
+        x2: shape.x + shape.width - 1,
+        y2: shape.y + headerH + 1,
+        stroke: strokeColor,
+        "stroke-width": 1.1,
+      }));
+
+      const bodyY = shape.y + headerH + 2;
+      const bodyH = shape.height - headerH - 4;
+      const cells = [
+        { label: "dkPKE", frac: 0.33 },
+        { label: "ek", frac: 0.22 },
+        { label: "H(ek)", frac: 0.25 },
+        { label: "z", frac: 0.20 },
+      ];
+      const innerW = shape.width - 16;
+      let cx = shape.x + 8;
+      cells.forEach((cell, idx) => {
+        const w = idx === cells.length - 1
+          ? shape.x + shape.width - 8 - cx
+          : Math.round(innerW * cell.frac);
+        if (idx > 0) {
+          group.appendChild(createSvg("line", {
+            x1: cx,
+            y1: bodyY + 2,
+            x2: cx,
+            y2: bodyY + bodyH - 2,
+            stroke: strokeColor,
+            "stroke-width": 1,
+            "stroke-dasharray": dash,
+          }));
+        }
+        const t = createSvg("text", {
+          x: cx + w / 2,
+          y: bodyY + bodyH / 2 + 1,
+          fill: shape.textColor || "#f4f7ff",
+          "font-size": 12,
+          "text-anchor": "middle",
+          "dominant-baseline": "middle",
+          "pointer-events": "none",
+        });
+        t.textContent = cell.label;
+        group.appendChild(t);
+        cx += w;
+      });
+    } else if (shape.kind === "ekpke_group") {
+      const headerH = 18;
+      group.appendChild(createSvg("rect", {
+        x: shape.x,
+        y: shape.y,
+        width: shape.width,
+        height: shape.height,
+        fill: "none",
+        stroke: strokeColor,
+        "stroke-width": strokeWidth,
+        "stroke-dasharray": dash,
+        rx: shape.rounded === false ? 0 : 6,
+        ry: shape.rounded === false ? 0 : 6,
+      }));
+      group.appendChild(createSvg("rect", {
+        x: shape.x + 1,
+        y: shape.y + 1,
+        width: Math.max(1, shape.width - 2),
+        height: headerH,
+        fill: darken(shape.fill, -14),
+        stroke: "none",
+        rx: shape.rounded === false ? 0 : 5,
+        ry: shape.rounded === false ? 0 : 5,
+      }));
+      group.appendChild(createSvg("rect", {
+        x: shape.x + 1,
+        y: shape.y + headerH + 1,
+        width: Math.max(1, shape.width - 2),
+        height: Math.max(1, shape.height - headerH - 2),
+        fill: shape.fill,
+        stroke: "none",
+      }));
+      group.appendChild(createSvg("line", {
+        x1: shape.x + 1,
+        y1: shape.y + headerH + 1,
+        x2: shape.x + shape.width - 1,
+        y2: shape.y + headerH + 1,
+        stroke: strokeColor,
+        "stroke-width": 1.1,
+      }));
+      const bodyY = shape.y + headerH + 2;
+      const bodyH = shape.height - headerH - 4;
+      const splitX = shape.x + Math.round(shape.width * 0.62);
+      group.appendChild(createSvg("line", {
+        x1: splitX,
+        y1: bodyY,
+        x2: splitX,
+        y2: bodyY + bodyH,
+        stroke: strokeColor,
+        "stroke-width": 1,
+        "stroke-dasharray": dash,
+      }));
+      const t1 = createSvg("text", {
+        x: shape.x + (splitX - shape.x) / 2,
+        y: bodyY + bodyH / 2 + 1,
+        fill: shape.textColor || "#f4f7ff",
+        "font-size": 12,
+        "text-anchor": "middle",
+        "dominant-baseline": "middle",
+        "pointer-events": "none",
+      });
+      t1.textContent = "t^";
+      group.appendChild(t1);
+      const t2 = createSvg("text", {
+        x: splitX + (shape.x + shape.width - splitX) / 2,
+        y: bodyY + bodyH / 2 + 1,
+        fill: shape.textColor || "#f4f7ff",
+        "font-size": 12,
+        "text-anchor": "middle",
+        "dominant-baseline": "middle",
+        "pointer-events": "none",
+      });
+      t2.textContent = "rho";
+      group.appendChild(t2);
+    } else {
+      group.appendChild(createSvg("rect", Object.assign({
+        x: shape.x,
+        y: shape.y,
+        width: shape.width,
+        height: shape.height,
+        rx: shape.rounded === false ? 0 : 7,
+        ry: shape.rounded === false ? 0 : 7,
+      }, commonStroke)));
+    }
+
+    const align = normalizeTextAlign(shape.textAlign || "center");
+    const textAnchor = textAnchorForAlign(align);
+    const textX = textXForAlign(shape, align, 10);
+    let textY = shape.y + shape.height / 2;
+
+    if (shape.kind === "header_container") {
+      const headerH = Math.max(18, Math.min(36, Math.round(shape.height * 0.22)));
+      textY = shape.y + headerH / 2;
+    } else if (shape.kind === "dk_group" || shape.kind === "ekpke_group") {
+      textY = shape.y + 12;
+    } else if (shape.kind === "container") {
+      textY = shape.y + shape.height / 2;
+    }
+
+    const textEl = createSvg("text", {
+      x: textX,
+      y: textY,
+      fill: shape.textColor || "#f4f7ff",
+      "font-size": shape.kind === "container" || shape.kind === "header_container" ? 13 : 12.5,
+      "text-anchor": textAnchor,
+      "dominant-baseline": "middle",
+      "pointer-events": "none",
+    });
+    textEl.textContent = shape.text;
+    group.appendChild(textEl);
+  }
+
+  function renderShape(shapeLayer, shape) {
+    const isSelected = state.selected && state.selected.type === "shape" && state.selected.id === shape.id;
+    const isConnectSource = state.connectSourceId === shape.id;
+    const stroke = isConnectSource ? "#43d17e" : (isSelected ? "#ffd76b" : shape.stroke);
+    const strokeWidth = isSelected || isConnectSource ? 2.6 : 1.5;
+
+    const group = createSvg("g", {
+      "data-shape-id": shape.id,
+      style: "cursor:" + (state.mode === "select" ? "move" : "crosshair"),
+    });
+    renderShapeVisual(group, shape, stroke, strokeWidth);
+    group.addEventListener("pointerdown", (evt) => onShapePointerDown(evt, shape.id));
+    shapeLayer.appendChild(group);
   }
 
   function getAnchorStops() {
@@ -379,14 +868,13 @@
     if (!shape) return { x: 0, y: 0 };
     const stops = getAnchorStops();
     const count = Math.max(2, state.model.anchors.countPerEdge || stops.length || 5);
-    const index = clamp(Math.round(Number(endpoint.anchorIndex) || 0), 0, count - 1);
-    let frac;
-    if (index < stops.length) frac = stops[index];
-    else frac = index / (count - 1);
+    const idx = clamp(Math.round(Number(endpoint.anchorIndex) || 0), 0, count - 1);
+    const frac = idx < stops.length ? stops[idx] : idx / (count - 1);
     const x0 = shape.x;
     const y0 = shape.y;
     const x1 = shape.x + shape.width;
     const y1 = shape.y + shape.height;
+
     const side = normalizeSide(endpoint.side);
     if (side === "left") return { x: x0, y: y0 + shape.height * frac };
     if (side === "right") return { x: x1, y: y0 + shape.height * frac };
@@ -394,89 +882,52 @@
     return { x: x0 + shape.width * frac, y: y1 };
   }
 
-  function defaultCurveControl(from, to, side, scaleSign) {
+  function getAllAnchors() {
+    const stops = getAnchorStops();
+    const count = Math.max(2, state.model.anchors.countPerEdge || stops.length || 5);
+    const anchors = [];
+
+    state.model.shapes.forEach((shape) => {
+      for (let i = 0; i < count; i += 1) {
+        const frac = i < stops.length ? stops[i] : i / (count - 1);
+        anchors.push({ shapeId: shape.id, side: "left", anchorIndex: i, x: shape.x, y: shape.y + shape.height * frac });
+        anchors.push({ shapeId: shape.id, side: "right", anchorIndex: i, x: shape.x + shape.width, y: shape.y + shape.height * frac });
+        anchors.push({ shapeId: shape.id, side: "top", anchorIndex: i, x: shape.x + shape.width * frac, y: shape.y });
+        anchors.push({ shapeId: shape.id, side: "bottom", anchorIndex: i, x: shape.x + shape.width * frac, y: shape.y + shape.height });
+      }
+    });
+
+    return anchors;
+  }
+
+  function nearestAnchor(point) {
+    const anchors = getAllAnchors();
+    let best = null;
+    anchors.forEach((anchor) => {
+      const dx = anchor.x - point.x;
+      const dy = anchor.y - point.y;
+      const d2 = dx * dx + dy * dy;
+      if (!best || d2 < best.d2) {
+        best = { d2: d2, anchor: anchor };
+      }
+    });
+    return best ? best.anchor : null;
+  }
+
+  function defaultCurveControl(from, to, side) {
     const dx = to.x - from.x;
     const dy = to.y - from.y;
-    const span = Math.max(30, Math.sqrt(dx * dx + dy * dy) * 0.28);
-    if (side === "left") return { x: from.x - span * scaleSign, y: from.y };
-    if (side === "right") return { x: from.x + span * scaleSign, y: from.y };
-    if (side === "top") return { x: from.x, y: from.y - span * scaleSign };
-    return { x: from.x, y: from.y + span * scaleSign };
+    const span = Math.max(28, Math.sqrt(dx * dx + dy * dy) * 0.28);
+    if (side === "left") return { x: from.x - span, y: from.y };
+    if (side === "right") return { x: from.x + span, y: from.y };
+    if (side === "top") return { x: from.x, y: from.y - span };
+    return { x: from.x, y: from.y + span };
   }
 
   function orthSegment(a, b, horizontalFirst) {
-    if (Math.abs(a.x - b.x) < 0.01 || Math.abs(a.y - b.y) < 0.01) {
-      return [a, b];
-    }
-    if (horizontalFirst) {
-      return [a, { x: b.x, y: a.y }, b];
-    }
+    if (Math.abs(a.x - b.x) < 0.01 || Math.abs(a.y - b.y) < 0.01) return [a, b];
+    if (horizontalFirst) return [a, { x: b.x, y: a.y }, b];
     return [a, { x: a.x, y: b.y }, b];
-  }
-
-  function polylinePath(points) {
-    if (!points.length) return "";
-    const out = ["M " + points[0].x + " " + points[0].y];
-    for (let i = 1; i < points.length; i += 1) {
-      out.push("L " + points[i].x + " " + points[i].y);
-    }
-    return out.join(" ");
-  }
-
-  function buildArrowGeometry(arrow) {
-    const from = getAnchorPoint(arrow.from);
-    const to = getAnchorPoint(arrow.to);
-    const routing = normalizeRouting(arrow.routing);
-    const geom = {
-      from,
-      to,
-      routing,
-      path: "",
-      controlPoints: [],
-      waypoints: [],
-    };
-
-    if (routing === "straight") {
-      geom.path = "M " + from.x + " " + from.y + " L " + to.x + " " + to.y;
-      return geom;
-    }
-
-    if (routing === "curved") {
-      let cp1 = arrow.controlPoints[0];
-      let cp2 = arrow.controlPoints[1];
-      if (!cp1 || !cp2) {
-        cp1 = defaultCurveControl(from, to, arrow.from.side, 1);
-        cp2 = defaultCurveControl(to, from, arrow.to.side, 1);
-      }
-      geom.controlPoints = [{ x: cp1.x, y: cp1.y }, { x: cp2.x, y: cp2.y }];
-      geom.path =
-        "M " + from.x + " " + from.y +
-        " C " + cp1.x + " " + cp1.y +
-        " " + cp2.x + " " + cp2.y +
-        " " + to.x + " " + to.y;
-      return geom;
-    }
-
-    const waypoints = Array.isArray(arrow.waypoints) ? arrow.waypoints.map((p) => ({ x: p.x, y: p.y })) : [];
-    geom.waypoints = waypoints.slice();
-    let current = from;
-    let horizontalFirst = arrow.from.side === "left" || arrow.from.side === "right";
-    const points = [from];
-    const targets = waypoints.concat([to]);
-    targets.forEach((target, idx) => {
-      if (idx === targets.length - 1) {
-        if (arrow.to.side === "left" || arrow.to.side === "right") horizontalFirst = false;
-        else horizontalFirst = true;
-      }
-      const seg = orthSegment(current, target, horizontalFirst);
-      for (let i = 1; i < seg.length; i += 1) {
-        points.push(seg[i]);
-      }
-      current = target;
-      horizontalFirst = !horizontalFirst;
-    });
-    geom.path = polylinePath(compressCollinear(points));
-    return geom;
   }
 
   function compressCollinear(points) {
@@ -500,112 +951,108 @@
     return out;
   }
 
-  function render() {
-    ensureModelDefaults();
-    applyViewBox();
-    els.svg.innerHTML = "";
-    state.arrowRenderCache = {};
-    ensureDefs();
+  function polylinePath(points) {
+    if (!points.length) return "";
+    const d = ["M " + points[0].x + " " + points[0].y];
+    for (let i = 1; i < points.length; i += 1) {
+      d.push("L " + points[i].x + " " + points[i].y);
+    }
+    return d.join(" ");
+  }
 
-    const vb = state.model.metadata.viewBox;
-    els.svg.appendChild(createSvg("rect", {
-      x: 0,
-      y: 0,
-      width: vb.width,
-      height: vb.height,
-      fill: state.model.metadata.background || "#0b1220",
-    }));
+  function buildArrowGeometry(arrow) {
+    const from = getAnchorPoint(arrow.from);
+    const to = getAnchorPoint(arrow.to);
+    const routing = normalizeRouting(arrow.routing);
+    const geom = {
+      from: from,
+      to: to,
+      routing: routing,
+      path: "",
+      controlPoints: [],
+      waypoints: [],
+    };
 
-    const arrowLayer = createSvg("g");
-    const shapeLayer = createSvg("g");
-    const overlayLayer = createSvg("g");
-    els.svg.appendChild(arrowLayer);
-    els.svg.appendChild(shapeLayer);
-    els.svg.appendChild(overlayLayer);
+    if (routing === "straight") {
+      geom.path = "M " + from.x + " " + from.y + " L " + to.x + " " + to.y;
+      return geom;
+    }
 
-    sortedArrows().forEach((arrow) => {
-      const geom = buildArrowGeometry(arrow);
-      state.arrowRenderCache[arrow.id] = geom;
-
-      const path = createSvg("path", {
-        d: geom.path,
-        fill: "none",
-        stroke: arrow.stroke || "#e8efff",
-        "stroke-width": arrow.width || 1.7,
-        "stroke-dasharray": arrow.lineStyle === "dashed" ? "6 4" : "",
-        "marker-end": arrow.arrowHead === false ? "" : "url(#editor-arrow-head)",
-        "data-arrow-id": arrow.id,
-        style: "cursor:pointer",
-      });
-      if (state.selected && state.selected.type === "arrow" && state.selected.id === arrow.id) {
-        path.setAttribute("stroke-width", String((arrow.width || 1.7) + 1.2));
-        path.setAttribute("stroke", "#ffd76b");
+    if (routing === "curved") {
+      let cp1 = arrow.controlPoints[0];
+      let cp2 = arrow.controlPoints[1];
+      if (!cp1 || !cp2) {
+        cp1 = defaultCurveControl(from, to, arrow.from.side);
+        cp2 = defaultCurveControl(to, from, arrow.to.side);
       }
-      path.addEventListener("pointerdown", (evt) => {
-        evt.stopPropagation();
-        setSelected({ type: "arrow", id: arrow.id });
-      });
-      arrowLayer.appendChild(path);
+      geom.controlPoints = [{ x: cp1.x, y: cp1.y }, { x: cp2.x, y: cp2.y }];
+      geom.path =
+        "M " + from.x + " " + from.y +
+        " C " + cp1.x + " " + cp1.y +
+        " " + cp2.x + " " + cp2.y +
+        " " + to.x + " " + to.y;
+      return geom;
+    }
 
-      if (arrow.label) {
-        const mid = { x: (geom.from.x + geom.to.x) / 2, y: (geom.from.y + geom.to.y) / 2 };
-        const t = createSvg("text", {
-          x: mid.x,
-          y: mid.y - 8,
-          fill: "#f4f7ff",
-          "font-size": 11,
-          "text-anchor": "middle",
-          "dominant-baseline": "middle",
-          "pointer-events": "none",
-        });
-        t.textContent = arrow.label;
-        arrowLayer.appendChild(t);
+    const waypoints = Array.isArray(arrow.waypoints) ? arrow.waypoints.map((p) => ({ x: p.x, y: p.y })) : [];
+    geom.waypoints = waypoints.slice();
+    let current = from;
+    let horizontalFirst = arrow.from.side === "left" || arrow.from.side === "right";
+    const points = [from];
+
+    waypoints.concat([to]).forEach((target, idx, arr) => {
+      if (idx === arr.length - 1) {
+        horizontalFirst = !(arrow.to.side === "left" || arrow.to.side === "right");
       }
+      const seg = orthSegment(current, target, horizontalFirst);
+      for (let i = 1; i < seg.length; i += 1) {
+        points.push(seg[i]);
+      }
+      current = target;
+      horizontalFirst = !horizontalFirst;
     });
 
-    sortedShapes().forEach((shape) => {
-      const group = createSvg("g", {
-        "data-shape-id": shape.id,
-        style: "cursor:" + (state.mode === "connect" ? "crosshair" : "move"),
-      });
-      const isSelected = state.selected && state.selected.type === "shape" && state.selected.id === shape.id;
-      const rect = createSvg("rect", {
-        x: shape.x,
-        y: shape.y,
-        width: shape.width,
-        height: shape.height,
-        fill: shape.fill || "#1c2f4f",
-        stroke: isSelected ? "#ffd76b" : shape.stroke || "#80b6ff",
-        "stroke-width": isSelected ? 2.6 : 1.5,
-        rx: shape.rounded === false ? 0 : 7,
-        ry: shape.rounded === false ? 0 : 7,
-        "stroke-dasharray": shape.kind === "container" ? "8 4" : "",
-      });
-      group.appendChild(rect);
+    geom.path = polylinePath(compressCollinear(points));
+    return geom;
+  }
 
-      const text = createSvg("text", {
-        x: shape.kind === "container" ? shape.x + 10 : shape.x + shape.width / 2,
-        y: shape.kind === "container" ? shape.y + 14 : shape.y + shape.height / 2,
-        fill: shape.textColor || "#f4f7ff",
-        "font-size": shape.kind === "container" ? 13 : 12.5,
-        "text-anchor": shape.kind === "container" ? "start" : "middle",
-        "dominant-baseline": "middle",
-        "pointer-events": "none",
-      });
-      text.textContent = shape.text;
-      group.appendChild(text);
+  function renderArrow(arrowLayer, arrow) {
+    const geom = buildArrowGeometry(arrow);
+    state.arrowRenderCache[arrow.id] = geom;
 
-      group.addEventListener("pointerdown", (evt) => onShapePointerDown(evt, shape.id));
-      shapeLayer.appendChild(group);
+    const isSelected = state.selected && state.selected.type === "arrow" && state.selected.id === arrow.id;
+    const stroke = isSelected ? "#ffd76b" : arrow.stroke;
+    const width = isSelected ? (arrow.width + 1.2) : arrow.width;
+
+    const attrs = {
+      d: geom.path,
+      fill: "none",
+      stroke: stroke,
+      "stroke-width": width,
+      "stroke-dasharray": arrow.lineStyle === "dashed" ? "6 4" : "",
+      style: "cursor:pointer",
+      "data-arrow-id": arrow.id,
+    };
+
+    const connType = normalizeConnectionType(arrow.connectionType);
+    if (connType === "arrow") {
+      attrs["marker-end"] = "url(#editor-arrow-head)";
+    } else if (connType === "bi") {
+      attrs["marker-start"] = "url(#editor-arrow-head)";
+      attrs["marker-end"] = "url(#editor-arrow-head)";
+    }
+
+    const path = createSvg("path", attrs);
+    path.addEventListener("pointerdown", (evt) => {
+      evt.stopPropagation();
+      setSelected({ type: "arrow", id: arrow.id });
     });
-
-    renderSelectionOverlay(overlayLayer);
-    updateSelectionChip();
-    renderInspector();
+    arrowLayer.appendChild(path);
   }
 
   function renderSelectionOverlay(overlayLayer) {
     if (!state.selected) return;
+
     if (state.selected.type === "shape") {
       const shape = shapeById(state.selected.id);
       if (!shape) return;
@@ -615,6 +1062,7 @@
         { key: "sw", x: shape.x, y: shape.y + shape.height },
         { key: "se", x: shape.x + shape.width, y: shape.y + shape.height },
       ];
+
       handles.forEach((h) => {
         const handle = createSvg("rect", {
           x: h.x - HANDLE_SIZE / 2,
@@ -641,18 +1089,18 @@
       const arrow = arrowById(state.selected.id);
       const geom = state.arrowRenderCache[state.selected.id];
       if (!arrow || !geom) return;
-      const endpoints = [
+
+      [
         { key: "from", p: geom.from, fill: "#8fe6ff" },
         { key: "to", p: geom.to, fill: "#ffcf8f" },
-      ];
-      endpoints.forEach((ep) => {
+      ].forEach((ep) => {
         const c = createSvg("circle", {
           cx: ep.p.x,
           cy: ep.p.y,
           r: 5.2,
           fill: ep.fill,
           stroke: "#1a2235",
-          "stroke-width": 1.1,
+          "stroke-width": 1,
           style: "cursor:crosshair",
         });
         c.addEventListener("pointerdown", (evt) => {
@@ -713,12 +1161,44 @@
     }
   }
 
-  function updateSelectionChip() {
-    if (!state.selected) {
-      els.selectionChip.textContent = "Selection: none";
-      return;
-    }
-    els.selectionChip.textContent = "Selection: " + state.selected.type + " " + state.selected.id;
+  function render() {
+    ensureModelDefaults();
+    applyViewBox();
+
+    els.svg.innerHTML = "";
+    state.arrowRenderCache = {};
+    ensureDefs();
+
+    const vb = state.model.metadata.viewBox;
+    els.svg.appendChild(createSvg("rect", {
+      x: 0,
+      y: 0,
+      width: vb.width,
+      height: vb.height,
+      fill: state.model.metadata.background || "#0b1220",
+    }));
+
+    const arrowLayer = createSvg("g");
+    const shapeLayer = createSvg("g");
+    const overlayLayer = createSvg("g");
+
+    els.svg.appendChild(arrowLayer);
+    els.svg.appendChild(shapeLayer);
+    els.svg.appendChild(overlayLayer);
+
+    sortedArrows().forEach((arrow) => renderArrow(arrowLayer, arrow));
+    sortedShapes().forEach((shape) => renderShape(shapeLayer, shape));
+
+    renderSelectionOverlay(overlayLayer);
+    updateToolButtonStates();
+    renderInspector();
+  }
+
+  function updateToolButtonStates() {
+    els.toolSelectBtn.classList.toggle("active", state.mode === "select");
+    els.toolConnectArrowBtn.classList.toggle("active", state.mode === "connect_arrow");
+    els.toolConnectBiBtn.classList.toggle("active", state.mode === "connect_bi");
+    els.toolConnectLineBtn.classList.toggle("active", state.mode === "connect_line");
   }
 
   function setSelected(sel) {
@@ -739,7 +1219,15 @@
   function onBackgroundPointerDown(evt) {
     if (evt.button !== 0) return;
     state.selected = null;
-    state.connectFromShapeId = null;
+    state.connectSourceId = null;
+    state.drag = {
+      type: "pan-canvas",
+      startClientX: evt.clientX,
+      startClientY: evt.clientY,
+      startScrollLeft: els.canvasScroll.scrollLeft,
+      startScrollTop: els.canvasScroll.scrollTop,
+    };
+    els.canvasScroll.classList.add("panning");
     render();
   }
 
@@ -749,52 +1237,57 @@
     const shape = shapeById(shapeId);
     if (!shape) return;
 
-    if (state.mode === "connect") {
-      if (!state.connectFromShapeId) {
-        state.connectFromShapeId = shapeId;
-        setStatus("Connect mode: source selected " + shapeId + ". Click a target shape.", "ok");
+    if (state.mode !== "select") {
+      if (!state.connectSourceId) {
+        state.connectSourceId = shapeId;
+        setStatus("Connection mode: source selected " + shapeId + ". Click target shape.", "ok");
         render();
         return;
       }
-      if (state.connectFromShapeId === shapeId) {
-        setStatus("Connect mode: source and target cannot be the same shape.", "error");
+      if (state.connectSourceId === shapeId) {
+        state.connectSourceId = null;
+        setStatus("Connection source deselected.");
+        render();
         return;
       }
-      createArrow(state.connectFromShapeId, shapeId);
-      state.connectFromShapeId = null;
+      createArrow(state.connectSourceId, shapeId, CONNECT_MODES[state.mode] || "arrow");
+      state.connectSourceId = null;
       return;
     }
 
     setSelected({ type: "shape", id: shapeId });
+    pushHistory();
+
     const start = clientToSvg(evt);
-    const toMove = [shapeId];
-    if (shape.kind === "container") {
-      toMove.push.apply(toMove, descendantsOf(shapeId));
+    const moveIds = [shapeId];
+    if (isContainerKind(shape.kind)) {
+      moveIds.push.apply(moveIds, descendantsOf(shapeId));
     }
     const before = {};
-    toMove.forEach((id) => {
+    moveIds.forEach((id) => {
       const s = shapeById(id);
       before[id] = { x: s.x, y: s.y };
     });
+
     state.drag = {
       type: "move-shapes",
-      shapeId,
-      start,
-      before,
-      movedShapeIds: toMove,
-      previousParentId: shape.parentId,
+      shapeId: shapeId,
+      movedShapeIds: moveIds,
+      before: before,
+      start: start,
     };
   }
 
   function startShapeResize(evt, shapeId, corner) {
     const shape = shapeById(shapeId);
     if (!shape) return;
+    pushHistory();
     const start = clientToSvg(evt);
     state.drag = {
       type: "resize-shape",
-      shapeId,
-      corner,
-      start,
+      shapeId: shapeId,
+      corner: corner,
+      start: start,
       before: {
         x: shape.x,
         y: shape.y,
@@ -805,41 +1298,41 @@
   }
 
   function startArrowEndpointDrag(evt, arrowId, endpointKey) {
+    pushHistory();
     state.drag = {
       type: "arrow-endpoint",
-      arrowId,
-      endpointKey,
+      arrowId: arrowId,
+      endpointKey: endpointKey,
     };
   }
 
   function startArrowWaypointDrag(evt, arrowId, waypointIndex) {
+    pushHistory();
     state.drag = {
       type: "arrow-waypoint",
-      arrowId,
-      waypointIndex,
+      arrowId: arrowId,
+      waypointIndex: waypointIndex,
     };
   }
 
   function startArrowControlPointDrag(evt, arrowId, cpIndex) {
+    pushHistory();
     state.drag = {
       type: "arrow-control",
-      arrowId,
-      cpIndex,
+      arrowId: arrowId,
+      cpIndex: cpIndex,
     };
   }
 
   function pickContainerForShape(shape) {
     if (!shape) return null;
     const center = shapeCenter(shape);
-    const candidates = state.model.shapes.filter((s) =>
-      s.kind === "container" &&
-      s.id !== shape.id &&
-      !isDescendant(s.id, shape.id) &&
-      center.x >= s.x &&
-      center.x <= s.x + s.width &&
-      center.y >= s.y &&
-      center.y <= s.y + s.height
-    );
+    const candidates = state.model.shapes.filter((s) => {
+      if (!isContainerKind(s.kind)) return false;
+      if (s.id === shape.id) return false;
+      if (isDescendant(s.id, shape.id)) return false;
+      return center.x >= s.x && center.x <= s.x + s.width && center.y >= s.y && center.y <= s.y + s.height;
+    });
     if (!candidates.length) return null;
     candidates.sort((a, b) => {
       const areaA = a.width * a.height;
@@ -850,38 +1343,19 @@
     return candidates[0];
   }
 
-  function getAllAnchors() {
-    const stops = getAnchorStops();
-    const count = Math.max(2, state.model.anchors.countPerEdge || stops.length || 5);
-    const anchors = [];
-    state.model.shapes.forEach((shape) => {
-      const maxIndex = count - 1;
-      for (let i = 0; i <= maxIndex; i += 1) {
-        const frac = i < stops.length ? stops[i] : i / maxIndex;
-        anchors.push({ shapeId: shape.id, side: "left", anchorIndex: i, x: shape.x, y: shape.y + shape.height * frac });
-        anchors.push({ shapeId: shape.id, side: "right", anchorIndex: i, x: shape.x + shape.width, y: shape.y + shape.height * frac });
-        anchors.push({ shapeId: shape.id, side: "top", anchorIndex: i, x: shape.x + shape.width * frac, y: shape.y });
-        anchors.push({ shapeId: shape.id, side: "bottom", anchorIndex: i, x: shape.x + shape.width * frac, y: shape.y + shape.height });
-      }
-    });
-    return anchors;
-  }
-
-  function nearestAnchor(point) {
-    const anchors = getAllAnchors();
-    let best = null;
-    anchors.forEach((anchor) => {
-      const dx = anchor.x - point.x;
-      const dy = anchor.y - point.y;
-      const d2 = dx * dx + dy * dy;
-      if (!best || d2 < best.d2) best = { anchor, d2 };
-    });
-    return best ? best.anchor : null;
-  }
-
   function handlePointerMove(evt) {
     if (!state.drag) return;
+
+    if (state.drag.type === "pan-canvas") {
+      const dx = evt.clientX - state.drag.startClientX;
+      const dy = evt.clientY - state.drag.startClientY;
+      els.canvasScroll.scrollLeft = state.drag.startScrollLeft - dx;
+      els.canvasScroll.scrollTop = state.drag.startScrollTop - dy;
+      return;
+    }
+
     const point = clientToSvg(evt);
+
     if (state.drag.type === "move-shapes") {
       const dx = point.x - state.drag.start.x;
       const dy = point.y - state.drag.start.y;
@@ -903,6 +1377,7 @@
       let y = b.y;
       let w = b.width;
       let h = b.height;
+
       if (state.drag.corner.indexOf("e") >= 0) w = Math.max(MIN_SHAPE_SIZE, b.width + (point.x - state.drag.start.x));
       if (state.drag.corner.indexOf("s") >= 0) h = Math.max(MIN_SHAPE_SIZE, b.height + (point.y - state.drag.start.y));
       if (state.drag.corner.indexOf("w") >= 0) {
@@ -917,6 +1392,15 @@
         y = Math.min(ny, maxY);
         h = Math.max(MIN_SHAPE_SIZE, b.height - (y - b.y));
       }
+
+      if (shape.kind === "square" || shape.kind === "circle") {
+        const side = Math.max(w, h);
+        if (state.drag.corner.indexOf("w") >= 0) x = b.x + b.width - side;
+        if (state.drag.corner.indexOf("n") >= 0) y = b.y + b.height - side;
+        w = side;
+        h = side;
+      }
+
       shape.x = x;
       shape.y = y;
       shape.width = w;
@@ -941,9 +1425,7 @@
 
     if (state.drag.type === "arrow-waypoint") {
       const arrow = arrowById(state.drag.arrowId);
-      if (!arrow) return;
-      if (!Array.isArray(arrow.waypoints)) arrow.waypoints = [];
-      if (!arrow.waypoints[state.drag.waypointIndex]) return;
+      if (!arrow || !arrow.waypoints[state.drag.waypointIndex]) return;
       arrow.waypoints[state.drag.waypointIndex] = { x: point.x, y: point.y };
       render();
       return;
@@ -952,7 +1434,6 @@
     if (state.drag.type === "arrow-control") {
       const arrow = arrowById(state.drag.arrowId);
       if (!arrow) return;
-      if (!Array.isArray(arrow.controlPoints)) arrow.controlPoints = [];
       while (arrow.controlPoints.length < 2) {
         arrow.controlPoints.push({ x: point.x, y: point.y });
       }
@@ -963,107 +1444,127 @@
 
   function handlePointerUp() {
     if (!state.drag) return;
+
     if (state.drag.type === "move-shapes") {
       const moved = shapeById(state.drag.shapeId);
-      if (moved && moved.kind !== "container") {
-        const previousParentId = moved.parentId;
+      if (moved && !isContainerKind(moved.kind)) {
+        const prevParent = moved.parentId;
         const parent = pickContainerForShape(moved);
         moved.parentId = parent ? parent.id : null;
-        if (moved.parentId !== previousParentId) {
-          updateAutoId(moved, previousParentId);
+        if (moved.parentId !== prevParent) {
+          updateAutoId(moved, prevParent);
         }
       }
+      render();
     }
+
+    if (state.drag.type === "pan-canvas") {
+      els.canvasScroll.classList.remove("panning");
+    }
+
     state.drag = null;
-    render();
   }
 
   function chooseEndpointForNewArrow(fromShape, toShape, isFromEndpoint) {
-    const fromCenter = shapeCenter(fromShape);
-    const toCenter = shapeCenter(toShape);
-    const dx = toCenter.x - fromCenter.x;
-    const dy = toCenter.y - fromCenter.y;
+    const c1 = shapeCenter(fromShape);
+    const c2 = shapeCenter(toShape);
+    const dx = c2.x - c1.x;
+    const dy = c2.y - c1.y;
     let side;
     if (Math.abs(dx) >= Math.abs(dy)) {
-      side = dx >= 0 ? (isFromEndpoint ? "right" : "left") : (isFromEndpoint ? "left" : "right");
+      side = dx >= 0
+        ? (isFromEndpoint ? "right" : "left")
+        : (isFromEndpoint ? "left" : "right");
     } else {
-      side = dy >= 0 ? (isFromEndpoint ? "bottom" : "top") : (isFromEndpoint ? "top" : "bottom");
+      side = dy >= 0
+        ? (isFromEndpoint ? "bottom" : "top")
+        : (isFromEndpoint ? "top" : "bottom");
     }
     const anchorIndex = Math.floor((Math.max(2, state.model.anchors.countPerEdge || 5) - 1) / 2);
     return {
       shapeId: isFromEndpoint ? fromShape.id : toShape.id,
-      side,
-      anchorIndex,
+      side: side,
+      anchorIndex: anchorIndex,
     };
   }
 
-  function createArrow(fromShapeId, toShapeId) {
+  function createArrow(fromShapeId, toShapeId, connectionType) {
     const fromShape = shapeById(fromShapeId);
     const toShape = shapeById(toShapeId);
     if (!fromShape || !toShape) return;
+
+    pushHistory();
+
     const id = uniqueArrowId("arrow_" + (state.model.arrows.length + 1), null);
     const arrow = {
-      id,
+      id: id,
       from: chooseEndpointForNewArrow(fromShape, toShape, true),
       to: chooseEndpointForNewArrow(fromShape, toShape, false),
       lineStyle: "solid",
       routing: "angled",
-      arrowHead: true,
+      connectionType: normalizeConnectionType(connectionType),
       stroke: "#e8efff",
       width: 1.7,
-      label: "",
       waypoints: [],
       controlPoints: [],
     };
     state.model.arrows.push(arrow);
-    setSelected({ type: "arrow", id });
-    setStatus("Created arrow " + id + ".", "ok");
+    setSelected({ type: "arrow", id: id });
+    setStatus("Created " + arrow.connectionType + " connector " + id + ".", "ok");
   }
 
   function addShape(kind) {
+    if (!SHAPE_KINDS.has(kind)) return;
+    pushHistory();
+
     const vb = state.model.metadata.viewBox || { width: 1980, height: 410 };
-    const x = vb.width * 0.5 - 70 + (Math.random() * 20 - 10);
-    const y = vb.height * 0.5 - 32 + (Math.random() * 20 - 10);
-    const text = kind === "container" ? "Container" : "Node";
-    const desired = deriveShapeId(text, "");
-    const id = uniqueShapeId(desired, null);
-    const fill = kind === "container" ? "#0d172a" : "#1c2f4f";
-    const stroke = kind === "container" ? "#eef3ff" : "#80b6ff";
+    const size = defaultShapeSize(kind);
+    const x = vb.width * 0.5 - size.width / 2 + (Math.random() * 18 - 9);
+    const y = vb.height * 0.5 - size.height / 2 + (Math.random() * 18 - 9);
+    const text = defaultShapeText(kind);
+    const id = uniqueShapeId(deriveShapeId(text, ""), null);
+
+    const isContainer = isContainerKind(kind) || kind === "dk_group" || kind === "ekpke_group";
     const shape = {
-      id,
+      id: id,
       idManual: false,
-      kind,
-      text,
-      x,
-      y,
-      width: kind === "container" ? 240 : 128,
-      height: kind === "container" ? 140 : 56,
-      fill,
-      stroke,
+      kind: kind,
+      text: text,
+      x: x,
+      y: y,
+      width: size.width,
+      height: size.height,
+      fill: isContainer ? "#0d172a" : "#1c2f4f",
+      stroke: isContainer ? "#eef3ff" : "#80b6ff",
+      borderStyle: "solid",
       textColor: "#f4f7ff",
       rounded: true,
+      textAlign: "center",
       z: (state.model.shapes.length ? Math.max.apply(null, state.model.shapes.map((s) => s.z || 0)) : 0) + 1,
       parentId: null,
     };
+
     state.model.shapes.push(shape);
     setSelected({ type: "shape", id: shape.id });
-    render();
   }
 
   function deleteSelected() {
     if (!state.selected) return;
+    pushHistory();
+
     if (state.selected.type === "shape") {
       const shape = shapeById(state.selected.id);
       if (!shape) return;
-      const idsToDelete = [shape.id].concat(descendantsOf(shape.id));
-      const idSet = new Set(idsToDelete);
+      const ids = [shape.id].concat(descendantsOf(shape.id));
+      const idSet = new Set(ids);
       state.model.shapes = state.model.shapes.filter((s) => !idSet.has(s.id));
       state.model.arrows = state.model.arrows.filter((a) => !idSet.has(a.from.shapeId) && !idSet.has(a.to.shapeId));
       state.selected = null;
-      state.connectFromShapeId = null;
+      state.connectSourceId = null;
       render();
       return;
     }
+
     if (state.selected.type === "arrow") {
       state.model.arrows = state.model.arrows.filter((a) => a.id !== state.selected.id);
       state.selected = null;
@@ -1071,15 +1572,10 @@
     }
   }
 
-  function fitCanvas() {
-    els.canvasScroll.scrollLeft = 0;
-    els.canvasScroll.scrollTop = 0;
-    requestAnimationFrame(() => {
-      const targetLeft = Math.max(0, Math.round((els.canvasScroll.scrollWidth - els.canvasScroll.clientWidth) / 2));
-      const targetTop = Math.max(0, Math.round((els.canvasScroll.scrollHeight - els.canvasScroll.clientHeight) / 2));
-      els.canvasScroll.scrollLeft = targetLeft;
-      els.canvasScroll.scrollTop = targetTop;
-    });
+  function setMode(mode) {
+    state.mode = mode;
+    if (mode === "select") state.connectSourceId = null;
+    render();
   }
 
   function renderInspector() {
@@ -1087,255 +1583,18 @@
       els.inspector.innerHTML = '<div class="empty-state">Select a shape or arrow to edit properties.</div>';
       return;
     }
+
     if (state.selected.type === "shape") {
       renderShapeInspector(state.selected.id);
       return;
     }
+
     if (state.selected.type === "arrow") {
       renderArrowInspector(state.selected.id);
       return;
     }
+
     els.inspector.innerHTML = '<div class="empty-state">Selection unsupported.</div>';
-  }
-
-  function renderShapeInspector(shapeId) {
-    const shape = shapeById(shapeId);
-    if (!shape) {
-      els.inspector.innerHTML = '<div class="empty-state">Shape not found.</div>';
-      return;
-    }
-    const containers = state.model.shapes.filter((s) => s.kind === "container" && s.id !== shape.id && !isDescendant(s.id, shape.id));
-    const palette = state.model.metadata.colorPalette || DEFAULT_COLOR_PALETTE;
-    const parentText = shape.parentId ? (shapeById(shape.parentId) ? shapeById(shape.parentId).text : shape.parentId) : "None";
-    els.inspector.innerHTML = [
-      "<div>",
-      "<h3>Shape</h3>",
-      '<div><label>Text</label><input id="ins-shape-text" type="text" value="' + escapeHtml(shape.text) + '"/></div>',
-      '<div><label>ID</label><input id="ins-shape-id" type="text" value="' + escapeHtml(shape.id) + '"/></div>',
-      '<div class="hint">Parent container: <strong>' + escapeHtml(parentText) + "</strong></div>",
-      '<div class="hint">Auto ID: ' + (shape.idManual ? "off (manual)" : "on (container_text)") + "</div>",
-      "<h3>Color</h3>",
-      '<div class="palette" id="ins-shape-palette"></div>',
-      '<div><label>Custom fill</label><input id="ins-shape-fill" type="color" value="' + normalizeColor(shape.fill) + '"/></div>',
-      '<div><label>Border color</label><input id="ins-shape-stroke" type="color" value="' + normalizeColor(shape.stroke) + '"/></div>',
-      '<div class="row"><label style="margin:0;"><input id="ins-shape-rounded" type="checkbox"' + (shape.rounded ? " checked" : "") + "> Rounded corners</label></div>",
-      "<h3>Geometry</h3>",
-      '<div class="grid2">' +
-      '<div><label>x</label><input id="ins-shape-x" type="number" step="1" value="' + roundNum(shape.x) + '"/></div>' +
-      '<div><label>y</label><input id="ins-shape-y" type="number" step="1" value="' + roundNum(shape.y) + '"/></div>' +
-      '<div><label>width</label><input id="ins-shape-w" type="number" step="1" min="' + MIN_SHAPE_SIZE + '" value="' + roundNum(shape.width) + '"/></div>' +
-      '<div><label>height</label><input id="ins-shape-h" type="number" step="1" min="' + MIN_SHAPE_SIZE + '" value="' + roundNum(shape.height) + '"/></div>' +
-      "</div>",
-      "<h3>Z-Order</h3>",
-      '<div class="row"><button id="ins-z-back">Send Back</button><button id="ins-z-front">Bring Front</button></div>',
-      containers.length
-        ? "<h3>Container Assign</h3>" +
-          '<div><label>Parent container</label><select id="ins-parent">' +
-          '<option value="">None</option>' +
-          containers.map((c) => '<option value="' + escapeHtml(c.id) + '"' + (shape.parentId === c.id ? " selected" : "") + ">" + escapeHtml(c.text) + " (" + escapeHtml(c.id) + ")</option>").join("") +
-          "</select></div>"
-        : "",
-      "</div>",
-    ].join("");
-
-    const paletteEl = document.getElementById("ins-shape-palette");
-    palette.forEach((color) => {
-      const sw = document.createElement("button");
-      sw.type = "button";
-      sw.className = "swatch" + (normalizeColor(shape.fill) === normalizeColor(color) ? " active" : "");
-      sw.style.background = color;
-      sw.addEventListener("click", () => {
-        shape.fill = color;
-        if (!shape.stroke || shape.stroke === "#80b6ff" || shape.stroke === "#eef3ff") {
-          shape.stroke = darken(color, 36);
-        }
-        render();
-      });
-      paletteEl.appendChild(sw);
-    });
-
-    bindInput("ins-shape-text", "input", (value) => {
-      shape.text = value || (shape.kind === "container" ? "Container" : "Node");
-      if (!shape.idManual) {
-        const parent = shape.parentId ? shapeById(shape.parentId) : null;
-        const autoId = uniqueShapeId(deriveShapeId(shape.text, parent ? parent.text : ""), shape.id);
-        renameShapeId(shape.id, autoId);
-      }
-      render();
-    });
-    bindInput("ins-shape-id", "change", (value) => {
-      const next = uniqueShapeId(sanitizeId(value || shape.id), shape.id);
-      shape.idManual = true;
-      renameShapeId(shape.id, next);
-      render();
-    });
-    bindInput("ins-shape-fill", "input", (value) => {
-      shape.fill = value;
-      render();
-    });
-    bindInput("ins-shape-stroke", "input", (value) => {
-      shape.stroke = value;
-      render();
-    });
-    bindChecked("ins-shape-rounded", (checked) => {
-      shape.rounded = checked;
-      render();
-    });
-    bindNumber("ins-shape-x", (num) => { shape.x = num; render(); });
-    bindNumber("ins-shape-y", (num) => { shape.y = num; render(); });
-    bindNumber("ins-shape-w", (num) => { shape.width = Math.max(MIN_SHAPE_SIZE, num); render(); });
-    bindNumber("ins-shape-h", (num) => { shape.height = Math.max(MIN_SHAPE_SIZE, num); render(); });
-
-    const zBack = document.getElementById("ins-z-back");
-    const zFront = document.getElementById("ins-z-front");
-    if (zBack) zBack.addEventListener("click", () => {
-      const minZ = Math.min.apply(null, state.model.shapes.map((s) => s.z || 0));
-      shape.z = minZ - 1;
-      render();
-    });
-    if (zFront) zFront.addEventListener("click", () => {
-      const maxZ = Math.max.apply(null, state.model.shapes.map((s) => s.z || 0));
-      shape.z = maxZ + 1;
-      render();
-    });
-
-    const parentSel = document.getElementById("ins-parent");
-    if (parentSel) {
-      parentSel.addEventListener("change", () => {
-        const prev = shape.parentId;
-        shape.parentId = parentSel.value || null;
-        if (!shape.idManual && prev !== shape.parentId) {
-          updateAutoId(shape, prev);
-        }
-        render();
-      });
-    }
-  }
-
-  function renderArrowInspector(arrowId) {
-    const arrow = arrowById(arrowId);
-    if (!arrow) {
-      els.inspector.innerHTML = '<div class="empty-state">Arrow not found.</div>';
-      return;
-    }
-    const fromShape = shapeById(arrow.from.shapeId);
-    const toShape = shapeById(arrow.to.shapeId);
-    const cp1 = arrow.controlPoints[0] || { x: 0, y: 0 };
-    const cp2 = arrow.controlPoints[1] || { x: 0, y: 0 };
-    const waypointRows = (arrow.waypoints || []).map((wp, idx) =>
-      '<div class="grid2" data-waypoint="' + idx + '">' +
-      '<div><label>x</label><input data-waypoint-x="' + idx + '" type="number" step="1" value="' + roundNum(wp.x) + '"/></div>' +
-      '<div><label>y</label><input data-waypoint-y="' + idx + '" type="number" step="1" value="' + roundNum(wp.y) + '"/></div>' +
-      '<div class="row"><button data-waypoint-remove="' + idx + '" class="danger">Remove waypoint</button></div>' +
-      "</div>"
-    ).join("");
-
-    els.inspector.innerHTML = [
-      "<div>",
-      "<h3>Arrow</h3>",
-      '<div><label>ID</label><input id="ins-arrow-id" type="text" value="' + escapeHtml(arrow.id) + '"/></div>',
-      '<div class="hint">From: <strong>' + escapeHtml(fromShape ? fromShape.id : arrow.from.shapeId) + "</strong> (" + arrow.from.side + ":" + arrow.from.anchorIndex + ")</div>",
-      '<div class="hint">To: <strong>' + escapeHtml(toShape ? toShape.id : arrow.to.shapeId) + "</strong> (" + arrow.to.side + ":" + arrow.to.anchorIndex + ")</div>",
-      "<h3>Style</h3>",
-      '<div><label>Line style</label><select id="ins-arrow-line"><option value="solid"' + (arrow.lineStyle === "solid" ? " selected" : "") + '>solid</option><option value="dashed"' + (arrow.lineStyle === "dashed" ? " selected" : "") + ">dashed</option></select></div>",
-      '<div><label>Routing</label><select id="ins-arrow-routing"><option value="angled"' + (arrow.routing === "angled" ? " selected" : "") + '>angled/orthogonal</option><option value="straight"' + (arrow.routing === "straight" ? " selected" : "") + '>straight</option><option value="curved"' + (arrow.routing === "curved" ? " selected" : "") + ">curved</option></select></div>",
-      '<div class="row"><label style="margin:0;"><input id="ins-arrow-head" type="checkbox"' + (arrow.arrowHead ? " checked" : "") + "> Arrowhead</label></div>",
-      '<div><label>Color</label><input id="ins-arrow-color" type="color" value="' + normalizeColor(arrow.stroke) + '"/></div>',
-      '<div><label>Width</label><input id="ins-arrow-width" type="number" min="0.5" step="0.1" value="' + roundNum(arrow.width) + '"/></div>',
-      '<div><label>Label (optional)</label><input id="ins-arrow-label" type="text" value="' + escapeHtml(arrow.label || "") + '"/></div>',
-      arrow.routing === "curved"
-        ? "<h3>Control Points</h3>" +
-          '<div class="grid2">' +
-          '<div><label>cp1 x</label><input id="ins-cp1x" type="number" step="1" value="' + roundNum(cp1.x) + '"/></div>' +
-          '<div><label>cp1 y</label><input id="ins-cp1y" type="number" step="1" value="' + roundNum(cp1.y) + '"/></div>' +
-          '<div><label>cp2 x</label><input id="ins-cp2x" type="number" step="1" value="' + roundNum(cp2.x) + '"/></div>' +
-          '<div><label>cp2 y</label><input id="ins-cp2y" type="number" step="1" value="' + roundNum(cp2.y) + '"/></div>' +
-          "</div>"
-        : "",
-      arrow.routing === "angled"
-        ? "<h3>Waypoints</h3>" +
-          (waypointRows || '<div class="hint">No waypoints. Add one to bend manually.</div>') +
-          '<div class="row"><button id="ins-waypoint-add">Add waypoint</button></div>'
-        : "",
-      "</div>",
-    ].join("");
-
-    bindInput("ins-arrow-id", "change", (value) => {
-      arrow.id = uniqueArrowId(sanitizeId(value || arrow.id), arrow.id);
-      render();
-    });
-    bindInput("ins-arrow-line", "change", (value) => {
-      arrow.lineStyle = value === "dashed" ? "dashed" : "solid";
-      render();
-    });
-    bindInput("ins-arrow-routing", "change", (value) => {
-      arrow.routing = normalizeRouting(value);
-      if (arrow.routing === "curved" && (!arrow.controlPoints || arrow.controlPoints.length < 2)) {
-        const geom = buildArrowGeometry(arrow);
-        arrow.controlPoints = geom.controlPoints;
-      }
-      render();
-    });
-    bindChecked("ins-arrow-head", (checked) => {
-      arrow.arrowHead = checked;
-      render();
-    });
-    bindInput("ins-arrow-color", "input", (value) => {
-      arrow.stroke = value;
-      render();
-    });
-    bindNumber("ins-arrow-width", (num) => {
-      arrow.width = Math.max(0.5, num);
-      render();
-    });
-    bindInput("ins-arrow-label", "input", (value) => {
-      arrow.label = value;
-      render();
-    });
-
-    if (arrow.routing === "curved") {
-      bindNumber("ins-cp1x", (num) => setControlPoint(arrow, 0, "x", num));
-      bindNumber("ins-cp1y", (num) => setControlPoint(arrow, 0, "y", num));
-      bindNumber("ins-cp2x", (num) => setControlPoint(arrow, 1, "x", num));
-      bindNumber("ins-cp2y", (num) => setControlPoint(arrow, 1, "y", num));
-    }
-    if (arrow.routing === "angled") {
-      const addBtn = document.getElementById("ins-waypoint-add");
-      if (addBtn) {
-        addBtn.addEventListener("click", () => {
-          if (!Array.isArray(arrow.waypoints)) arrow.waypoints = [];
-          const geom = buildArrowGeometry(arrow);
-          arrow.waypoints.push({ x: (geom.from.x + geom.to.x) / 2, y: (geom.from.y + geom.to.y) / 2 });
-          render();
-        });
-      }
-      (arrow.waypoints || []).forEach((_, idx) => {
-        bindNumberByAttr("data-waypoint-x", idx, (num) => {
-          arrow.waypoints[idx].x = num;
-          render();
-        });
-        bindNumberByAttr("data-waypoint-y", idx, (num) => {
-          arrow.waypoints[idx].y = num;
-          render();
-        });
-        const removeBtn = document.querySelector('[data-waypoint-remove="' + idx + '"]');
-        if (removeBtn) {
-          removeBtn.addEventListener("click", () => {
-            arrow.waypoints.splice(idx, 1);
-            render();
-          });
-        }
-      });
-    }
-  }
-
-  function setControlPoint(arrow, index, axis, value) {
-    if (!Array.isArray(arrow.controlPoints)) arrow.controlPoints = [];
-    while (arrow.controlPoints.length < 2) {
-      arrow.controlPoints.push({ x: 0, y: 0 });
-    }
-    arrow.controlPoints[index][axis] = value;
-    render();
   }
 
   function escapeHtml(txt) {
@@ -1344,12 +1603,6 @@
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;");
-  }
-
-  function normalizeColor(color) {
-    const value = String(color || "").trim();
-    if (/^#[0-9a-fA-F]{6}$/.test(value)) return value;
-    return "#1c2f4f";
   }
 
   function roundNum(num) {
@@ -1370,10 +1623,10 @@
     el.addEventListener("change", () => handler(!!el.checked));
   }
 
-  function bindNumber(id, handler) {
+  function bindNumber(id, eventName, handler) {
     const el = document.getElementById(id);
     if (!el) return;
-    el.addEventListener("input", () => {
+    el.addEventListener(eventName, () => {
       const num = Number(el.value);
       if (!Number.isFinite(num)) return;
       handler(num);
@@ -1388,6 +1641,337 @@
       if (!Number.isFinite(num)) return;
       handler(num);
     });
+  }
+
+  function renderShapeInspector(shapeId) {
+    const shape = shapeById(shapeId);
+    if (!shape) {
+      els.inspector.innerHTML = '<div class="empty-state">Shape not found.</div>';
+      return;
+    }
+
+    const containers = state.model.shapes.filter((s) =>
+      isContainerKind(s.kind) && s.id !== shape.id && !isDescendant(s.id, shape.id)
+    );
+
+    const palette = state.model.metadata.colorPalette || DEFAULT_COLOR_PALETTE;
+    const parentText = shape.parentId
+      ? (shapeById(shape.parentId) ? shapeById(shape.parentId).text : shape.parentId)
+      : "None";
+
+    const showTextAlign = isContainerKind(shape.kind) || shape.kind === "dk_group" || shape.kind === "ekpke_group";
+
+    els.inspector.innerHTML = [
+      "<div>",
+      "<h3>Shape / Container</h3>",
+      '<div><label>Text</label><input id="ins-shape-text" type="text" value="' + escapeHtml(shape.text) + '"/></div>',
+      '<div><label>ID</label><input id="ins-shape-id" type="text" value="' + escapeHtml(shape.id) + '"/></div>',
+      '<div class="hint">Parent container: <strong>' + escapeHtml(parentText) + '</strong></div>',
+      '<div class="hint">Auto ID: ' + (shape.idManual ? "off (manual)" : "on (container_text)") + '</div>',
+      '<div class="hint">Type: <strong>' + escapeHtml(shape.kind) + '</strong></div>',
+      "<h3>Style</h3>",
+      '<div><label>Border style</label><select id="ins-shape-border-style"><option value="solid"' + (shape.borderStyle === "solid" ? " selected" : "") + '>solid</option><option value="dashed"' + (shape.borderStyle === "dashed" ? " selected" : "") + '>dashed</option></select></div>',
+      showTextAlign
+        ? '<div><label>Text align</label><select id="ins-shape-text-align"><option value="left"' + (shape.textAlign === "left" ? " selected" : "") + '>left</option><option value="center"' + (shape.textAlign === "center" ? " selected" : "") + '>center</option><option value="right"' + (shape.textAlign === "right" ? " selected" : "") + '>right</option></select></div>'
+        : "",
+      '<div class="row"><label style="margin:0;"><input id="ins-shape-rounded" type="checkbox"' + (shape.rounded ? " checked" : "") + '> Rounded corners</label></div>',
+      "<h3>Color</h3>",
+      '<div class="palette" id="ins-shape-palette"></div>',
+      '<div><label>Custom fill</label><input id="ins-shape-fill" type="color" value="' + normalizeColor(shape.fill, "#1c2f4f") + '"/></div>',
+      '<div><label>Border color</label><input id="ins-shape-stroke" type="color" value="' + normalizeColor(shape.stroke, "#80b6ff") + '"/></div>',
+      "<h3>Geometry</h3>",
+      '<div class="grid2">' +
+        '<div><label>x</label><input id="ins-shape-x" type="number" step="1" value="' + roundNum(shape.x) + '"/></div>' +
+        '<div><label>y</label><input id="ins-shape-y" type="number" step="1" value="' + roundNum(shape.y) + '"/></div>' +
+        '<div><label>width</label><input id="ins-shape-w" type="number" step="1" min="' + MIN_SHAPE_SIZE + '" value="' + roundNum(shape.width) + '"/></div>' +
+        '<div><label>height</label><input id="ins-shape-h" type="number" step="1" min="' + MIN_SHAPE_SIZE + '" value="' + roundNum(shape.height) + '"/></div>' +
+      '</div>',
+      "<h3>Z-Order</h3>",
+      '<div class="row"><button id="ins-z-back">Send Back</button><button id="ins-z-front">Bring Front</button></div>',
+      containers.length
+        ? '<h3>Container Assign</h3><div><label>Parent container</label><select id="ins-parent"><option value="">None</option>' +
+          containers.map((c) => '<option value="' + escapeHtml(c.id) + '"' + (shape.parentId === c.id ? " selected" : "") + '>' + escapeHtml(c.text) + ' (' + escapeHtml(c.id) + ')</option>').join("") +
+          '</select></div>'
+        : "",
+      "</div>",
+    ].join("");
+
+    const paletteEl = document.getElementById("ins-shape-palette");
+    palette.forEach((color) => {
+      const sw = document.createElement("button");
+      sw.type = "button";
+      sw.className = "swatch" + (normalizeColor(shape.fill, "#1c2f4f") === normalizeColor(color, "#1c2f4f") ? " active" : "");
+      sw.style.background = color;
+      sw.addEventListener("click", () => {
+        pushHistory();
+        // Palette must behave exactly like custom fill (do not mutate border style/stroke).
+        shape.fill = normalizeColor(color, shape.fill);
+        render();
+      });
+      paletteEl.appendChild(sw);
+    });
+
+    bindInput("ins-shape-text", "change", (value) => {
+      pushHistory();
+      shape.text = value || defaultShapeText(shape.kind);
+      if (!shape.idManual) {
+        const parent = shape.parentId ? shapeById(shape.parentId) : null;
+        const autoId = uniqueShapeId(deriveShapeId(shape.text, parent ? parent.text : ""), shape.id);
+        renameShapeId(shape.id, autoId);
+      }
+      render();
+    });
+
+    bindInput("ins-shape-id", "change", (value) => {
+      pushHistory();
+      const next = uniqueShapeId(sanitizeId(value || shape.id), shape.id);
+      shape.idManual = true;
+      renameShapeId(shape.id, next);
+      render();
+    });
+
+    bindInput("ins-shape-fill", "input", (value) => {
+      pushHistory();
+      shape.fill = normalizeColor(value, shape.fill);
+      render();
+    });
+
+    bindInput("ins-shape-stroke", "input", (value) => {
+      pushHistory();
+      shape.stroke = normalizeColor(value, shape.stroke);
+      render();
+    });
+
+    bindInput("ins-shape-border-style", "change", (value) => {
+      pushHistory();
+      shape.borderStyle = normalizeBorderStyle(value);
+      render();
+    });
+
+    if (showTextAlign) {
+      bindInput("ins-shape-text-align", "change", (value) => {
+        pushHistory();
+        shape.textAlign = normalizeTextAlign(value);
+        render();
+      });
+    }
+
+    bindChecked("ins-shape-rounded", (checked) => {
+      pushHistory();
+      shape.rounded = checked;
+      render();
+    });
+
+    bindNumber("ins-shape-x", "input", (num) => {
+      pushHistory();
+      shape.x = num;
+      render();
+    });
+    bindNumber("ins-shape-y", "input", (num) => {
+      pushHistory();
+      shape.y = num;
+      render();
+    });
+    bindNumber("ins-shape-w", "input", (num) => {
+      pushHistory();
+      shape.width = Math.max(MIN_SHAPE_SIZE, num);
+      if (shape.kind === "square" || shape.kind === "circle") {
+        shape.height = shape.width;
+      }
+      render();
+    });
+    bindNumber("ins-shape-h", "input", (num) => {
+      pushHistory();
+      shape.height = Math.max(MIN_SHAPE_SIZE, num);
+      if (shape.kind === "square" || shape.kind === "circle") {
+        shape.width = shape.height;
+      }
+      render();
+    });
+
+    const zBack = document.getElementById("ins-z-back");
+    const zFront = document.getElementById("ins-z-front");
+    if (zBack) {
+      zBack.addEventListener("click", () => {
+        pushHistory();
+        const minZ = Math.min.apply(null, state.model.shapes.map((s) => s.z || 0));
+        shape.z = minZ - 1;
+        render();
+      });
+    }
+    if (zFront) {
+      zFront.addEventListener("click", () => {
+        pushHistory();
+        const maxZ = Math.max.apply(null, state.model.shapes.map((s) => s.z || 0));
+        shape.z = maxZ + 1;
+        render();
+      });
+    }
+
+    const parentSel = document.getElementById("ins-parent");
+    if (parentSel) {
+      parentSel.addEventListener("change", () => {
+        pushHistory();
+        const prev = shape.parentId;
+        shape.parentId = parentSel.value || null;
+        if (!shape.idManual && prev !== shape.parentId) {
+          updateAutoId(shape, prev);
+        }
+        render();
+      });
+    }
+  }
+
+  function setControlPoint(arrow, index, axis, value) {
+    while (arrow.controlPoints.length < 2) {
+      arrow.controlPoints.push({ x: 0, y: 0 });
+    }
+    arrow.controlPoints[index][axis] = value;
+  }
+
+  function renderArrowInspector(arrowId) {
+    const arrow = arrowById(arrowId);
+    if (!arrow) {
+      els.inspector.innerHTML = '<div class="empty-state">Arrow not found.</div>';
+      return;
+    }
+
+    const fromShape = shapeById(arrow.from.shapeId);
+    const toShape = shapeById(arrow.to.shapeId);
+    const cp1 = arrow.controlPoints[0] || { x: 0, y: 0 };
+    const cp2 = arrow.controlPoints[1] || { x: 0, y: 0 };
+
+    const waypointRows = (arrow.waypoints || []).map((wp, idx) => {
+      return '<div class="grid2">' +
+        '<div><label>x</label><input data-waypoint-x="' + idx + '" type="number" step="1" value="' + roundNum(wp.x) + '"/></div>' +
+        '<div><label>y</label><input data-waypoint-y="' + idx + '" type="number" step="1" value="' + roundNum(wp.y) + '"/></div>' +
+        '<div class="row"><button data-waypoint-remove="' + idx + '" class="danger">Remove waypoint</button></div>' +
+      '</div>';
+    }).join("");
+
+    els.inspector.innerHTML = [
+      "<div>",
+      "<h3>Connection</h3>",
+      '<div><label>ID</label><input id="ins-arrow-id" type="text" value="' + escapeHtml(arrow.id) + '"/></div>',
+      '<div class="hint">From: <strong>' + escapeHtml(fromShape ? fromShape.id : arrow.from.shapeId) + '</strong> (' + arrow.from.side + ':' + arrow.from.anchorIndex + ')</div>',
+      '<div class="hint">To: <strong>' + escapeHtml(toShape ? toShape.id : arrow.to.shapeId) + '</strong> (' + arrow.to.side + ':' + arrow.to.anchorIndex + ')</div>',
+      "<h3>Style</h3>",
+      '<div><label>Type</label><select id="ins-arrow-type"><option value="arrow"' + (arrow.connectionType === "arrow" ? " selected" : "") + '>Arrow</option><option value="bi"' + (arrow.connectionType === "bi" ? " selected" : "") + '>Bi-directional Arrow</option><option value="line"' + (arrow.connectionType === "line" ? " selected" : "") + '>Line</option></select></div>',
+      '<div><label>Line style</label><select id="ins-arrow-line"><option value="solid"' + (arrow.lineStyle === "solid" ? " selected" : "") + '>solid</option><option value="dashed"' + (arrow.lineStyle === "dashed" ? " selected" : "") + '>dashed</option></select></div>',
+      '<div><label>Routing</label><select id="ins-arrow-routing"><option value="angled"' + (arrow.routing === "angled" ? " selected" : "") + '>angled/orthogonal</option><option value="straight"' + (arrow.routing === "straight" ? " selected" : "") + '>straight</option><option value="curved"' + (arrow.routing === "curved" ? " selected" : "") + '>curved</option></select></div>',
+      '<div><label>Color</label><input id="ins-arrow-color" type="color" value="' + normalizeColor(arrow.stroke, "#e8efff") + '"/></div>',
+      '<div><label>Width</label><input id="ins-arrow-width" type="number" min="0.5" step="0.1" value="' + roundNum(arrow.width) + '"/></div>',
+      arrow.routing === "curved"
+        ? '<h3>Control Points</h3>' +
+          '<div class="grid2">' +
+            '<div><label>cp1 x</label><input id="ins-cp1x" type="number" step="1" value="' + roundNum(cp1.x) + '"/></div>' +
+            '<div><label>cp1 y</label><input id="ins-cp1y" type="number" step="1" value="' + roundNum(cp1.y) + '"/></div>' +
+            '<div><label>cp2 x</label><input id="ins-cp2x" type="number" step="1" value="' + roundNum(cp2.x) + '"/></div>' +
+            '<div><label>cp2 y</label><input id="ins-cp2y" type="number" step="1" value="' + roundNum(cp2.y) + '"/></div>' +
+          '</div>'
+        : "",
+      arrow.routing === "angled"
+        ? '<h3>Waypoints</h3>' + (waypointRows || '<div class="hint">No waypoints. Add one to bend manually.</div>') + '<div class="row"><button id="ins-waypoint-add">Add waypoint</button></div>'
+        : "",
+      "</div>",
+    ].join("");
+
+    bindInput("ins-arrow-id", "change", (value) => {
+      pushHistory();
+      arrow.id = uniqueArrowId(sanitizeId(value || arrow.id), arrow.id);
+      render();
+    });
+
+    bindInput("ins-arrow-type", "change", (value) => {
+      pushHistory();
+      arrow.connectionType = normalizeConnectionType(value);
+      render();
+    });
+
+    bindInput("ins-arrow-line", "change", (value) => {
+      pushHistory();
+      arrow.lineStyle = normalizeLineStyle(value);
+      render();
+    });
+
+    bindInput("ins-arrow-routing", "change", (value) => {
+      pushHistory();
+      arrow.routing = normalizeRouting(value);
+      if (arrow.routing === "curved" && arrow.controlPoints.length < 2) {
+        const geom = buildArrowGeometry(arrow);
+        arrow.controlPoints = geom.controlPoints;
+      }
+      render();
+    });
+
+    bindInput("ins-arrow-color", "input", (value) => {
+      pushHistory();
+      arrow.stroke = normalizeColor(value, arrow.stroke);
+      render();
+    });
+
+    bindNumber("ins-arrow-width", "input", (num) => {
+      pushHistory();
+      arrow.width = Math.max(0.5, num);
+      render();
+    });
+
+    if (arrow.routing === "curved") {
+      bindNumber("ins-cp1x", "input", (num) => {
+        pushHistory();
+        setControlPoint(arrow, 0, "x", num);
+        render();
+      });
+      bindNumber("ins-cp1y", "input", (num) => {
+        pushHistory();
+        setControlPoint(arrow, 0, "y", num);
+        render();
+      });
+      bindNumber("ins-cp2x", "input", (num) => {
+        pushHistory();
+        setControlPoint(arrow, 1, "x", num);
+        render();
+      });
+      bindNumber("ins-cp2y", "input", (num) => {
+        pushHistory();
+        setControlPoint(arrow, 1, "y", num);
+        render();
+      });
+    }
+
+    if (arrow.routing === "angled") {
+      const addBtn = document.getElementById("ins-waypoint-add");
+      if (addBtn) {
+        addBtn.addEventListener("click", () => {
+          pushHistory();
+          const geom = buildArrowGeometry(arrow);
+          arrow.waypoints.push({ x: (geom.from.x + geom.to.x) / 2, y: (geom.from.y + geom.to.y) / 2 });
+          render();
+        });
+      }
+
+      (arrow.waypoints || []).forEach((_, idx) => {
+        bindNumberByAttr("data-waypoint-x", idx, (num) => {
+          pushHistory();
+          arrow.waypoints[idx].x = num;
+          render();
+        });
+        bindNumberByAttr("data-waypoint-y", idx, (num) => {
+          pushHistory();
+          arrow.waypoints[idx].y = num;
+          render();
+        });
+
+        const removeBtn = document.querySelector('[data-waypoint-remove="' + idx + '"]');
+        if (removeBtn) {
+          removeBtn.addEventListener("click", () => {
+            pushHistory();
+            arrow.waypoints.splice(idx, 1);
+            render();
+          });
+        }
+      });
+    }
   }
 
   async function apiLoadModel() {
@@ -1419,21 +2003,25 @@
     return response.json();
   }
 
-  async function loadModel() {
+  function syncElfFromInput() {
     state.elf = String(els.elfInput.value || "").trim();
-    if (!state.elf) {
-      setStatus("ELF key cannot be empty.", "error");
-      return;
-    }
+    if (!state.elf) state.elf = "diagram.elf";
+    if (!state.model.metadata) state.model.metadata = {};
+    state.model.metadata.elf = state.elf;
+  }
+
+  async function loadModel() {
+    syncElfFromInput();
     setStatus("Loading model for " + state.elf + "...");
     try {
       const payload = await apiLoadModel();
       state.model = payload.model || defaultModel(state.elf);
+      state.history = [];
+      state.future = [];
       ensureModelDefaults();
       state.selected = null;
-      state.connectFromShapeId = null;
+      state.connectSourceId = null;
       render();
-      fitCanvas();
       setStatus("Loaded model from " + payload.paths.store, "ok");
     } catch (err) {
       setStatus("Load error: " + (err && err.message ? err.message : String(err)), "error");
@@ -1441,6 +2029,7 @@
   }
 
   async function saveModel() {
+    syncElfFromInput();
     ensureModelDefaults();
     setStatus("Saving model...");
     try {
@@ -1455,8 +2044,9 @@
   }
 
   async function generateRenderer() {
+    syncElfFromInput();
     ensureModelDefaults();
-    setStatus("Generating renderer...");
+    setStatus("Generating full renderPrimaryReferenceDiagram() function...");
     try {
       const payload = await apiGenerate();
       state.model = payload.model || state.model;
@@ -1468,37 +2058,81 @@
     }
   }
 
-  function setMode(mode) {
-    state.mode = mode;
-    if (mode !== "connect") state.connectFromShapeId = null;
-    els.toolSelectBtn.classList.toggle("active", mode === "select");
-    els.toolConnectBtn.classList.toggle("active", mode === "connect");
-    render();
-  }
-
   function bindEvents() {
     els.loadBtn.addEventListener("click", loadModel);
     els.saveBtn.addEventListener("click", saveModel);
     els.generateBtn.addEventListener("click", generateRenderer);
+
     els.toolSelectBtn.addEventListener("click", () => setMode("select"));
-    els.toolConnectBtn.addEventListener("click", () => setMode("connect"));
-    els.addShapeBtn.addEventListener("click", () => addShape("shape"));
-    els.addContainerBtn.addEventListener("click", () => addShape("container"));
+    els.toolConnectArrowBtn.addEventListener("click", () => setMode("connect_arrow"));
+    els.toolConnectBiBtn.addEventListener("click", () => setMode("connect_bi"));
+    els.toolConnectLineBtn.addEventListener("click", () => setMode("connect_line"));
+
+    els.addSquareBtn.addEventListener("click", () => addShape("square"));
+    els.addTriangleBtn.addEventListener("click", () => addShape("triangle"));
+    els.addCircleBtn.addEventListener("click", () => addShape("circle"));
+    els.addContainerStandardBtn.addEventListener("click", () => addShape("container"));
+    els.addContainerHeaderBtn.addEventListener("click", () => addShape("header_container"));
+    els.addDkGroupBtn.addEventListener("click", () => addShape("dk_group"));
+    els.addEkPkeGroupBtn.addEventListener("click", () => addShape("ekpke_group"));
+
     els.deleteBtn.addEventListener("click", deleteSelected);
-    els.fitBtn.addEventListener("click", fitCanvas);
+
+    els.zoomInBtn.addEventListener("click", () => setZoom(state.view.zoom * 1.12));
+    els.zoomOutBtn.addEventListener("click", () => setZoom(state.view.zoom / 1.12));
+    els.zoomResetBtn.addEventListener("click", resetView);
+
     els.svg.addEventListener("pointerdown", onBackgroundPointerDown);
     window.addEventListener("pointermove", handlePointerMove);
     window.addEventListener("pointerup", handlePointerUp);
+
+    els.canvasScroll.addEventListener("wheel", (evt) => {
+      if (!evt.ctrlKey && !evt.metaKey) return;
+      evt.preventDefault();
+      const factor = evt.deltaY < 0 ? 1.1 : 0.9;
+      setZoom(state.view.zoom * factor);
+    }, { passive: false });
+
+    els.elfInput.addEventListener("change", () => {
+      syncElfFromInput();
+      setStatus("Diagram name changed to " + state.elf + ". Save will use this name.", "ok");
+    });
+
     window.addEventListener("keydown", (evt) => {
-      if (evt.key === "Delete" || evt.key === "Backspace") {
-        const target = evt.target;
-        const isInput = target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA");
-        if (isInput) return;
-        deleteSelected();
+      const target = evt.target;
+      const inInput = target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT");
+
+      if ((evt.ctrlKey || evt.metaKey) && !evt.shiftKey && evt.key.toLowerCase() === "z") {
+        evt.preventDefault();
+        undo();
+        return;
       }
+
+      if ((evt.ctrlKey || evt.metaKey) && evt.key.toLowerCase() === "c") {
+        if (inInput) return;
+        evt.preventDefault();
+        copySelectedShapeBundle();
+        return;
+      }
+
+      if ((evt.ctrlKey || evt.metaKey) && evt.key.toLowerCase() === "v") {
+        if (inInput) return;
+        evt.preventDefault();
+        pasteClipboard();
+        return;
+      }
+
+      if (evt.key === "Delete" || evt.key === "Backspace") {
+        if (inInput) return;
+        evt.preventDefault();
+        deleteSelected();
+        return;
+      }
+
       if (evt.key === "Escape") {
-        state.connectFromShapeId = null;
+        state.connectSourceId = null;
         state.drag = null;
+        els.canvasScroll.classList.remove("panning");
         setMode("select");
       }
     });
@@ -1512,7 +2146,6 @@
     ensureModelDefaults();
     bindEvents();
     render();
-    fitCanvas();
     loadModel();
   }
 

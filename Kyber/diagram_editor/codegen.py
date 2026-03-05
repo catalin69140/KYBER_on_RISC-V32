@@ -42,9 +42,10 @@ def _endpoint_codegen(endpoint: Dict[str, Any], shape_map: Dict[str, Dict[str, A
 
 
 def _sorted_shapes(model: Dict[str, Any]) -> List[Dict[str, Any]]:
+    container_kinds = {"container", "header_container"}
     return sorted(
         model.get("shapes", []),
-        key=lambda s: (int(s.get("z", 0)), s.get("kind") != "container", s.get("id", "")),
+        key=lambda s: (int(s.get("z", 0)), s.get("kind") not in container_kinds, s.get("id", "")),
     )
 
 
@@ -68,7 +69,7 @@ def _build_codegen_payload(model: Dict[str, Any]) -> Tuple[List[Dict[str, Any]],
         shape_specs.append(
             {
                 "id": shape["id"],
-                "kind": shape.get("kind", "shape"),
+                "kind": shape.get("kind", "square"),
                 "x": _fmt_num(shape.get("x", 0)),
                 "y": _fmt_num(shape.get("y", 0)),
                 "w": _fmt_num(shape.get("width", 100)),
@@ -78,6 +79,8 @@ def _build_codegen_payload(model: Dict[str, Any]) -> Tuple[List[Dict[str, Any]],
                 "stroke": shape.get("stroke"),
                 "textColor": shape.get("textColor"),
                 "rounded": bool(shape.get("rounded", True)),
+                "borderStyle": shape.get("borderStyle", "solid"),
+                "textAlign": shape.get("textAlign", "center"),
             }
         )
 
@@ -93,13 +96,10 @@ def _build_codegen_payload(model: Dict[str, Any]) -> Tuple[List[Dict[str, Any]],
         opts: Dict[str, Any] = {
             "routing": arrow.get("routing", "angled"),
             "dashed": arrow.get("lineStyle", "solid") == "dashed",
-            "arrowHead": bool(arrow.get("arrowHead", True)),
+            "connectionType": arrow.get("connectionType", "arrow"),
             "color": arrow.get("stroke", "#e8efff"),
             "width": _fmt_num(arrow.get("width", 1.7)),
         }
-        label = str(arrow.get("label") or "").strip()
-        if label:
-            opts["label"] = label
 
         waypoints = arrow.get("waypoints")
         if isinstance(waypoints, list) and waypoints:
@@ -188,7 +188,17 @@ function generatedRenderPrimaryReferenceDiagram() {{
     }}));
 
     const generatedShapes = {shape_json};
-    generatedShapes.forEach((shapeSpec) => addGeneratedRefShape(svg, shapeSpec));
+    generatedShapes.forEach((shapeSpec) => {{
+        if (shapeSpec.kind === "dk_group") {{
+            addRefDkGroup(svg, shapeSpec);
+            return;
+        }}
+        if (shapeSpec.kind === "ekpke_group") {{
+            addRefEkPkeGroup(svg, shapeSpec);
+            return;
+        }}
+        addGeneratedRefShape(svg, shapeSpec);
+    }});
 
     primaryRefConnectorBuffer = [];
     const generatedConnectors = {connector_json};

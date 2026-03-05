@@ -51,14 +51,14 @@
     }
 
     #topbar input[type="text"] {
-      min-width: 320px;
+      min-width: 340px;
     }
 
     #main {
       flex: 1;
       min-height: 0;
       display: grid;
-      grid-template-columns: 220px 1fr 330px;
+      grid-template-columns: 280px 1fr 350px;
       gap: 10px;
       padding: 10px;
     }
@@ -78,6 +78,23 @@
       overflow: auto;
     }
 
+    .tool-group {
+      border: 1px solid #304767;
+      border-radius: 8px;
+      padding: 8px;
+      background: rgba(15, 24, 41, 0.7);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .tool-group h3 {
+      margin: 0 0 4px;
+      font-size: 13px;
+      color: #c8d8ff;
+      letter-spacing: 0.2px;
+    }
+
     #canvas-shell {
       position: relative;
       overflow: hidden;
@@ -92,7 +109,7 @@
       z-index: 10;
       display: flex;
       gap: 6px;
-      background: rgba(4, 10, 20, 0.75);
+      background: rgba(4, 10, 20, 0.8);
       border: 1px solid #2c446c;
       border-radius: 8px;
       padding: 6px;
@@ -102,7 +119,12 @@
       width: 100%;
       height: 100%;
       overflow: auto;
-      padding: 18px;
+      padding: 12px;
+      cursor: grab;
+    }
+
+    #canvas-scroll.panning {
+      cursor: grabbing;
     }
 
     #diagram-canvas {
@@ -250,22 +272,20 @@
       line-height: 1.35;
     }
 
-    .chip {
-      display: inline-flex;
-      align-items: center;
-      padding: 2px 8px;
-      border-radius: 999px;
-      border: 1px solid #3b5787;
-      font-size: 11px;
-      color: #d4e4ff;
-      background: rgba(26, 45, 76, 0.85);
-      margin-right: 6px;
-      margin-bottom: 6px;
+    .zoom-label {
+      min-width: 58px;
+      text-align: center;
+      color: #cfe1ff;
+      font-size: 12px;
+      padding: 4px 6px;
+      border: 1px solid #35517d;
+      border-radius: 6px;
+      background: rgba(18, 30, 52, 0.8);
     }
 
-    @media (max-width: 1320px) {
+    @media (max-width: 1400px) {
       #main {
-        grid-template-columns: 190px 1fr 300px;
+        grid-template-columns: 250px 1fr 320px;
       }
     }
 
@@ -276,7 +296,7 @@
       }
 
       #toolbar, #inspector {
-        max-height: 220px;
+        max-height: 260px;
       }
     }
   </style>
@@ -285,32 +305,61 @@
   <div id="app">
     <div id="topbar">
       <strong>Kyber Primary Diagram Editor</strong>
-      <label for="elf-input" style="margin:0 0 0 10px;color:#c9dbff;">ELF key</label>
+      <label for="elf-input" style="margin:0 0 0 10px;color:#c9dbff;">ELF / diagram name</label>
       <input id="elf-input" type="text" placeholder="crypto_kem_kyber768_kyber768r1_hashing.elf" />
       <button id="load-btn">Load</button>
       <button id="save-btn">Save Store</button>
-      <button id="generate-btn">Generate renderPrimaryReferenceDiagram()</button>
+      <button id="generate-btn">Generate Full renderPrimaryReferenceDiagram()</button>
     </div>
 
     <div id="main">
       <aside id="toolbar" class="panel">
         <h2>Tools</h2>
-        <button id="tool-select" class="active">Select / Move</button>
-        <button id="tool-connect">Connect Arrows</button>
-        <button id="add-shape-btn">Add Rectangle</button>
-        <button id="add-container-btn">Add Container</button>
-        <button id="delete-btn" class="danger">Delete Selected</button>
+
+        <div class="tool-group">
+          <h3>Selection</h3>
+          <button id="tool-select" class="active">Select / Move</button>
+          <button id="delete-btn" class="danger">Delete Selected</button>
+        </div>
+
+        <div class="tool-group">
+          <h3>Connection Tools</h3>
+          <button id="tool-connect-arrow">Arrow</button>
+          <button id="tool-connect-bi">Bi-directional Arrow</button>
+          <button id="tool-connect-line">Line</button>
+        </div>
+
+        <div class="tool-group">
+          <h3>Shape Tools</h3>
+          <button id="add-square-btn">Square</button>
+          <button id="add-triangle-btn">Triangle</button>
+          <button id="add-circle-btn">Circle</button>
+        </div>
+
+        <div class="tool-group">
+          <h3>Container Tools</h3>
+          <button id="add-container-standard-btn">Standard Container</button>
+          <button id="add-container-header-btn">Header Container</button>
+        </div>
+
+        <div class="tool-group">
+          <h3>Group Forms</h3>
+          <button id="add-dk-group-btn">DK Group (addRefDkGroup)</button>
+          <button id="add-ekpke-group-btn">ekPKE Group (addRefEkPkeGroup)</button>
+        </div>
+
         <div class="hint">
-          Drag to move shapes.
-          Resize using corner handles.
-          In connect mode: click source shape, then target shape.
+          In connection mode: click source, then target. Click the same source again to deselect.
+          Drag empty canvas area to pan. Use Ctrl+Z for undo, Ctrl+C/Ctrl+V for shape/container copy/paste.
         </div>
       </aside>
 
       <section id="canvas-shell" class="panel">
         <div id="canvas-toolbar">
-          <button id="fit-btn">Fit</button>
-          <span id="selection-chip" class="chip">Selection: none</span>
+          <button id="zoom-in-btn">+</button>
+          <button id="zoom-out-btn">-</button>
+          <button id="zoom-reset-btn">Reset</button>
+          <div id="zoom-label" class="zoom-label">100%</div>
         </div>
         <div id="canvas-scroll">
           <svg id="diagram-canvas" xmlns="http://www.w3.org/2000/svg"></svg>
