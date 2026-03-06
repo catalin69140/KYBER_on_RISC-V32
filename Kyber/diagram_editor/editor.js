@@ -198,14 +198,6 @@
       });
   }
 
-  function sortedContainerShapes() {
-    return sortedShapesBy((shape) => isContainerKind(shape.kind));
-  }
-
-  function sortedForegroundShapes() {
-    return sortedShapesBy((shape) => !isContainerKind(shape.kind));
-  }
-
   function sortedArrows() {
     return (state.model.arrows || []).slice().sort((a, b) => a.id.localeCompare(b.id));
   }
@@ -727,7 +719,10 @@
   function richHtmlToPlainText(html) {
     const el = document.createElement("div");
     el.innerHTML = String(html || "");
-    return String(el.innerText || el.textContent || "").replace(/\u00a0/g, " ").replace(/\r/g, "");
+    return String(el.innerText || el.textContent || "")
+      .replace(/\u200b/g, "")
+      .replace(/\u00a0/g, " ")
+      .replace(/\r/g, "");
   }
 
   function sanitizeInlineStyle(styleText) {
@@ -750,7 +745,7 @@
 
     function serialize(node) {
       if (!node) return "";
-      if (node.nodeType === Node.TEXT_NODE) return escapeHtml(node.textContent || "");
+      if (node.nodeType === Node.TEXT_NODE) return escapeHtml(String(node.textContent || "").replace(/\u200b/g, ""));
       if (node.nodeType !== Node.ELEMENT_NODE) return "";
 
       const tag = String(node.tagName || "").toLowerCase();
@@ -1592,19 +1587,16 @@
       fill: state.model.metadata.background || "#0b1220",
     }));
 
-    const containerLayer = createSvg("g");
-    const arrowLayer = createSvg("g");
     const shapeLayer = createSvg("g");
+    const arrowLayer = createSvg("g");
     const overlayLayer = createSvg("g");
 
-    els.svg.appendChild(containerLayer);
-    els.svg.appendChild(arrowLayer);
     els.svg.appendChild(shapeLayer);
+    els.svg.appendChild(arrowLayer);
     els.svg.appendChild(overlayLayer);
 
-    sortedContainerShapes().forEach((shape) => renderShape(containerLayer, shape));
+    sortedShapes().forEach((shape) => renderShape(shapeLayer, shape));
     sortedArrows().forEach((arrow) => renderArrow(arrowLayer, arrow));
-    sortedForegroundShapes().forEach((shape) => renderShape(shapeLayer, shape));
 
     renderSelectionOverlay(overlayLayer);
     updateToolButtonStates();
@@ -2163,6 +2155,62 @@
     return null;
   }
 
+  function findStyledAncestor(node, editor, predicate) {
+    let cur = node;
+    if (cur && cur.nodeType === Node.TEXT_NODE) cur = cur.parentNode;
+    while (cur && cur !== editor) {
+      if (cur.nodeType === Node.ELEMENT_NODE && predicate(cur)) return cur;
+      cur = cur.parentNode;
+    }
+    return null;
+  }
+
+  function caretInsideOverline(editor, range) {
+    if (!editor || !range) return false;
+    const node = range.startContainer;
+    return !!findStyledAncestor(node, editor, (el) => {
+      const textDecoration = String(window.getComputedStyle(el).textDecorationLine || el.style.textDecoration || "").toLowerCase();
+      return textDecoration.indexOf("overline") >= 0;
+    });
+  }
+
+  function insertCaretStyleSpan(editor, styles) {
+    if (!editor) return;
+    const range = restoreRichTextSelection(editor, true);
+    if (!range) return;
+    const span = document.createElement("span");
+    Object.keys(styles || {}).forEach((key) => {
+      span.style[key] = styles[key];
+    });
+    span.appendChild(document.createTextNode("\u200b"));
+    range.insertNode(span);
+    const nextRange = document.createRange();
+    nextRange.setStart(span.firstChild, 1);
+    nextRange.collapse(true);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(nextRange);
+  }
+
+  function exitCaretStyle(editor, matcher) {
+    const range = restoreRichTextSelection(editor, false);
+    if (!range || !range.collapsed) return false;
+    const activeNode = findStyledAncestor(range.startContainer, editor, matcher);
+    if (!activeNode) return false;
+    const marker = document.createTextNode("\u200b");
+    if (activeNode.parentNode) {
+      activeNode.parentNode.insertBefore(marker, activeNode.nextSibling);
+      const nextRange = document.createRange();
+      nextRange.setStart(marker, 1);
+      nextRange.collapse(true);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(nextRange);
+      return true;
+    }
+    return false;
+  }
+
   function applyStyleToRange(range, styles, blockTag) {
     if (!range) return null;
     const tag = blockTag ? "div" : "span";
@@ -2202,6 +2250,28 @@
     pushHistory();
     restoreRichTextSelection(editor, true);
     document.execCommand(command, false, null);
+    captureRichTextSelection();
+    syncShapeRichText(shape, editor, false);
+  }
+
+  function executeOverlineCommand(shape) {
+    const editor = getRichTextEditorEl();
+    if (!editor) return;
+    pushHistory();
+    const range = restoreRichTextSelection(editor, false);
+    if (range && !range.collapsed) {
+      applyInlineStyleCommand(shape, { textDecoration: "overline" }, false);
+      return;
+    }
+    if (exitCaretStyle(editor, (el) => {
+      const textDecoration = String(window.getComputedStyle(el).textDecorationLine || el.style.textDecoration || "").toLowerCase();
+      return textDecoration.indexOf("overline") >= 0;
+    })) {
+      captureRichTextSelection();
+      syncShapeRichText(shape, editor, false);
+      return;
+    }
+    insertCaretStyleSpan(editor, { textDecoration: "overline" });
     captureRichTextSelection();
     syncShapeRichText(shape, editor, false);
   }
@@ -2278,7 +2348,16 @@
   function updateRichTextToolbarState() {
     const editor = getRichTextEditorEl();
     if (!editor) return;
-    const formatState = collectRichTextFormatState(editor, inspectRichTextSelection(editor));
+    const range = inspectRichTextSelection(editor);
+    let formatState = collectRichTextFormatState(editor, range);
+    if (range && range.collapsed && selectionInsideNode(editor, window.getSelection())) {
+      try { formatState.bold = !!document.queryCommandState("bold") || formatState.bold; } catch (err) {}
+      try { formatState.italic = !!document.queryCommandState("italic") || formatState.italic; } catch (err) {}
+      try { formatState.underline = !!document.queryCommandState("underline") || formatState.underline; } catch (err) {}
+      try { formatState.subscript = !!document.queryCommandState("subscript") || formatState.subscript; } catch (err) {}
+      try { formatState.superscript = !!document.queryCommandState("superscript") || formatState.superscript; } catch (err) {}
+      formatState.overline = caretInsideOverline(editor, range) || formatState.overline;
+    }
     setButtonActive("fmt-bold", formatState.bold);
     setButtonActive("fmt-italic", formatState.italic);
     setButtonActive("fmt-underline", formatState.underline);
@@ -2425,7 +2504,7 @@
     bindIconButton("fmt-bold", () => executeTextCommand(shape, "bold"));
     bindIconButton("fmt-italic", () => executeTextCommand(shape, "italic"));
     bindIconButton("fmt-underline", () => executeTextCommand(shape, "underline"));
-    bindIconButton("fmt-overline", () => applyInlineStyleCommand(shape, { textDecoration: "overline" }, true));
+    bindIconButton("fmt-overline", () => executeOverlineCommand(shape));
     bindIconButton("fmt-subscript", () => executeTextCommand(shape, "subscript"));
     bindIconButton("fmt-superscript", () => executeTextCommand(shape, "superscript"));
     bindIconButton("fmt-align-left", () => {
