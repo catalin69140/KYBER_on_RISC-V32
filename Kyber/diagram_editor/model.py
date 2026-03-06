@@ -5,9 +5,10 @@ import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 MODEL_VERSION = 2
-DEFAULT_VIEWBOX = {"width": 1980.0, "height": 410.0}
+DEFAULT_VIEWBOX = {"width": 1980.0, "height": 1200.0}
 DEFAULT_BACKGROUND = "#0b1220"
 DEFAULT_ANCHOR_STOPS = [i / 10 for i in range(11)]
+DEFAULT_FONT_FAMILY = 'Georgia, "Times New Roman", serif'
 
 # Existing primary diagram role colors from CryptoTool UI.
 DEFAULT_COLOR_PALETTE = [
@@ -326,7 +327,7 @@ def normalize_model(raw_model: Any, elf_name: str = "") -> Dict[str, Any]:
             "rounded": bool(raw_shape.get("rounded", True)),
             "textAlign": _as_text_align(raw_shape.get("textAlign")),
             "fontSize": max(8.0, min(40.0, _to_float(raw_shape.get("fontSize"), 13.0 if kind in VALID_CONTAINER_KINDS or kind in {"component_group", "dk_group", "ekpke_group"} else 12.5))),
-            "fontFamily": str(raw_shape.get("fontFamily") or 'Georgia, "Times New Roman", serif'),
+            "fontFamily": DEFAULT_FONT_FAMILY,
             "componentDirection": _as_component_direction(raw_shape.get("componentDirection")),
             "componentCount": max(1, min(24, _to_int(raw_shape.get("componentCount"), 4 if kind == "component_group" else 1))),
             "z": _to_int(raw_shape.get("z"), idx),

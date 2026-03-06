@@ -10,6 +10,7 @@
     "#5e3b00",
     "#253f57",
   ];
+  const DEFAULT_FONT_FAMILY = 'Georgia, "Times New Roman", serif';
 
   const DEFAULT_ANCHOR_STOPS = Array.from({ length: 11 }, (_, idx) => idx / 10);
   const HANDLE_SIZE = 8;
@@ -49,8 +50,8 @@
     clipboard: null,
     view: {
       zoom: 1,
-      minZoom: 0.35,
-      maxZoom: 3,
+      minZoom: 0.15,
+      maxZoom: 6,
     },
   };
 
@@ -152,7 +153,7 @@
       version: 2,
       metadata: {
         elf: elfName || "",
-        viewBox: { width: 1980, height: 410 },
+        viewBox: { width: 1980, height: 1200 },
         background: "#0b1220",
         colorPalette: DEFAULT_COLOR_PALETTE.slice(),
       },
@@ -262,10 +263,22 @@
     return "#" + [r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("");
   }
 
+  function borderNuance(hex) {
+    // CryptoTool-like border nuance: brighter, slightly cooler than fill.
+    const value = normalizeColor(hex, "#1c2f4f");
+    const h = value.replace("#", "");
+    const r = clamp(parseInt(h.slice(0, 2), 16) + 58, 0, 255);
+    const g = clamp(parseInt(h.slice(2, 4), 16) + 68, 0, 255);
+    const b = clamp(parseInt(h.slice(4, 6), 16) + 92, 0, 255);
+    return "#" + [r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("");
+  }
+
   function ensureModelDefaults() {
     if (!state.model) state.model = defaultModel(state.elf);
     if (!state.model.metadata) state.model.metadata = {};
-    if (!state.model.metadata.viewBox) state.model.metadata.viewBox = { width: 1980, height: 410 };
+    if (!state.model.metadata.viewBox) state.model.metadata.viewBox = { width: 1980, height: 1200 };
+    state.model.metadata.viewBox.width = Math.max(600, Number(state.model.metadata.viewBox.width) || 1980);
+    state.model.metadata.viewBox.height = Math.max(1200, Number(state.model.metadata.viewBox.height) || 1200);
     if (!state.model.metadata.background) state.model.metadata.background = "#0b1220";
     if (!Array.isArray(state.model.metadata.colorPalette) || !state.model.metadata.colorPalette.length) {
       state.model.metadata.colorPalette = DEFAULT_COLOR_PALETTE.slice();
@@ -320,7 +333,7 @@
       shape.rounded = shape.rounded !== false;
       shape.textAlign = normalizeTextAlign(shape.textAlign || "center");
       shape.fontSize = normalizeFontSize(shape.fontSize, (isContainerKind(shape.kind) ? 13 : 12.5));
-      shape.fontFamily = String(shape.fontFamily || 'Georgia, "Times New Roman", serif');
+      shape.fontFamily = DEFAULT_FONT_FAMILY;
       shape.componentDirection = normalizeComponentDirection(shape.componentDirection);
       shape.componentCount = Math.max(1, Math.min(24, Math.round(Number(shape.componentCount) || 4)));
       shape.componentLabels = normalizeComponentLabels(shape.componentLabels, shape.componentCount);
@@ -582,16 +595,21 @@
     return el;
   }
 
-  function effectiveCanvasScale(requestedZoom) {
-    const vb = state.model.metadata.viewBox || { width: 1980, height: 410 };
+  function canvasFitScale() {
+    const vb = state.model.metadata.viewBox || { width: 1980, height: 1200 };
     const minW = Math.max(320, (els.canvasScroll.clientWidth || 0) - 8);
     const minH = Math.max(260, (els.canvasScroll.clientHeight || 0) - 8);
-    const scaleToFit = Math.max(minW / vb.width, minH / vb.height);
-    return Math.max(requestedZoom, scaleToFit);
+    return Math.max(minW / vb.width, minH / vb.height);
+  }
+
+  function effectiveCanvasScale(requestedZoom) {
+    const fitScale = canvasFitScale();
+    const zoom = clamp(Number(requestedZoom) || 1, state.view.minZoom, state.view.maxZoom);
+    return fitScale * zoom;
   }
 
   function applyViewBox() {
-    const vb = state.model.metadata.viewBox || { width: 1980, height: 410 };
+    const vb = state.model.metadata.viewBox || { width: 1980, height: 1200 };
     const zoom = state.view.zoom || 1;
     const scale = effectiveCanvasScale(zoom);
     const widthPx = Math.round(vb.width * scale);
@@ -600,7 +618,7 @@
     els.svg.setAttribute("width", String(widthPx));
     els.svg.setAttribute("height", String(heightPx));
     if (els.zoomLabel) {
-      els.zoomLabel.textContent = Math.round(scale * 100) + "%";
+      els.zoomLabel.textContent = Math.round(zoom * 100) + "%";
     }
   }
 
@@ -671,7 +689,7 @@
       y: startY,
       fill: cfg.fill || "#f4f7ff",
       "font-size": fontSize,
-      "font-family": String(cfg.fontFamily || 'Georgia, "Times New Roman", serif'),
+      "font-family": String(cfg.fontFamily || DEFAULT_FONT_FAMILY),
       "text-anchor": cfg.textAnchor || "middle",
       "dominant-baseline": "middle",
       "pointer-events": "none",
@@ -1420,7 +1438,7 @@
     }
   }
 
-  function render() {
+  function render(skipInspector) {
     ensureModelDefaults();
     applyViewBox();
 
@@ -1450,7 +1468,9 @@
 
     renderSelectionOverlay(overlayLayer);
     updateToolButtonStates();
-    renderInspector();
+    if (!skipInspector) {
+      renderInspector();
+    }
   }
 
   function updateToolButtonStates() {
@@ -1777,7 +1797,7 @@
     if (!SHAPE_KINDS.has(kind)) return;
     pushHistory();
 
-    const vb = state.model.metadata.viewBox || { width: 1980, height: 410 };
+    const vb = state.model.metadata.viewBox || { width: 1980, height: 1200 };
     const size = defaultShapeSize(kind);
     const x = vb.width * 0.5 - size.width / 2 + (Math.random() * 18 - 9);
     const y = vb.height * 0.5 - size.height / 2 + (Math.random() * 18 - 9);
@@ -1802,7 +1822,7 @@
       rounded: true,
       textAlign: "center",
       fontSize: isContainer ? 13 : 12.5,
-      fontFamily: 'Georgia, "Times New Roman", serif',
+      fontFamily: DEFAULT_FONT_FAMILY,
       componentDirection: "horizontal",
       componentCount: componentCount,
       componentLabels: normalizeComponentLabels([], componentCount),
@@ -1921,6 +1941,7 @@
     );
 
     const palette = state.model.metadata.colorPalette || DEFAULT_COLOR_PALETTE;
+    const borderPalette = palette.map((color) => borderNuance(color));
     const parentText = shape.parentId
       ? (shapeById(shape.parentId) ? shapeById(shape.parentId).text : shape.parentId)
       : "None";
@@ -1942,10 +1963,7 @@
         ? '<div><label>Text align</label><select id="ins-shape-text-align"><option value="left"' + (shape.textAlign === "left" ? " selected" : "") + '>left</option><option value="center"' + (shape.textAlign === "center" ? " selected" : "") + '>center</option><option value="right"' + (shape.textAlign === "right" ? " selected" : "") + '>right</option></select></div>'
         : "",
       '<div class="row"><label style="margin:0;"><input id="ins-shape-rounded" type="checkbox"' + (shape.rounded ? " checked" : "") + '> Rounded corners</label></div>',
-      '<div class="grid2">' +
-        '<div><label>Font size</label><input id="ins-shape-font-size" type="number" min="8" max="40" step="0.5" value="' + roundNum(shape.fontSize || 12.5) + '"/></div>' +
-        '<div><label>Font family</label><input id="ins-shape-font-family" type="text" value="' + escapeHtml(String(shape.fontFamily || 'Georgia, "Times New Roman", serif')) + '"/></div>' +
-      '</div>',
+      '<div><label>Font size</label><input id="ins-shape-font-size" type="number" min="8" max="40" step="0.5" value="' + roundNum(shape.fontSize || 12.5) + '"/></div>',
       isComponentGroup
         ? '<h3>Group Layout</h3>' +
           '<div><label>Direction</label><select id="ins-group-direction"><option value="horizontal"' + (normalizeComponentDirection(shape.componentDirection) === "horizontal" ? " selected" : "") + '>horizontal</option><option value="vertical"' + (normalizeComponentDirection(shape.componentDirection) === "vertical" ? " selected" : "") + '>vertical</option></select></div>' +
@@ -1989,10 +2007,12 @@
         });
         fillPaletteEl.appendChild(sw);
       }
+    });
+    borderPalette.forEach((color) => {
       if (strokePaletteEl) {
         const sw2 = document.createElement("button");
         sw2.type = "button";
-        sw2.className = "swatch" + (normalizeColor(shape.stroke, "#80b6ff") === normalizeColor(color, "#1c2f4f") ? " active" : "");
+        sw2.className = "swatch" + (normalizeColor(shape.stroke, "#80b6ff") === normalizeColor(color, "#80b6ff") ? " active" : "");
         sw2.style.background = color;
         sw2.addEventListener("click", () => {
           pushHistory();
@@ -2003,8 +2023,19 @@
       }
     });
 
+    let pushedTextHistory = false;
+    bindInput("ins-shape-text", "input", (value) => {
+      if (!pushedTextHistory) {
+        pushHistory();
+        pushedTextHistory = true;
+      }
+      shape.text = value || "";
+      render(true);
+    });
     bindInput("ins-shape-text", "change", (value) => {
-      pushHistory();
+      if (!pushedTextHistory) {
+        pushHistory();
+      }
       shape.text = value || defaultShapeText(shape.kind);
       if (!shape.idManual) {
         const parent = shape.parentId ? shapeById(shape.parentId) : null;
@@ -2025,12 +2056,6 @@
     bindNumber("ins-shape-font-size", "input", (num) => {
       pushHistory();
       shape.fontSize = normalizeFontSize(num, shape.fontSize || 12.5);
-      render();
-    });
-
-    bindInput("ins-shape-font-family", "change", (value) => {
-      pushHistory();
-      shape.fontFamily = String(value || 'Georgia, "Times New Roman", serif');
       render();
     });
 

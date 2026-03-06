@@ -2362,6 +2362,7 @@ def write_html_animation(
         const b = clamp(parseInt(raw.slice(4, 6), 16) + amount, 0, 255);
         return "#" + [r, g, b].map(v => v.toString(16).padStart(2, "0")).join("");
     }
+    const REF_TEXT_FONT_FAMILY = 'Georgia, "Times New Roman", serif';
 
     function refRenderMultilineText(g, opts = {}) {
         const fontSize = Math.max(8, Math.min(40, Number(opts.fontSize) || 12.5));
@@ -2373,7 +2374,7 @@ def write_html_animation(
             y: startY,
             fill: opts.fill || "#f4f7ff",
             "font-size": fontSize,
-            "font-family": String(opts.fontFamily || 'Georgia, "Times New Roman", serif'),
+            "font-family": REF_TEXT_FONT_FAMILY,
             "text-anchor": opts.textAnchor || "middle",
             "dominant-baseline": "middle",
             "pointer-events": "none"
@@ -2536,7 +2537,7 @@ def write_html_animation(
             const count = Math.max(1, Math.min(24, Number(spec.componentCount) || 4));
             const labels = normalizeRefComponentLabels(spec.componentLabels, count);
             const fontSize = Math.max(8, Math.min(40, Number(spec.fontSize) || 12.5));
-            const fontFamily = String(spec.fontFamily || 'Georgia, "Times New Roman", serif');
+            const fontFamily = REF_TEXT_FONT_FAMILY;
 
             const outer = createSvgEl("rect", {
                 x: spec.x,
@@ -2674,7 +2675,6 @@ def write_html_animation(
             text: spec.label || spec.id,
             fill: spec.textColor || "#f4f7ff",
             fontSize: Number(spec.fontSize) || (isContainer ? 13 : 12.5),
-            fontFamily: spec.fontFamily,
             textAnchor: textAnchor
         });
 

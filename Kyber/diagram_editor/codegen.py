@@ -82,7 +82,6 @@ def _build_codegen_payload(model: Dict[str, Any]) -> Tuple[List[Dict[str, Any]],
                 "borderStyle": shape.get("borderStyle", "solid"),
                 "textAlign": shape.get("textAlign", "center"),
                 "fontSize": _fmt_num(shape.get("fontSize", 12.5)),
-                "fontFamily": shape.get("fontFamily", 'Georgia, "Times New Roman", serif'),
                 "componentDirection": shape.get("componentDirection", "horizontal"),
                 "componentCount": int(shape.get("componentCount", 1)),
                 "componentLabels": shape.get("componentLabels", []),
@@ -135,7 +134,7 @@ def generate_renderer_source(model: Dict[str, Any]) -> str:
     metadata = normalized.get("metadata", {})
     view_box = metadata.get("viewBox", {})
     vb_w = _fmt_num(view_box.get("width", 1980))
-    vb_h = _fmt_num(view_box.get("height", 410))
+    vb_h = _fmt_num(view_box.get("height", 1200))
     bg = str(metadata.get("background") or "#0b1220")
 
     shape_specs, connector_specs = _build_codegen_payload(normalized)
