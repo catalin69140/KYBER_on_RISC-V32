@@ -188,6 +188,28 @@
     });
   }
 
+  function sortedShapesBy(predicate) {
+    return (state.model.shapes || [])
+      .filter(predicate)
+      .slice()
+      .sort((a, b) => {
+        if ((a.z || 0) !== (b.z || 0)) return (a.z || 0) - (b.z || 0);
+        return a.id.localeCompare(b.id);
+      });
+  }
+
+  function sortedBackgroundContainers() {
+    return sortedShapesBy((shape) => isContainerKind(shape.kind) && !shape.parentId);
+  }
+
+  function sortedNestedContainers() {
+    return sortedShapesBy((shape) => isContainerKind(shape.kind) && !!shape.parentId);
+  }
+
+  function sortedForegroundShapes() {
+    return sortedShapesBy((shape) => !isContainerKind(shape.kind));
+  }
+
   function sortedArrows() {
     return (state.model.arrows || []).slice().sort((a, b) => a.id.localeCompare(b.id));
   }
@@ -1574,16 +1596,22 @@
       fill: state.model.metadata.background || "#0b1220",
     }));
 
+    const backgroundContainerLayer = createSvg("g");
+    const nestedContainerLayer = createSvg("g");
     const arrowLayer = createSvg("g");
     const shapeLayer = createSvg("g");
     const overlayLayer = createSvg("g");
 
+    els.svg.appendChild(backgroundContainerLayer);
+    els.svg.appendChild(nestedContainerLayer);
     els.svg.appendChild(arrowLayer);
     els.svg.appendChild(shapeLayer);
     els.svg.appendChild(overlayLayer);
 
+    sortedBackgroundContainers().forEach((shape) => renderShape(backgroundContainerLayer, shape));
+    sortedNestedContainers().forEach((shape) => renderShape(nestedContainerLayer, shape));
     sortedArrows().forEach((arrow) => renderArrow(arrowLayer, arrow));
-    sortedShapes().forEach((shape) => renderShape(shapeLayer, shape));
+    sortedForegroundShapes().forEach((shape) => renderShape(shapeLayer, shape));
 
     renderSelectionOverlay(overlayLayer);
     updateToolButtonStates();
@@ -1846,7 +1874,7 @@
 
     if (state.drag.type === "move-shapes") {
       const moved = shapeById(state.drag.shapeId);
-      if (moved && !isContainerKind(moved.kind)) {
+      if (moved) {
         const prevParent = moved.parentId;
         const parent = pickContainerForShape(moved);
         moved.parentId = parent ? parent.id : null;
@@ -2098,11 +2126,15 @@
     const editor = getRichTextEditorEl();
     if (!editor || !state.selected || state.selected.type !== "shape") return;
     const selection = window.getSelection();
-    if (!selectionInsideNode(editor, selection) || !selection.rangeCount) return;
+    if (!selectionInsideNode(editor, selection) || !selection.rangeCount) {
+      updateRichTextToolbarState();
+      return;
+    }
     state.richTextSelection = {
       shapeId: state.selected.id,
       range: selection.getRangeAt(0).cloneRange(),
     };
+    updateRichTextToolbarState();
   }
 
   function restoreRichTextSelection(editor, fallbackToAll) {
@@ -2155,6 +2187,7 @@
       captureRichTextSelection();
     } else {
       render(true);
+      updateRichTextToolbarState();
     }
   }
 
@@ -2196,6 +2229,54 @@
     if (!editor) return false;
     const range = restoreRichTextSelection(editor, false);
     return !!(range && !range.collapsed);
+  }
+
+  function rangeHasOverline(editor, range) {
+    if (!editor || !range) return false;
+    let node = range.startContainer;
+    if (node && node.nodeType === Node.TEXT_NODE) node = node.parentNode;
+    while (node && node !== editor) {
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        const textDecoration = String(node.style && node.style.textDecoration || "").toLowerCase();
+        if (textDecoration.indexOf("overline") >= 0) return true;
+      }
+      node = node.parentNode;
+    }
+    return false;
+  }
+
+  function setButtonActive(id, active) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.toggle("active", !!active);
+  }
+
+  function updateRichTextToolbarState() {
+    const editor = getRichTextEditorEl();
+    if (!editor) return;
+    const range = restoreRichTextSelection(editor, false);
+    let bold = false;
+    let italic = false;
+    let underline = false;
+    let subscript = false;
+    let superscript = false;
+    let overline = false;
+
+    if (range) {
+      try { bold = !!document.queryCommandState("bold"); } catch (err) {}
+      try { italic = !!document.queryCommandState("italic"); } catch (err) {}
+      try { underline = !!document.queryCommandState("underline"); } catch (err) {}
+      try { subscript = !!document.queryCommandState("subscript"); } catch (err) {}
+      try { superscript = !!document.queryCommandState("superscript"); } catch (err) {}
+      overline = rangeHasOverline(editor, range);
+    }
+
+    setButtonActive("fmt-bold", bold);
+    setButtonActive("fmt-italic", italic);
+    setButtonActive("fmt-underline", underline);
+    setButtonActive("fmt-overline", overline);
+    setButtonActive("fmt-subscript", subscript);
+    setButtonActive("fmt-superscript", superscript);
   }
 
   function renderShapeInspector(shapeId) {
@@ -2326,6 +2407,7 @@
       });
       textEditor.addEventListener("keyup", captureRichTextSelection);
       textEditor.addEventListener("mouseup", captureRichTextSelection);
+      textEditor.addEventListener("focus", updateRichTextToolbarState);
       textEditor.addEventListener("blur", () => {
         syncShapeRichText(shape, textEditor, true);
       });
@@ -2367,6 +2449,7 @@
       shape.textVAlign = "bottom";
       render();
     });
+    updateRichTextToolbarState();
 
     bindInput("ins-shape-id", "change", (value) => {
       pushHistory();
@@ -2803,7 +2886,13 @@
 
     window.addEventListener("keydown", (evt) => {
       const target = evt.target;
-      const inInput = target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT");
+      const inInput = !!(target && (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.tagName === "SELECT" ||
+        target.isContentEditable ||
+        (target.closest && target.closest('[contenteditable="true"]'))
+      ));
 
       if ((evt.ctrlKey || evt.metaKey) && !evt.shiftKey && evt.key.toLowerCase() === "z") {
         evt.preventDefault();
