@@ -58,7 +58,7 @@
       flex: 1;
       min-height: 0;
       display: grid;
-      grid-template-columns: 280px 1fr 350px;
+      grid-template-columns: 220px minmax(0, 1fr) 300px;
       gap: 10px;
       padding: 10px;
     }
@@ -119,7 +119,7 @@
       width: 100%;
       height: 100%;
       overflow: auto;
-      padding: 12px;
+      padding: 4px;
       cursor: grab;
     }
 
@@ -134,8 +134,8 @@
       border-radius: 10px;
       touch-action: none;
       user-select: none;
-      min-width: 980px;
-      min-height: 420px;
+      min-width: 100%;
+      min-height: 100%;
     }
 
     #inspector {
@@ -179,6 +179,7 @@
 
     input[type="text"],
     input[type="number"],
+    textarea,
     select {
       width: 100%;
       background: var(--input-bg);
@@ -188,6 +189,12 @@
       padding: 7px 8px;
       font-family: inherit;
       font-size: 13px;
+    }
+
+    textarea {
+      min-height: 64px;
+      resize: vertical;
+      line-height: 1.3;
     }
 
     input[type="checkbox"] {
@@ -285,7 +292,7 @@
 
     @media (max-width: 1400px) {
       #main {
-        grid-template-columns: 250px 1fr 320px;
+        grid-template-columns: 200px minmax(0, 1fr) 270px;
       }
     }
 
@@ -314,10 +321,7 @@
 
     <div id="main">
       <aside id="toolbar" class="panel">
-        <h2>Tools</h2>
-
         <div class="tool-group">
-          <h3>Selection</h3>
           <button id="tool-select" class="active">Select / Move</button>
           <button id="delete-btn" class="danger">Delete Selected</button>
         </div>
@@ -332,8 +336,10 @@
         <div class="tool-group">
           <h3>Shape Tools</h3>
           <button id="add-square-btn">Square</button>
+          <button id="add-rectangle-btn">Rectangle</button>
           <button id="add-triangle-btn">Triangle</button>
           <button id="add-circle-btn">Circle</button>
+          <button id="add-oval-btn">Oval</button>
         </div>
 
         <div class="tool-group">
@@ -344,13 +350,7 @@
 
         <div class="tool-group">
           <h3>Group Forms</h3>
-          <button id="add-dk-group-btn">DK Group (addRefDkGroup)</button>
-          <button id="add-ekpke-group-btn">ekPKE Group (addRefEkPkeGroup)</button>
-        </div>
-
-        <div class="hint">
-          In connection mode: click source, then target. Click the same source again to deselect.
-          Drag empty canvas area to pan. Use Ctrl+Z for undo, Ctrl+C/Ctrl+V for shape/container copy/paste.
+          <button id="add-component-group-btn">Component Group</button>
         </div>
       </aside>
 

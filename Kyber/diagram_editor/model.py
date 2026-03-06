@@ -7,7 +7,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 MODEL_VERSION = 2
 DEFAULT_VIEWBOX = {"width": 1980.0, "height": 410.0}
 DEFAULT_BACKGROUND = "#0b1220"
-DEFAULT_ANCHOR_STOPS = [0.0, 0.25, 0.5, 0.75, 1.0]
+DEFAULT_ANCHOR_STOPS = [i / 10 for i in range(11)]
 
 # Existing primary diagram role colors from CryptoTool UI.
 DEFAULT_COLOR_PALETTE = [
@@ -34,10 +34,13 @@ ID_MULTI_UNDERSCORE = re.compile(r"_+")
 
 VALID_SHAPE_KINDS = {
     "square",
+    "rectangle",
     "triangle",
     "circle",
+    "oval",
     "container",
     "header_container",
+    "component_group",
     "dk_group",
     "ekpke_group",
 }
@@ -69,10 +72,22 @@ def derive_default_shape_id(text: str, container_text: Optional[str] = None) -> 
 
 
 def _default_shape_text(kind: str) -> str:
+    if kind == "square":
+        return "Square"
+    if kind == "rectangle":
+        return "Rectangle"
+    if kind == "triangle":
+        return "Triangle"
+    if kind == "circle":
+        return "Circle"
+    if kind == "oval":
+        return "Oval"
     if kind == "container":
         return "Container"
     if kind == "header_container":
         return "Header"
+    if kind == "component_group":
+        return "Group"
     if kind == "dk_group":
         return "dk"
     if kind == "ekpke_group":
@@ -168,8 +183,22 @@ def _as_connection_type(value: Any, fallback_arrow_head: Any = None) -> str:
     return "arrow"
 
 
+def _as_component_direction(value: Any) -> str:
+    return "vertical" if str(value or "").strip().lower() == "vertical" else "horizontal"
+
+
+def _normalize_component_labels(value: Any, count: int) -> List[str]:
+    out: List[str] = []
+    if isinstance(value, list):
+        out = [str(v or "").strip() for v in value]
+    safe_count = max(1, min(24, int(count)))
+    while len(out) < safe_count:
+        out.append(f"Item {len(out) + 1}")
+    return out[:safe_count]
+
+
 def _shape_defaults(kind: str) -> Tuple[str, str]:
-    if kind in VALID_CONTAINER_KINDS or kind in {"dk_group", "ekpke_group"}:
+    if kind in VALID_CONTAINER_KINDS or kind in {"component_group", "dk_group", "ekpke_group"}:
         return DEFAULT_CONTAINER_FILL, DEFAULT_CONTAINER_STROKE
     return DEFAULT_SHAPE_FILL, DEFAULT_SHAPE_STROKE
 
@@ -197,7 +226,7 @@ def _normalize_anchor_stops(raw_stops: Any) -> List[float]:
     if not out:
         return list(DEFAULT_ANCHOR_STOPS)
     unique = sorted(set(out))
-    if len(unique) < 2:
+    if len(unique) < len(DEFAULT_ANCHOR_STOPS):
         return list(DEFAULT_ANCHOR_STOPS)
     return unique
 
@@ -229,7 +258,7 @@ def normalize_model(raw_model: Any, elf_name: str = "") -> Dict[str, Any]:
     src_anchors = src.get("anchors") if isinstance(src.get("anchors"), dict) else {}
     stops = _normalize_anchor_stops(src_anchors.get("stops"))
     model["anchors"]["stops"] = stops
-    model["anchors"]["countPerEdge"] = max(2, _to_int(src_anchors.get("countPerEdge"), len(stops)))
+    model["anchors"]["countPerEdge"] = max(len(DEFAULT_ANCHOR_STOPS), _to_int(src_anchors.get("countPerEdge"), len(stops)))
 
     raw_shapes = src.get("shapes")
     if not isinstance(raw_shapes, list):
@@ -296,9 +325,14 @@ def normalize_model(raw_model: Any, elf_name: str = "") -> Dict[str, Any]:
             "textColor": str(raw_shape.get("textColor") or DEFAULT_TEXT_COLOR),
             "rounded": bool(raw_shape.get("rounded", True)),
             "textAlign": _as_text_align(raw_shape.get("textAlign")),
+            "fontSize": max(8.0, min(40.0, _to_float(raw_shape.get("fontSize"), 13.0 if kind in VALID_CONTAINER_KINDS or kind in {"component_group", "dk_group", "ekpke_group"} else 12.5))),
+            "fontFamily": str(raw_shape.get("fontFamily") or 'Georgia, "Times New Roman", serif'),
+            "componentDirection": _as_component_direction(raw_shape.get("componentDirection")),
+            "componentCount": max(1, min(24, _to_int(raw_shape.get("componentCount"), 4 if kind == "component_group" else 1))),
             "z": _to_int(raw_shape.get("z"), idx),
             "parentId": parent_id,
         }
+        shape["componentLabels"] = _normalize_component_labels(raw_shape.get("componentLabels"), shape["componentCount"])
         normalized_shapes.append(shape)
 
     all_shape_ids = {s["id"] for s in normalized_shapes}

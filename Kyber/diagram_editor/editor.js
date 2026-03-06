@@ -11,7 +11,7 @@
     "#253f57",
   ];
 
-  const DEFAULT_ANCHOR_STOPS = [0, 0.25, 0.5, 0.75, 1];
+  const DEFAULT_ANCHOR_STOPS = Array.from({ length: 11 }, (_, idx) => idx / 10);
   const HANDLE_SIZE = 8;
   const MIN_SHAPE_SIZE = 24;
   const HISTORY_LIMIT = 120;
@@ -25,10 +25,13 @@
   const CONTAINER_KINDS = new Set(["container", "header_container"]);
   const SHAPE_KINDS = new Set([
     "square",
+    "rectangle",
     "triangle",
     "circle",
+    "oval",
     "container",
     "header_container",
+    "component_group",
     "dk_group",
     "ekpke_group",
   ]);
@@ -61,12 +64,13 @@
     toolConnectBiBtn: document.getElementById("tool-connect-bi"),
     toolConnectLineBtn: document.getElementById("tool-connect-line"),
     addSquareBtn: document.getElementById("add-square-btn"),
+    addRectangleBtn: document.getElementById("add-rectangle-btn"),
     addTriangleBtn: document.getElementById("add-triangle-btn"),
     addCircleBtn: document.getElementById("add-circle-btn"),
+    addOvalBtn: document.getElementById("add-oval-btn"),
     addContainerStandardBtn: document.getElementById("add-container-standard-btn"),
     addContainerHeaderBtn: document.getElementById("add-container-header-btn"),
-    addDkGroupBtn: document.getElementById("add-dk-group-btn"),
-    addEkPkeGroupBtn: document.getElementById("add-ekpke-group-btn"),
+    addComponentGroupBtn: document.getElementById("add-component-group-btn"),
     deleteBtn: document.getElementById("delete-btn"),
     zoomInBtn: document.getElementById("zoom-in-btn"),
     zoomOutBtn: document.getElementById("zoom-out-btn"),
@@ -116,8 +120,14 @@
   }
 
   function defaultShapeText(kind) {
+    if (kind === "square") return "Square";
+    if (kind === "rectangle") return "Rectangle";
     if (kind === "container") return "Container";
     if (kind === "header_container") return "Header";
+    if (kind === "circle") return "Circle";
+    if (kind === "oval") return "Oval";
+    if (kind === "triangle") return "Triangle";
+    if (kind === "component_group") return "Group";
     if (kind === "dk_group") return "dk";
     if (kind === "ekpke_group") return "ekPKE";
     return "Node";
@@ -125,10 +135,13 @@
 
   function defaultShapeSize(kind) {
     if (kind === "square") return { width: 90, height: 90 };
+    if (kind === "rectangle") return { width: 128, height: 84 };
     if (kind === "triangle") return { width: 118, height: 90 };
     if (kind === "circle") return { width: 92, height: 92 };
+    if (kind === "oval") return { width: 132, height: 86 };
     if (kind === "container") return { width: 240, height: 140 };
     if (kind === "header_container") return { width: 260, height: 160 };
+    if (kind === "component_group") return { width: 320, height: 96 };
     if (kind === "dk_group") return { width: 330, height: 96 };
     if (kind === "ekpke_group") return { width: 220, height: 96 };
     return { width: 120, height: 56 };
@@ -136,7 +149,7 @@
 
   function defaultModel(elfName) {
     return {
-      version: 1,
+      version: 2,
       metadata: {
         elf: elfName || "",
         viewBox: { width: 1980, height: 410 },
@@ -212,6 +225,28 @@
     return "center";
   }
 
+  function normalizeComponentDirection(raw) {
+    return String(raw || "").toLowerCase() === "vertical" ? "vertical" : "horizontal";
+  }
+
+  function normalizeFontSize(raw, fallback) {
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return fallback;
+    return clamp(n, 8, 40);
+  }
+
+  function normalizeComponentLabels(rawLabels, count) {
+    const out = [];
+    const safeCount = Math.max(1, Math.min(24, Number(count) || 1));
+    if (Array.isArray(rawLabels)) {
+      rawLabels.forEach((txt) => out.push(String(txt || "").trim()));
+    }
+    while (out.length < safeCount) {
+      out.push("Item " + (out.length + 1));
+    }
+    return out.slice(0, safeCount);
+  }
+
   function normalizeColor(color, fallback) {
     const value = String(color || "").trim();
     if (/^#[0-9a-fA-F]{6}$/.test(value)) return value;
@@ -250,8 +285,15 @@
       .map((v) => Number(v))
       .filter((v) => Number.isFinite(v))
       .map((v) => clamp(v, 0, 1))
+      .filter((v, idx, arr) => arr.indexOf(v) === idx)
       .sort((a, b) => a - b);
-    state.model.anchors.countPerEdge = Math.max(2, Number(state.model.anchors.countPerEdge) || state.model.anchors.stops.length || 5);
+    if (state.model.anchors.stops.length < DEFAULT_ANCHOR_STOPS.length) {
+      state.model.anchors.stops = DEFAULT_ANCHOR_STOPS.slice();
+    }
+      state.model.anchors.countPerEdge = Math.max(
+      DEFAULT_ANCHOR_STOPS.length,
+      Number(state.model.anchors.countPerEdge) || state.model.anchors.stops.length || DEFAULT_ANCHOR_STOPS.length
+    );
 
     if (!Array.isArray(state.model.shapes)) state.model.shapes = [];
     if (!Array.isArray(state.model.arrows)) state.model.arrows = [];
@@ -270,12 +312,18 @@
         shape.width = side;
         shape.height = side;
       }
-      shape.fill = normalizeColor(shape.fill, isContainerKind(shape.kind) ? "#0d172a" : "#1c2f4f");
-      shape.stroke = normalizeColor(shape.stroke, isContainerKind(shape.kind) ? "#eef3ff" : "#80b6ff");
+      const usesContainerPalette = isContainerKind(shape.kind) || shape.kind === "component_group" || shape.kind === "dk_group" || shape.kind === "ekpke_group";
+      shape.fill = normalizeColor(shape.fill, usesContainerPalette ? "#0d172a" : "#1c2f4f");
+      shape.stroke = normalizeColor(shape.stroke, usesContainerPalette ? "#eef3ff" : "#80b6ff");
       shape.borderStyle = normalizeBorderStyle(shape.borderStyle);
       shape.textColor = normalizeColor(shape.textColor, "#f4f7ff");
       shape.rounded = shape.rounded !== false;
       shape.textAlign = normalizeTextAlign(shape.textAlign || "center");
+      shape.fontSize = normalizeFontSize(shape.fontSize, (isContainerKind(shape.kind) ? 13 : 12.5));
+      shape.fontFamily = String(shape.fontFamily || 'Georgia, "Times New Roman", serif');
+      shape.componentDirection = normalizeComponentDirection(shape.componentDirection);
+      shape.componentCount = Math.max(1, Math.min(24, Math.round(Number(shape.componentCount) || 4)));
+      shape.componentLabels = normalizeComponentLabels(shape.componentLabels, shape.componentCount);
       shape.z = Number(shape.z);
       if (!Number.isFinite(shape.z)) shape.z = idx;
       shape.parentId = shape.parentId ? String(shape.parentId) : null;
@@ -534,14 +582,25 @@
     return el;
   }
 
+  function effectiveCanvasScale(requestedZoom) {
+    const vb = state.model.metadata.viewBox || { width: 1980, height: 410 };
+    const minW = Math.max(320, (els.canvasScroll.clientWidth || 0) - 8);
+    const minH = Math.max(260, (els.canvasScroll.clientHeight || 0) - 8);
+    const scaleToFit = Math.max(minW / vb.width, minH / vb.height);
+    return Math.max(requestedZoom, scaleToFit);
+  }
+
   function applyViewBox() {
     const vb = state.model.metadata.viewBox || { width: 1980, height: 410 };
     const zoom = state.view.zoom || 1;
+    const scale = effectiveCanvasScale(zoom);
+    const widthPx = Math.round(vb.width * scale);
+    const heightPx = Math.round(vb.height * scale);
     els.svg.setAttribute("viewBox", "0 0 " + vb.width + " " + vb.height);
-    els.svg.setAttribute("width", String(Math.round(vb.width * zoom)));
-    els.svg.setAttribute("height", String(Math.round(vb.height * zoom)));
+    els.svg.setAttribute("width", String(widthPx));
+    els.svg.setAttribute("height", String(heightPx));
     if (els.zoomLabel) {
-      els.zoomLabel.textContent = Math.round(zoom * 100) + "%";
+      els.zoomLabel.textContent = Math.round(scale * 100) + "%";
     }
   }
 
@@ -553,7 +612,9 @@
     const scroll = els.canvasScroll;
     const cx = scroll.scrollLeft + scroll.clientWidth / 2;
     const cy = scroll.scrollTop + scroll.clientHeight / 2;
-    const ratio = next / prev;
+    const prevScale = effectiveCanvasScale(prev);
+    const nextScale = effectiveCanvasScale(next);
+    const ratio = nextScale / prevScale;
 
     state.view.zoom = next;
     render();
@@ -599,6 +660,34 @@
     return shape.x + shape.width / 2;
   }
 
+  function renderMultilineText(group, cfg) {
+    const text = String(cfg.text || "");
+    const lines = text.split(/\r?\n/);
+    const fontSize = normalizeFontSize(cfg.fontSize, 12.5);
+    const lineGap = fontSize * 1.18;
+    const startY = cfg.y - ((lines.length - 1) * lineGap) / 2;
+    const t = createSvg("text", {
+      x: cfg.x,
+      y: startY,
+      fill: cfg.fill || "#f4f7ff",
+      "font-size": fontSize,
+      "font-family": String(cfg.fontFamily || 'Georgia, "Times New Roman", serif'),
+      "text-anchor": cfg.textAnchor || "middle",
+      "dominant-baseline": "middle",
+      "pointer-events": "none",
+    });
+    lines.forEach((line, idx) => {
+      const span = createSvg("tspan", {
+        x: cfg.x,
+        y: startY + idx * lineGap,
+      });
+      span.textContent = line.length ? line : " ";
+      t.appendChild(span);
+    });
+    group.appendChild(t);
+    return t;
+  }
+
   function renderShapeVisual(group, shape, strokeColor, strokeWidth) {
     const dash = shape.borderStyle === "dashed" ? "7 4" : "";
     const commonStroke = {
@@ -615,7 +704,7 @@
         shape.x + "," + (shape.y + shape.height),
       ].join(" ");
       group.appendChild(createSvg("polygon", Object.assign({ points: points }, commonStroke)));
-    } else if (shape.kind === "circle") {
+    } else if (shape.kind === "circle" || shape.kind === "oval") {
       group.appendChild(createSvg("ellipse", Object.assign({
         cx: shape.x + shape.width / 2,
         cy: shape.y + shape.height / 2,
@@ -651,6 +740,108 @@
         "stroke-width": Math.max(1, strokeWidth * 0.9),
         "stroke-dasharray": dash,
       }));
+    } else if (shape.kind === "component_group") {
+      const headerH = 18;
+      const componentCount = Math.max(1, Math.min(24, Math.round(Number(shape.componentCount) || 4)));
+      const componentDirection = normalizeComponentDirection(shape.componentDirection);
+      const labels = normalizeComponentLabels(shape.componentLabels, componentCount);
+      group.appendChild(createSvg("rect", {
+        x: shape.x,
+        y: shape.y,
+        width: shape.width,
+        height: shape.height,
+        fill: "none",
+        stroke: strokeColor,
+        "stroke-width": strokeWidth,
+        "stroke-dasharray": dash,
+        rx: shape.rounded === false ? 0 : 6,
+        ry: shape.rounded === false ? 0 : 6,
+      }));
+      group.appendChild(createSvg("rect", {
+        x: shape.x + 1,
+        y: shape.y + 1,
+        width: Math.max(1, shape.width - 2),
+        height: headerH,
+        fill: darken(shape.fill, -14),
+        stroke: "none",
+        rx: shape.rounded === false ? 0 : 5,
+        ry: shape.rounded === false ? 0 : 5,
+      }));
+      group.appendChild(createSvg("rect", {
+        x: shape.x + 1,
+        y: shape.y + headerH + 1,
+        width: Math.max(1, shape.width - 2),
+        height: Math.max(1, shape.height - headerH - 2),
+        fill: shape.fill,
+        stroke: "none",
+      }));
+      group.appendChild(createSvg("line", {
+        x1: shape.x + 1,
+        y1: shape.y + headerH + 1,
+        x2: shape.x + shape.width - 1,
+        y2: shape.y + headerH + 1,
+        stroke: strokeColor,
+        "stroke-width": 1.1,
+        "stroke-dasharray": dash,
+      }));
+
+      const bodyY = shape.y + headerH + 2;
+      const bodyH = shape.height - headerH - 4;
+      if (componentDirection === "horizontal") {
+        const innerW = shape.width - 16;
+        const cellW = innerW / componentCount;
+        for (let idx = 0; idx < componentCount; idx += 1) {
+          const x0 = shape.x + 8 + idx * cellW;
+          const x1 = idx === componentCount - 1 ? (shape.x + shape.width - 8) : (x0 + cellW);
+          if (idx > 0) {
+            group.appendChild(createSvg("line", {
+              x1: x0,
+              y1: bodyY + 2,
+              x2: x0,
+              y2: bodyY + bodyH - 2,
+              stroke: strokeColor,
+              "stroke-width": 1,
+              "stroke-dasharray": dash,
+            }));
+          }
+          renderMultilineText(group, {
+            x: (x0 + x1) / 2,
+            y: bodyY + bodyH / 2 + 1,
+            text: labels[idx],
+            fontSize: Math.max(10, normalizeFontSize(shape.fontSize, 12) - 1),
+            fontFamily: shape.fontFamily,
+            fill: shape.textColor || "#f4f7ff",
+            textAnchor: "middle",
+          });
+        }
+      } else {
+        const innerH = bodyH - 4;
+        const cellH = innerH / componentCount;
+        for (let idx = 0; idx < componentCount; idx += 1) {
+          const y0 = bodyY + 2 + idx * cellH;
+          const y1 = idx === componentCount - 1 ? (bodyY + bodyH - 2) : (y0 + cellH);
+          if (idx > 0) {
+            group.appendChild(createSvg("line", {
+              x1: shape.x + 8,
+              y1: y0,
+              x2: shape.x + shape.width - 8,
+              y2: y0,
+              stroke: strokeColor,
+              "stroke-width": 1,
+              "stroke-dasharray": dash,
+            }));
+          }
+          renderMultilineText(group, {
+            x: shape.x + shape.width / 2,
+            y: (y0 + y1) / 2,
+            text: labels[idx],
+            fontSize: Math.max(10, normalizeFontSize(shape.fontSize, 12) - 1),
+            fontFamily: shape.fontFamily,
+            fill: shape.textColor || "#f4f7ff",
+            textAnchor: "middle",
+          });
+        }
+      }
     } else if (shape.kind === "dk_group") {
       const headerH = 18;
       group.appendChild(createSvg("rect", {
@@ -717,17 +908,15 @@
             "stroke-dasharray": dash,
           }));
         }
-        const t = createSvg("text", {
+        renderMultilineText(group, {
           x: cx + w / 2,
           y: bodyY + bodyH / 2 + 1,
+          text: cell.label,
+          fontSize: 12,
+          fontFamily: shape.fontFamily,
           fill: shape.textColor || "#f4f7ff",
-          "font-size": 12,
-          "text-anchor": "middle",
-          "dominant-baseline": "middle",
-          "pointer-events": "none",
+          textAnchor: "middle",
         });
-        t.textContent = cell.label;
-        group.appendChild(t);
         cx += w;
       });
     } else if (shape.kind === "ekpke_group") {
@@ -782,28 +971,24 @@
         "stroke-width": 1,
         "stroke-dasharray": dash,
       }));
-      const t1 = createSvg("text", {
+      renderMultilineText(group, {
         x: shape.x + (splitX - shape.x) / 2,
         y: bodyY + bodyH / 2 + 1,
+        text: "t^",
+        fontSize: 12,
+        fontFamily: shape.fontFamily,
         fill: shape.textColor || "#f4f7ff",
-        "font-size": 12,
-        "text-anchor": "middle",
-        "dominant-baseline": "middle",
-        "pointer-events": "none",
+        textAnchor: "middle",
       });
-      t1.textContent = "t^";
-      group.appendChild(t1);
-      const t2 = createSvg("text", {
+      renderMultilineText(group, {
         x: splitX + (shape.x + shape.width - splitX) / 2,
         y: bodyY + bodyH / 2 + 1,
+        text: "rho",
+        fontSize: 12,
+        fontFamily: shape.fontFamily,
         fill: shape.textColor || "#f4f7ff",
-        "font-size": 12,
-        "text-anchor": "middle",
-        "dominant-baseline": "middle",
-        "pointer-events": "none",
+        textAnchor: "middle",
       });
-      t2.textContent = "rho";
-      group.appendChild(t2);
     } else {
       group.appendChild(createSvg("rect", Object.assign({
         x: shape.x,
@@ -823,23 +1008,21 @@
     if (shape.kind === "header_container") {
       const headerH = Math.max(18, Math.min(36, Math.round(shape.height * 0.22)));
       textY = shape.y + headerH / 2;
-    } else if (shape.kind === "dk_group" || shape.kind === "ekpke_group") {
+    } else if (shape.kind === "dk_group" || shape.kind === "ekpke_group" || shape.kind === "component_group") {
       textY = shape.y + 12;
     } else if (shape.kind === "container") {
       textY = shape.y + shape.height / 2;
     }
 
-    const textEl = createSvg("text", {
+    renderMultilineText(group, {
       x: textX,
       y: textY,
+      text: shape.text,
       fill: shape.textColor || "#f4f7ff",
-      "font-size": shape.kind === "container" || shape.kind === "header_container" ? 13 : 12.5,
-      "text-anchor": textAnchor,
-      "dominant-baseline": "middle",
-      "pointer-events": "none",
+      fontSize: normalizeFontSize(shape.fontSize, (shape.kind === "container" || shape.kind === "header_container") ? 13 : 12.5),
+      fontFamily: shape.fontFamily,
+      textAnchor: textAnchor,
     });
-    textEl.textContent = shape.text;
-    group.appendChild(textEl);
   }
 
   function renderShape(shapeLayer, shape) {
@@ -867,43 +1050,119 @@
     const shape = shapeById(endpoint.shapeId);
     if (!shape) return { x: 0, y: 0 };
     const stops = getAnchorStops();
-    const count = Math.max(2, state.model.anchors.countPerEdge || stops.length || 5);
+    const count = Math.max(2, state.model.anchors.countPerEdge || stops.length || DEFAULT_ANCHOR_STOPS.length);
     const idx = clamp(Math.round(Number(endpoint.anchorIndex) || 0), 0, count - 1);
     const frac = idx < stops.length ? stops[idx] : idx / (count - 1);
+    const side = normalizeSide(endpoint.side);
     const x0 = shape.x;
     const y0 = shape.y;
-    const x1 = shape.x + shape.width;
-    const y1 = shape.y + shape.height;
+    const w = shape.width;
+    const h = shape.height;
+    const cx = x0 + w / 2;
+    const cy = y0 + h / 2;
 
-    const side = normalizeSide(endpoint.side);
-    if (side === "left") return { x: x0, y: y0 + shape.height * frac };
-    if (side === "right") return { x: x1, y: y0 + shape.height * frac };
-    if (side === "top") return { x: x0 + shape.width * frac, y: y0 };
-    return { x: x0 + shape.width * frac, y: y1 };
+    if (shape.kind === "circle" || shape.kind === "oval") {
+      const rx = Math.max(0.01, w / 2);
+      const ry = Math.max(0.01, h / 2);
+      if (side === "left" || side === "right") {
+        const y = y0 + h * frac;
+        const ny = (y - cy) / ry;
+        const k = Math.sqrt(Math.max(0, 1 - ny * ny));
+        const x = cx + (side === "left" ? -rx : rx) * k;
+        return { x: x, y: y };
+      }
+      const x = x0 + w * frac;
+      const nx = (x - cx) / rx;
+      const k = Math.sqrt(Math.max(0, 1 - nx * nx));
+      const y = cy + (side === "top" ? -ry : ry) * k;
+      return { x: x, y: y };
+    }
+
+    if (shape.kind === "triangle") {
+      const top = { x: cx, y: y0 };
+      const bl = { x: x0, y: y0 + h };
+      const br = { x: x0 + w, y: y0 + h };
+      if (side === "left") {
+        return {
+          x: top.x + (bl.x - top.x) * frac,
+          y: top.y + (bl.y - top.y) * frac,
+        };
+      }
+      if (side === "right") {
+        return {
+          x: top.x + (br.x - top.x) * frac,
+          y: top.y + (br.y - top.y) * frac,
+        };
+      }
+      if (side === "bottom") return { x: x0 + w * frac, y: y0 + h };
+      if (frac <= 0.5) {
+        const u = frac / 0.5;
+        return {
+          x: bl.x + (top.x - bl.x) * u,
+          y: bl.y + (top.y - bl.y) * u,
+        };
+      }
+      const u = (frac - 0.5) / 0.5;
+      return {
+        x: top.x + (br.x - top.x) * u,
+        y: top.y + (br.y - top.y) * u,
+      };
+    }
+
+    if (side === "left") return { x: x0, y: y0 + h * frac };
+    if (side === "right") return { x: x0 + w, y: y0 + h * frac };
+    if (side === "top") return { x: x0 + w * frac, y: y0 };
+    return { x: x0 + w * frac, y: y0 + h };
   }
 
   function getAllAnchors() {
     const stops = getAnchorStops();
-    const count = Math.max(2, state.model.anchors.countPerEdge || stops.length || 5);
+    const count = Math.max(2, state.model.anchors.countPerEdge || stops.length || DEFAULT_ANCHOR_STOPS.length);
     const anchors = [];
 
     state.model.shapes.forEach((shape) => {
       for (let i = 0; i < count; i += 1) {
         const frac = i < stops.length ? stops[i] : i / (count - 1);
-        anchors.push({ shapeId: shape.id, side: "left", anchorIndex: i, x: shape.x, y: shape.y + shape.height * frac });
-        anchors.push({ shapeId: shape.id, side: "right", anchorIndex: i, x: shape.x + shape.width, y: shape.y + shape.height * frac });
-        anchors.push({ shapeId: shape.id, side: "top", anchorIndex: i, x: shape.x + shape.width * frac, y: shape.y });
-        anchors.push({ shapeId: shape.id, side: "bottom", anchorIndex: i, x: shape.x + shape.width * frac, y: shape.y + shape.height });
+        const left = getAnchorPoint({ shapeId: shape.id, side: "left", anchorIndex: i });
+        const right = getAnchorPoint({ shapeId: shape.id, side: "right", anchorIndex: i });
+        const top = getAnchorPoint({ shapeId: shape.id, side: "top", anchorIndex: i });
+        const bottom = getAnchorPoint({ shapeId: shape.id, side: "bottom", anchorIndex: i });
+        anchors.push({ shapeId: shape.id, side: "left", anchorIndex: i, x: left.x, y: left.y, frac: frac });
+        anchors.push({ shapeId: shape.id, side: "right", anchorIndex: i, x: right.x, y: right.y, frac: frac });
+        anchors.push({ shapeId: shape.id, side: "top", anchorIndex: i, x: top.x, y: top.y, frac: frac });
+        anchors.push({ shapeId: shape.id, side: "bottom", anchorIndex: i, x: bottom.x, y: bottom.y, frac: frac });
       }
     });
 
     return anchors;
   }
 
-  function nearestAnchor(point) {
-    const anchors = getAllAnchors();
+  function pointRectDistance2(point, shape) {
+    const dx = Math.max(shape.x - point.x, 0, point.x - (shape.x + shape.width));
+    const dy = Math.max(shape.y - point.y, 0, point.y - (shape.y + shape.height));
+    return dx * dx + dy * dy;
+  }
+
+  function nearestShapeForPoint(point) {
     let best = null;
-    anchors.forEach((anchor) => {
+    state.model.shapes.forEach((shape) => {
+      const d2 = pointRectDistance2(point, shape);
+      if (!best || d2 < best.d2) best = { d2: d2, shape: shape };
+    });
+    if (!best) return null;
+    if (best.d2 > (140 * 140)) return null;
+    return best.shape;
+  }
+
+  function nearestAnchor(point, preferredShapeId) {
+    const anchors = getAllAnchors();
+    const nearbyShape = nearestShapeForPoint(point);
+    const selectedShapeId = nearbyShape ? nearbyShape.id : (preferredShapeId || null);
+    const filtered = selectedShapeId ? anchors.filter((a) => a.shapeId === selectedShapeId) : anchors;
+    const pool = filtered.length ? filtered : anchors;
+
+    let best = null;
+    pool.forEach((anchor) => {
       const dx = anchor.x - point.x;
       const dy = anchor.y - point.y;
       const d2 = dx * dx + dy * dy;
@@ -1412,7 +1671,8 @@
     if (state.drag.type === "arrow-endpoint") {
       const arrow = arrowById(state.drag.arrowId);
       if (!arrow) return;
-      const anchor = nearestAnchor(point);
+      const currentEndpoint = arrow[state.drag.endpointKey] || {};
+      const anchor = nearestAnchor(point, currentEndpoint.shapeId || "");
       if (!anchor) return;
       arrow[state.drag.endpointKey] = {
         shapeId: anchor.shapeId,
@@ -1480,7 +1740,7 @@
         ? (isFromEndpoint ? "bottom" : "top")
         : (isFromEndpoint ? "top" : "bottom");
     }
-    const anchorIndex = Math.floor((Math.max(2, state.model.anchors.countPerEdge || 5) - 1) / 2);
+    const anchorIndex = Math.floor((Math.max(2, state.model.anchors.countPerEdge || DEFAULT_ANCHOR_STOPS.length) - 1) / 2);
     return {
       shapeId: isFromEndpoint ? fromShape.id : toShape.id,
       side: side,
@@ -1524,7 +1784,8 @@
     const text = defaultShapeText(kind);
     const id = uniqueShapeId(deriveShapeId(text, ""), null);
 
-    const isContainer = isContainerKind(kind) || kind === "dk_group" || kind === "ekpke_group";
+    const isContainer = isContainerKind(kind) || kind === "component_group" || kind === "dk_group" || kind === "ekpke_group";
+    const componentCount = kind === "component_group" ? 4 : 1;
     const shape = {
       id: id,
       idManual: false,
@@ -1540,6 +1801,11 @@
       textColor: "#f4f7ff",
       rounded: true,
       textAlign: "center",
+      fontSize: isContainer ? 13 : 12.5,
+      fontFamily: 'Georgia, "Times New Roman", serif',
+      componentDirection: "horizontal",
+      componentCount: componentCount,
+      componentLabels: normalizeComponentLabels([], componentCount),
       z: (state.model.shapes.length ? Math.max.apply(null, state.model.shapes.map((s) => s.z || 0)) : 0) + 1,
       parentId: null,
     };
@@ -1659,12 +1925,13 @@
       ? (shapeById(shape.parentId) ? shapeById(shape.parentId).text : shape.parentId)
       : "None";
 
-    const showTextAlign = isContainerKind(shape.kind) || shape.kind === "dk_group" || shape.kind === "ekpke_group";
+    const showTextAlign = isContainerKind(shape.kind) || shape.kind === "component_group" || shape.kind === "dk_group" || shape.kind === "ekpke_group";
+    const isComponentGroup = shape.kind === "component_group";
+    const componentLabelsText = normalizeComponentLabels(shape.componentLabels, shape.componentCount).join("\n");
 
     els.inspector.innerHTML = [
       "<div>",
-      "<h3>Shape / Container</h3>",
-      '<div><label>Text</label><input id="ins-shape-text" type="text" value="' + escapeHtml(shape.text) + '"/></div>',
+      '<div><label>Text</label><textarea id="ins-shape-text">' + escapeHtml(shape.text) + '</textarea></div>',
       '<div><label>ID</label><input id="ins-shape-id" type="text" value="' + escapeHtml(shape.id) + '"/></div>',
       '<div class="hint">Parent container: <strong>' + escapeHtml(parentText) + '</strong></div>',
       '<div class="hint">Auto ID: ' + (shape.idManual ? "off (manual)" : "on (container_text)") + '</div>',
@@ -1675,9 +1942,20 @@
         ? '<div><label>Text align</label><select id="ins-shape-text-align"><option value="left"' + (shape.textAlign === "left" ? " selected" : "") + '>left</option><option value="center"' + (shape.textAlign === "center" ? " selected" : "") + '>center</option><option value="right"' + (shape.textAlign === "right" ? " selected" : "") + '>right</option></select></div>'
         : "",
       '<div class="row"><label style="margin:0;"><input id="ins-shape-rounded" type="checkbox"' + (shape.rounded ? " checked" : "") + '> Rounded corners</label></div>',
+      '<div class="grid2">' +
+        '<div><label>Font size</label><input id="ins-shape-font-size" type="number" min="8" max="40" step="0.5" value="' + roundNum(shape.fontSize || 12.5) + '"/></div>' +
+        '<div><label>Font family</label><input id="ins-shape-font-family" type="text" value="' + escapeHtml(String(shape.fontFamily || 'Georgia, "Times New Roman", serif')) + '"/></div>' +
+      '</div>',
+      isComponentGroup
+        ? '<h3>Group Layout</h3>' +
+          '<div><label>Direction</label><select id="ins-group-direction"><option value="horizontal"' + (normalizeComponentDirection(shape.componentDirection) === "horizontal" ? " selected" : "") + '>horizontal</option><option value="vertical"' + (normalizeComponentDirection(shape.componentDirection) === "vertical" ? " selected" : "") + '>vertical</option></select></div>' +
+          '<div><label>Components</label><input id="ins-group-count" type="number" min="1" max="24" step="1" value="' + Math.max(1, Math.min(24, Math.round(Number(shape.componentCount) || 4)) ) + '"/></div>' +
+          '<div><label>Component labels (one line per component)</label><textarea id="ins-group-labels">' + escapeHtml(componentLabelsText) + '</textarea></div>'
+        : "",
       "<h3>Color</h3>",
-      '<div class="palette" id="ins-shape-palette"></div>',
-      '<div><label>Custom fill</label><input id="ins-shape-fill" type="color" value="' + normalizeColor(shape.fill, "#1c2f4f") + '"/></div>',
+      '<div><label>Fill palette</label><div class="palette" id="ins-shape-fill-palette"></div></div>',
+      '<div><label>Border palette</label><div class="palette" id="ins-shape-stroke-palette"></div></div>',
+      '<div><label>Fill</label><input id="ins-shape-fill" type="color" value="' + normalizeColor(shape.fill, "#1c2f4f") + '"/></div>',
       '<div><label>Border color</label><input id="ins-shape-stroke" type="color" value="' + normalizeColor(shape.stroke, "#80b6ff") + '"/></div>',
       "<h3>Geometry</h3>",
       '<div class="grid2">' +
@@ -1696,19 +1974,33 @@
       "</div>",
     ].join("");
 
-    const paletteEl = document.getElementById("ins-shape-palette");
+    const fillPaletteEl = document.getElementById("ins-shape-fill-palette");
+    const strokePaletteEl = document.getElementById("ins-shape-stroke-palette");
     palette.forEach((color) => {
-      const sw = document.createElement("button");
-      sw.type = "button";
-      sw.className = "swatch" + (normalizeColor(shape.fill, "#1c2f4f") === normalizeColor(color, "#1c2f4f") ? " active" : "");
-      sw.style.background = color;
-      sw.addEventListener("click", () => {
-        pushHistory();
-        // Palette must behave exactly like custom fill (do not mutate border style/stroke).
-        shape.fill = normalizeColor(color, shape.fill);
-        render();
-      });
-      paletteEl.appendChild(sw);
+      if (fillPaletteEl) {
+        const sw = document.createElement("button");
+        sw.type = "button";
+        sw.className = "swatch" + (normalizeColor(shape.fill, "#1c2f4f") === normalizeColor(color, "#1c2f4f") ? " active" : "");
+        sw.style.background = color;
+        sw.addEventListener("click", () => {
+          pushHistory();
+          shape.fill = normalizeColor(color, shape.fill);
+          render();
+        });
+        fillPaletteEl.appendChild(sw);
+      }
+      if (strokePaletteEl) {
+        const sw2 = document.createElement("button");
+        sw2.type = "button";
+        sw2.className = "swatch" + (normalizeColor(shape.stroke, "#80b6ff") === normalizeColor(color, "#1c2f4f") ? " active" : "");
+        sw2.style.background = color;
+        sw2.addEventListener("click", () => {
+          pushHistory();
+          shape.stroke = normalizeColor(color, shape.stroke);
+          render();
+        });
+        strokePaletteEl.appendChild(sw2);
+      }
     });
 
     bindInput("ins-shape-text", "change", (value) => {
@@ -1727,6 +2019,18 @@
       const next = uniqueShapeId(sanitizeId(value || shape.id), shape.id);
       shape.idManual = true;
       renameShapeId(shape.id, next);
+      render();
+    });
+
+    bindNumber("ins-shape-font-size", "input", (num) => {
+      pushHistory();
+      shape.fontSize = normalizeFontSize(num, shape.fontSize || 12.5);
+      render();
+    });
+
+    bindInput("ins-shape-font-family", "change", (value) => {
+      pushHistory();
+      shape.fontFamily = String(value || 'Georgia, "Times New Roman", serif');
       render();
     });
 
@@ -1752,6 +2056,26 @@
       bindInput("ins-shape-text-align", "change", (value) => {
         pushHistory();
         shape.textAlign = normalizeTextAlign(value);
+        render();
+      });
+    }
+
+    if (isComponentGroup) {
+      bindInput("ins-group-direction", "change", (value) => {
+        pushHistory();
+        shape.componentDirection = normalizeComponentDirection(value);
+        render();
+      });
+      bindNumber("ins-group-count", "change", (num) => {
+        pushHistory();
+        shape.componentCount = Math.max(1, Math.min(24, Math.round(num || 1)));
+        shape.componentLabels = normalizeComponentLabels(shape.componentLabels, shape.componentCount);
+        render();
+      });
+      bindInput("ins-group-labels", "change", (value) => {
+        pushHistory();
+        const lines = String(value || "").split(/\r?\n/).map((v) => v.trim());
+        shape.componentLabels = normalizeComponentLabels(lines, shape.componentCount);
         render();
       });
     }
@@ -1851,7 +2175,6 @@
 
     els.inspector.innerHTML = [
       "<div>",
-      "<h3>Connection</h3>",
       '<div><label>ID</label><input id="ins-arrow-id" type="text" value="' + escapeHtml(arrow.id) + '"/></div>',
       '<div class="hint">From: <strong>' + escapeHtml(fromShape ? fromShape.id : arrow.from.shapeId) + '</strong> (' + arrow.from.side + ':' + arrow.from.anchorIndex + ')</div>',
       '<div class="hint">To: <strong>' + escapeHtml(toShape ? toShape.id : arrow.to.shapeId) + '</strong> (' + arrow.to.side + ':' + arrow.to.anchorIndex + ')</div>',
@@ -2069,12 +2392,13 @@
     els.toolConnectLineBtn.addEventListener("click", () => setMode("connect_line"));
 
     els.addSquareBtn.addEventListener("click", () => addShape("square"));
+    els.addRectangleBtn.addEventListener("click", () => addShape("rectangle"));
     els.addTriangleBtn.addEventListener("click", () => addShape("triangle"));
     els.addCircleBtn.addEventListener("click", () => addShape("circle"));
+    els.addOvalBtn.addEventListener("click", () => addShape("oval"));
     els.addContainerStandardBtn.addEventListener("click", () => addShape("container"));
     els.addContainerHeaderBtn.addEventListener("click", () => addShape("header_container"));
-    els.addDkGroupBtn.addEventListener("click", () => addShape("dk_group"));
-    els.addEkPkeGroupBtn.addEventListener("click", () => addShape("ekpke_group"));
+    els.addComponentGroupBtn.addEventListener("click", () => addShape("component_group"));
 
     els.deleteBtn.addEventListener("click", deleteSelected);
 
@@ -2091,6 +2415,18 @@
       evt.preventDefault();
       const factor = evt.deltaY < 0 ? 1.1 : 0.9;
       setZoom(state.view.zoom * factor);
+    }, { passive: false });
+
+    // Safari/macOS trackpad pinch support.
+    let gestureStartZoom = 1;
+    els.canvasScroll.addEventListener("gesturestart", (evt) => {
+      evt.preventDefault();
+      gestureStartZoom = state.view.zoom;
+    }, { passive: false });
+    els.canvasScroll.addEventListener("gesturechange", (evt) => {
+      evt.preventDefault();
+      const scale = Number(evt.scale) || 1;
+      setZoom(gestureStartZoom * scale);
     }, { passive: false });
 
     els.elfInput.addEventListener("change", () => {

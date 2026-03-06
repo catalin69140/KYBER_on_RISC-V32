@@ -2363,9 +2363,43 @@ def write_html_animation(
         return "#" + [r, g, b].map(v => v.toString(16).padStart(2, "0")).join("");
     }
 
-    function registerRefInteractiveNode(g, id, x, y, w, h) {
+    function refRenderMultilineText(g, opts = {}) {
+        const fontSize = Math.max(8, Math.min(40, Number(opts.fontSize) || 12.5));
+        const lines = String(opts.text || "").split(/\\r?\\n/);
+        const lineGap = fontSize * 1.18;
+        const startY = Number(opts.y || 0) - ((lines.length - 1) * lineGap) / 2;
+        const t = createSvgEl("text", {
+            x: opts.x,
+            y: startY,
+            fill: opts.fill || "#f4f7ff",
+            "font-size": fontSize,
+            "font-family": String(opts.fontFamily || 'Georgia, "Times New Roman", serif'),
+            "text-anchor": opts.textAnchor || "middle",
+            "dominant-baseline": "middle",
+            "pointer-events": "none"
+        });
+        lines.forEach((line, idx) => {
+            const span = createSvgEl("tspan", {
+                x: opts.x,
+                y: startY + idx * lineGap
+            });
+            span.textContent = line.length ? line : " ";
+            t.appendChild(span);
+        });
+        g.appendChild(t);
+        return t;
+    }
+
+    function normalizeRefComponentLabels(rawLabels, count) {
+        const safeCount = Math.max(1, Math.min(24, Number(count) || 1));
+        const out = Array.isArray(rawLabels) ? rawLabels.map(v => String(v || "").trim()) : [];
+        while (out.length < safeCount) out.push(`Item ${out.length + 1}`);
+        return out.slice(0, safeCount);
+    }
+
+    function registerRefInteractiveNode(g, id, x, y, w, h, meta = {}) {
         primaryRefNodeEls[id] = g;
-        primaryRefNodeBoxes[id] = { x, y, w, h };
+        primaryRefNodeBoxes[id] = { x, y, w, h, ...(meta || {}) };
 
         g.style.cursor = "pointer";
         g.addEventListener("click", (ev) => {
@@ -2414,7 +2448,7 @@ def write_html_animation(
         }
 
         svg.appendChild(g);
-        registerRefInteractiveNode(g, spec.id, spec.x, spec.y, spec.w, spec.h);
+        registerRefInteractiveNode(g, spec.id, spec.x, spec.y, spec.w, spec.h, { kind: shapeKind });
         return g;
     }
 
@@ -2428,7 +2462,7 @@ def write_html_animation(
             class: `ref-node generated-ref-node kind-${shapeKind}`,
             "data-node-id": spec.id
         });
-        const isContainer = (shapeKind === "container" || shapeKind === "header_container");
+        const isContainer = (shapeKind === "container" || shapeKind === "header_container" || shapeKind === "component_group");
         const fill = spec.fill || (isContainer ? "#0d172a" : "#1c2f4f");
         const stroke = spec.stroke || (isContainer ? "#eef3ff" : "#80b6ff");
         const rounded = (spec.rounded === false) ? 0 : 7;
@@ -2449,7 +2483,7 @@ def write_html_animation(
             polygon.setAttribute("data-base-stroke", stroke);
             polygon.setAttribute("data-base-stroke-width", "1.5");
             g.appendChild(polygon);
-        } else if (shapeKind === "circle") {
+        } else if (shapeKind === "circle" || shapeKind === "oval") {
             const ellipse = createSvgEl("ellipse", {
                 cx: spec.x + spec.w / 2,
                 cy: spec.y + spec.h / 2,
@@ -2496,6 +2530,119 @@ def write_html_animation(
             sep.setAttribute("stroke-width", "1.3");
             if (dash) sep.setAttribute("stroke-dasharray", dash);
             g.appendChild(sep);
+        } else if (shapeKind === "component_group") {
+            const headerH = 18;
+            const direction = String(spec.componentDirection || "horizontal").toLowerCase() === "vertical" ? "vertical" : "horizontal";
+            const count = Math.max(1, Math.min(24, Number(spec.componentCount) || 4));
+            const labels = normalizeRefComponentLabels(spec.componentLabels, count);
+            const fontSize = Math.max(8, Math.min(40, Number(spec.fontSize) || 12.5));
+            const fontFamily = String(spec.fontFamily || 'Georgia, "Times New Roman", serif');
+
+            const outer = createSvgEl("rect", {
+                x: spec.x,
+                y: spec.y,
+                width: spec.w,
+                height: spec.h,
+                rx: rounded,
+                ry: rounded
+            });
+            outer.setAttribute("fill", "none");
+            outer.setAttribute("stroke", stroke);
+            outer.setAttribute("stroke-width", "1.8");
+            if (dash) outer.setAttribute("stroke-dasharray", dash);
+            outer.setAttribute("data-base-stroke", stroke);
+            outer.setAttribute("data-base-stroke-width", "1.8");
+            g.appendChild(outer);
+
+            g.appendChild(createSvgEl("rect", {
+                x: spec.x + 1,
+                y: spec.y + 1,
+                width: Math.max(1, spec.w - 2),
+                height: headerH,
+                fill: refDarkenHex(fill, -14),
+                stroke: "none",
+                rx: Math.max(0, rounded - 1),
+                ry: Math.max(0, rounded - 1)
+            }));
+            g.appendChild(createSvgEl("rect", {
+                x: spec.x + 1,
+                y: spec.y + headerH + 1,
+                width: Math.max(1, spec.w - 2),
+                height: Math.max(1, spec.h - headerH - 2),
+                fill: fill,
+                stroke: "none"
+            }));
+
+            const splitTop = createSvgEl("line", {
+                x1: spec.x + 1,
+                y1: spec.y + headerH + 1,
+                x2: spec.x + spec.w - 1,
+                y2: spec.y + headerH + 1
+            });
+            splitTop.setAttribute("stroke", stroke);
+            splitTop.setAttribute("stroke-width", "1.1");
+            if (dash) splitTop.setAttribute("stroke-dasharray", dash);
+            g.appendChild(splitTop);
+
+            const bodyY = spec.y + headerH + 2;
+            const bodyH = spec.h - headerH - 4;
+            if (direction === "horizontal") {
+                const innerW = spec.w - 16;
+                const cellW = innerW / count;
+                for (let idx = 0; idx < count; idx += 1) {
+                    const x0 = spec.x + 8 + idx * cellW;
+                    const x1 = idx === count - 1 ? (spec.x + spec.w - 8) : (x0 + cellW);
+                    if (idx > 0) {
+                        const sep = createSvgEl("line", {
+                            x1: x0,
+                            y1: bodyY + 2,
+                            x2: x0,
+                            y2: bodyY + bodyH - 2
+                        });
+                        sep.setAttribute("stroke", stroke);
+                        sep.setAttribute("stroke-width", "1");
+                        if (dash) sep.setAttribute("stroke-dasharray", dash);
+                        g.appendChild(sep);
+                    }
+                    refRenderMultilineText(g, {
+                        x: (x0 + x1) / 2,
+                        y: bodyY + bodyH / 2 + 1,
+                        text: labels[idx],
+                        fontSize: Math.max(10, fontSize - 1),
+                        fontFamily,
+                        fill: spec.textColor || "#f4f7ff",
+                        textAnchor: "middle"
+                    });
+                }
+            } else {
+                const innerH = bodyH - 4;
+                const cellH = innerH / count;
+                for (let idx = 0; idx < count; idx += 1) {
+                    const y0 = bodyY + 2 + idx * cellH;
+                    const y1 = idx === count - 1 ? (bodyY + bodyH - 2) : (y0 + cellH);
+                    if (idx > 0) {
+                        const sep = createSvgEl("line", {
+                            x1: spec.x + 8,
+                            y1: y0,
+                            x2: spec.x + spec.w - 8,
+                            y2: y0
+                        });
+                        sep.setAttribute("stroke", stroke);
+                        sep.setAttribute("stroke-width", "1");
+                        if (dash) sep.setAttribute("stroke-dasharray", dash);
+                        g.appendChild(sep);
+                    }
+                    refRenderMultilineText(g, {
+                        x: spec.x + spec.w / 2,
+                        y: (y0 + y1) / 2,
+                        text: labels[idx],
+                        fontSize: Math.max(10, fontSize - 1),
+                        fontFamily,
+                        fill: spec.textColor || "#f4f7ff",
+                        textAnchor: "middle"
+                    });
+                }
+            }
         } else {
             const rect = createSvgEl("rect", {
                 x: spec.x, y: spec.y, width: spec.w, height: spec.h,
@@ -2518,18 +2665,18 @@ def write_html_animation(
         if (shapeKind === "header_container") {
             const headerH = Math.max(18, Math.min(36, Math.round(spec.h * 0.22)));
             textY = spec.y + headerH / 2;
+        } else if (shapeKind === "component_group") {
+            textY = spec.y + 12;
         }
-        const text = createSvgEl("text", {
+        refRenderMultilineText(g, {
             x: textX,
             y: textY,
+            text: spec.label || spec.id,
             fill: spec.textColor || "#f4f7ff",
-            "font-size": (isContainer ? "13" : "12.5"),
-            "text-anchor": textAnchor,
-            "dominant-baseline": "middle",
-            "pointer-events": "none"
+            fontSize: Number(spec.fontSize) || (isContainer ? 13 : 12.5),
+            fontFamily: spec.fontFamily,
+            textAnchor: textAnchor
         });
-        text.textContent = spec.label || spec.id;
-        g.appendChild(text);
 
         svg.appendChild(g);
         registerRefInteractiveNode(g, spec.id, spec.x, spec.y, spec.w, spec.h);
@@ -2734,6 +2881,60 @@ def write_html_animation(
         if (!b) return { x: 0, y: 0 };
         if (b.anchors && b.anchors[side]) {
             return { x: b.anchors[side].x + dx, y: b.anchors[side].y + dy };
+        }
+        const kind = String(b.kind || "");
+        if (kind === "circle" || kind === "oval") {
+            const cx = b.x + b.w / 2;
+            const cy = b.y + b.h / 2;
+            const rx = Math.max(0.01, b.w / 2);
+            const ry = Math.max(0.01, b.h / 2);
+            if (side === "left" || side === "right") {
+                const targetY = cy + dy;
+                const ny = (targetY - cy) / ry;
+                const k = Math.sqrt(Math.max(0, 1 - ny * ny));
+                const x = cx + ((side === "left") ? -rx : rx) * k;
+                return { x: x + dx, y: targetY };
+            }
+            const targetX = cx + dx;
+            const nx = (targetX - cx) / rx;
+            const k = Math.sqrt(Math.max(0, 1 - nx * nx));
+            const y = cy + ((side === "top") ? -ry : ry) * k;
+            return { x: targetX, y: y + dy };
+        }
+        if (kind === "triangle") {
+            const cx = b.x + b.w / 2;
+            const top = { x: cx, y: b.y };
+            const bl = { x: b.x, y: b.y + b.h };
+            const br = { x: b.x + b.w, y: b.y + b.h };
+            const fracByY = Math.max(0, Math.min(1, (dy / Math.max(0.01, b.h)) + 0.5));
+            const fracByX = Math.max(0, Math.min(1, (dx / Math.max(0.01, b.w)) + 0.5));
+            if (side === "left") {
+                return {
+                    x: top.x + (bl.x - top.x) * fracByY,
+                    y: top.y + (bl.y - top.y) * fracByY
+                };
+            }
+            if (side === "right") {
+                return {
+                    x: top.x + (br.x - top.x) * fracByY,
+                    y: top.y + (br.y - top.y) * fracByY
+                };
+            }
+            if (side === "bottom") return { x: b.x + b.w * fracByX, y: b.y + b.h };
+            if (side === "top") {
+                if (fracByX <= 0.5) {
+                    const u = fracByX / 0.5;
+                    return {
+                        x: bl.x + (top.x - bl.x) * u,
+                        y: bl.y + (top.y - bl.y) * u
+                    };
+                }
+                const u = (fracByX - 0.5) / 0.5;
+                return {
+                    x: top.x + (br.x - top.x) * u,
+                    y: top.y + (br.y - top.y) * u
+                };
+            }
         }
         if (side === "left")   return { x: b.x, y: b.y + b.h / 2 + dy };
         if (side === "right")  return { x: b.x + b.w, y: b.y + b.h / 2 + dy };

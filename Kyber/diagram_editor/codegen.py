@@ -42,7 +42,7 @@ def _endpoint_codegen(endpoint: Dict[str, Any], shape_map: Dict[str, Dict[str, A
 
 
 def _sorted_shapes(model: Dict[str, Any]) -> List[Dict[str, Any]]:
-    container_kinds = {"container", "header_container"}
+    container_kinds = {"container", "header_container", "component_group"}
     return sorted(
         model.get("shapes", []),
         key=lambda s: (int(s.get("z", 0)), s.get("kind") not in container_kinds, s.get("id", "")),
@@ -60,7 +60,7 @@ def _build_codegen_payload(model: Dict[str, Any]) -> Tuple[List[Dict[str, Any]],
     anchor_cfg = model.get("anchors", {}) if isinstance(model.get("anchors"), dict) else {}
     stops = anchor_cfg.get("stops") if isinstance(anchor_cfg.get("stops"), list) else []
     stops = [float(v) for v in stops]
-    anchor_count = max(2, int(anchor_cfg.get("countPerEdge", len(stops) if stops else 5)))
+    anchor_count = max(2, int(anchor_cfg.get("countPerEdge", len(stops) if stops else 11)))
     if not stops:
         stops = [i / (anchor_count - 1) for i in range(anchor_count)]
 
@@ -81,6 +81,11 @@ def _build_codegen_payload(model: Dict[str, Any]) -> Tuple[List[Dict[str, Any]],
                 "rounded": bool(shape.get("rounded", True)),
                 "borderStyle": shape.get("borderStyle", "solid"),
                 "textAlign": shape.get("textAlign", "center"),
+                "fontSize": _fmt_num(shape.get("fontSize", 12.5)),
+                "fontFamily": shape.get("fontFamily", 'Georgia, "Times New Roman", serif'),
+                "componentDirection": shape.get("componentDirection", "horizontal"),
+                "componentCount": int(shape.get("componentCount", 1)),
+                "componentLabels": shape.get("componentLabels", []),
             }
         )
 
