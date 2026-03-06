@@ -51,6 +51,7 @@ VALID_ROUTINGS = {"straight", "curved", "angled"}
 VALID_LINE_STYLES = {"solid", "dashed"}
 VALID_BORDER_STYLES = {"solid", "dashed"}
 VALID_TEXT_ALIGN = {"left", "center", "right"}
+VALID_TEXT_V_ALIGN = {"top", "center", "bottom"}
 VALID_CONNECTION_TYPES = {"arrow", "bi", "line"}
 
 
@@ -168,6 +169,13 @@ def _as_border_style(value: Any) -> str:
 def _as_text_align(value: Any) -> str:
     align = str(value or "").strip().lower()
     if align in VALID_TEXT_ALIGN:
+        return align
+    return "center"
+
+
+def _as_text_v_align(value: Any) -> str:
+    align = str(value or "").strip().lower()
+    if align in VALID_TEXT_V_ALIGN:
         return align
     return "center"
 
@@ -316,6 +324,7 @@ def normalize_model(raw_model: Any, elf_name: str = "") -> Dict[str, Any]:
             "idManual": id_manual,
             "kind": kind,
             "text": text,
+            "richText": str(raw_shape.get("richText") or ""),
             "x": _to_float(raw_shape.get("x"), 60 + idx * 12),
             "y": _to_float(raw_shape.get("y"), 60 + idx * 10),
             "width": width,
@@ -326,6 +335,7 @@ def normalize_model(raw_model: Any, elf_name: str = "") -> Dict[str, Any]:
             "textColor": str(raw_shape.get("textColor") or DEFAULT_TEXT_COLOR),
             "rounded": bool(raw_shape.get("rounded", True)),
             "textAlign": _as_text_align(raw_shape.get("textAlign")),
+            "textVAlign": _as_text_v_align(raw_shape.get("textVAlign")),
             "fontSize": max(8.0, min(40.0, _to_float(raw_shape.get("fontSize"), 13.0 if kind in VALID_CONTAINER_KINDS or kind in {"component_group", "dk_group", "ekpke_group"} else 12.5))),
             "fontFamily": DEFAULT_FONT_FAMILY,
             "componentDirection": _as_component_direction(raw_shape.get("componentDirection")),

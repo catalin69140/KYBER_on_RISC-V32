@@ -2364,6 +2364,70 @@ def write_html_animation(
     }
     const REF_TEXT_FONT_FAMILY = 'Georgia, "Times New Roman", serif';
 
+    function refPlainTextToRichHtml(text) {
+        return escapeHtml(String(text || "")).replace(/\\r?\\n/g, "<br>");
+    }
+
+    function refTextJustifyContent(vAlign) {
+        const value = String(vAlign || "center").toLowerCase();
+        if (value === "top") return "flex-start";
+        if (value === "bottom") return "flex-end";
+        return "center";
+    }
+
+    function refShapeTextBox(spec, kind) {
+        if (kind === "header_container") {
+            const headerH = Math.max(18, Math.min(36, Math.round(spec.h * 0.22)));
+            return { x: spec.x + 8, y: spec.y + 2, width: Math.max(24, spec.w - 16), height: Math.max(14, headerH - 4) };
+        }
+        if (kind === "component_group" || kind === "dk_group" || kind === "ekpke_group") {
+            return { x: spec.x + 8, y: spec.y + 2, width: Math.max(24, spec.w - 16), height: 14 };
+        }
+        if (kind === "circle" || kind === "oval") {
+            return { x: spec.x + 12, y: spec.y + 10, width: Math.max(20, spec.w - 24), height: Math.max(20, spec.h - 20) };
+        }
+        if (kind === "triangle") {
+            return { x: spec.x + 12, y: spec.y + 14, width: Math.max(20, spec.w - 24), height: Math.max(20, spec.h - 24) };
+        }
+        return { x: spec.x + 10, y: spec.y + 8, width: Math.max(20, spec.w - 20), height: Math.max(20, spec.h - 16) };
+    }
+
+    function refRenderRichTextBlock(g, spec, kind) {
+        const box = refShapeTextBox(spec, kind);
+        const foreign = createSvgEl("foreignObject", {
+            x: box.x,
+            y: box.y,
+            width: box.width,
+            height: box.height,
+            style: "pointer-events:none;overflow:visible"
+        });
+        const wrapper = document.createElementNS("http://www.w3.org/1999/xhtml", "div");
+        wrapper.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+        wrapper.setAttribute("style", [
+            "width:100%",
+            "height:100%",
+            "display:flex",
+            "align-items:" + refTextJustifyContent(spec.textVAlign),
+            "justify-content:stretch",
+            "overflow:hidden",
+            "color:" + (spec.textColor || "#f4f7ff"),
+            "font-size:" + (Math.max(8, Math.min(40, Number(spec.fontSize) || 12.5))) + "px",
+            "font-family:" + REF_TEXT_FONT_FAMILY,
+            "text-align:" + (String(spec.textAlign || "center").toLowerCase()),
+            "line-height:1.18",
+            "white-space:pre-wrap",
+            "overflow-wrap:anywhere",
+            "word-break:break-word"
+        ].join(";"));
+        const inner = document.createElementNS("http://www.w3.org/1999/xhtml", "div");
+        inner.setAttribute("style", "width:100%;max-height:100%;overflow:hidden");
+        inner.innerHTML = String(spec.richText || refPlainTextToRichHtml(spec.label || spec.id || ""));
+        wrapper.appendChild(inner);
+        foreign.appendChild(wrapper);
+        g.appendChild(foreign);
+        return foreign;
+    }
+
     function refRenderMultilineText(g, opts = {}) {
         const fontSize = Math.max(8, Math.min(40, Number(opts.fontSize) || 12.5));
         const lines = String(opts.text || "").split(/\\r?\\n/);
@@ -2449,7 +2513,7 @@ def write_html_animation(
         }
 
         svg.appendChild(g);
-        registerRefInteractiveNode(g, spec.id, spec.x, spec.y, spec.w, spec.h, { kind: shapeKind });
+        registerRefInteractiveNode(g, spec.id, spec.x, spec.y, spec.w, spec.h, { kind: "ref_node" });
         return g;
     }
 
@@ -2658,25 +2722,7 @@ def write_html_animation(
             g.appendChild(rect);
         }
 
-        const textAlign = String(spec.textAlign || (isContainer ? "left" : "center")).toLowerCase();
-        const align = (textAlign === "left" || textAlign === "right") ? textAlign : "center";
-        const textAnchor = refTextAnchorForAlign(align);
-        const textX = refTextXForAlign(spec, align, 10);
-        let textY = spec.y + spec.h / 2;
-        if (shapeKind === "header_container") {
-            const headerH = Math.max(18, Math.min(36, Math.round(spec.h * 0.22)));
-            textY = spec.y + headerH / 2;
-        } else if (shapeKind === "component_group") {
-            textY = spec.y + 12;
-        }
-        refRenderMultilineText(g, {
-            x: textX,
-            y: textY,
-            text: spec.label || spec.id,
-            fill: spec.textColor || "#f4f7ff",
-            fontSize: Number(spec.fontSize) || (isContainer ? 13 : 12.5),
-            textAnchor: textAnchor
-        });
+        refRenderRichTextBlock(g, spec, shapeKind);
 
         svg.appendChild(g);
         registerRefInteractiveNode(g, spec.id, spec.x, spec.y, spec.w, spec.h);
