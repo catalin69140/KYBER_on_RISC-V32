@@ -198,12 +198,8 @@
       });
   }
 
-  function sortedBackgroundContainers() {
-    return sortedShapesBy((shape) => isContainerKind(shape.kind) && !shape.parentId);
-  }
-
-  function sortedNestedContainers() {
-    return sortedShapesBy((shape) => isContainerKind(shape.kind) && !!shape.parentId);
+  function sortedContainerShapes() {
+    return sortedShapesBy((shape) => isContainerKind(shape.kind));
   }
 
   function sortedForegroundShapes() {
@@ -1596,20 +1592,17 @@
       fill: state.model.metadata.background || "#0b1220",
     }));
 
-    const backgroundContainerLayer = createSvg("g");
-    const nestedContainerLayer = createSvg("g");
+    const containerLayer = createSvg("g");
     const arrowLayer = createSvg("g");
     const shapeLayer = createSvg("g");
     const overlayLayer = createSvg("g");
 
-    els.svg.appendChild(backgroundContainerLayer);
-    els.svg.appendChild(nestedContainerLayer);
+    els.svg.appendChild(containerLayer);
     els.svg.appendChild(arrowLayer);
     els.svg.appendChild(shapeLayer);
     els.svg.appendChild(overlayLayer);
 
-    sortedBackgroundContainers().forEach((shape) => renderShape(backgroundContainerLayer, shape));
-    sortedNestedContainers().forEach((shape) => renderShape(nestedContainerLayer, shape));
+    sortedContainerShapes().forEach((shape) => renderShape(containerLayer, shape));
     sortedArrows().forEach((arrow) => renderArrow(arrowLayer, arrow));
     sortedForegroundShapes().forEach((shape) => renderShape(shapeLayer, shape));
 
@@ -2158,6 +2151,18 @@
     return range;
   }
 
+  function inspectRichTextSelection(editor) {
+    if (!editor) return null;
+    const live = window.getSelection();
+    if (selectionInsideNode(editor, live) && live.rangeCount) {
+      return live.getRangeAt(0);
+    }
+    if (state.richTextSelection && state.selected && state.selected.type === "shape" && state.richTextSelection.shapeId === state.selected.id) {
+      return state.richTextSelection.range.cloneRange();
+    }
+    return null;
+  }
+
   function applyStyleToRange(range, styles, blockTag) {
     if (!range) return null;
     const tag = blockTag ? "div" : "span";
@@ -2227,22 +2232,8 @@
   function hasActiveRichTextSelection() {
     const editor = getRichTextEditorEl();
     if (!editor) return false;
-    const range = restoreRichTextSelection(editor, false);
+    const range = inspectRichTextSelection(editor);
     return !!(range && !range.collapsed);
-  }
-
-  function rangeHasOverline(editor, range) {
-    if (!editor || !range) return false;
-    let node = range.startContainer;
-    if (node && node.nodeType === Node.TEXT_NODE) node = node.parentNode;
-    while (node && node !== editor) {
-      if (node.nodeType === Node.ELEMENT_NODE) {
-        const textDecoration = String(node.style && node.style.textDecoration || "").toLowerCase();
-        if (textDecoration.indexOf("overline") >= 0) return true;
-      }
-      node = node.parentNode;
-    }
-    return false;
   }
 
   function setButtonActive(id, active) {
@@ -2251,32 +2242,49 @@
     el.classList.toggle("active", !!active);
   }
 
+  function collectRichTextFormatState(editor, range) {
+    const stateFlags = {
+      bold: false,
+      italic: false,
+      underline: false,
+      overline: false,
+      subscript: false,
+      superscript: false,
+    };
+    if (!editor || !range) return stateFlags;
+
+    let node = range.startContainer;
+    if (node && node.nodeType === Node.TEXT_NODE) node = node.parentNode;
+    while (node && node !== editor) {
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        const tag = String(node.tagName || "").toLowerCase();
+        const computed = window.getComputedStyle(node);
+        const fontWeight = String(computed.fontWeight || "").toLowerCase();
+        const textDecoration = String(computed.textDecorationLine || computed.textDecoration || "").toLowerCase();
+        const verticalAlign = String(computed.verticalAlign || "").toLowerCase();
+
+        if (tag === "b" || tag === "strong" || fontWeight === "bold" || Number(fontWeight) >= 600) stateFlags.bold = true;
+        if (tag === "i" || tag === "em" || String(computed.fontStyle || "").toLowerCase() === "italic") stateFlags.italic = true;
+        if (tag === "u" || textDecoration.indexOf("underline") >= 0) stateFlags.underline = true;
+        if (textDecoration.indexOf("overline") >= 0) stateFlags.overline = true;
+        if (tag === "sub" || verticalAlign === "sub") stateFlags.subscript = true;
+        if (tag === "sup" || verticalAlign === "super") stateFlags.superscript = true;
+      }
+      node = node.parentNode;
+    }
+    return stateFlags;
+  }
+
   function updateRichTextToolbarState() {
     const editor = getRichTextEditorEl();
     if (!editor) return;
-    const range = restoreRichTextSelection(editor, false);
-    let bold = false;
-    let italic = false;
-    let underline = false;
-    let subscript = false;
-    let superscript = false;
-    let overline = false;
-
-    if (range) {
-      try { bold = !!document.queryCommandState("bold"); } catch (err) {}
-      try { italic = !!document.queryCommandState("italic"); } catch (err) {}
-      try { underline = !!document.queryCommandState("underline"); } catch (err) {}
-      try { subscript = !!document.queryCommandState("subscript"); } catch (err) {}
-      try { superscript = !!document.queryCommandState("superscript"); } catch (err) {}
-      overline = rangeHasOverline(editor, range);
-    }
-
-    setButtonActive("fmt-bold", bold);
-    setButtonActive("fmt-italic", italic);
-    setButtonActive("fmt-underline", underline);
-    setButtonActive("fmt-overline", overline);
-    setButtonActive("fmt-subscript", subscript);
-    setButtonActive("fmt-superscript", superscript);
+    const formatState = collectRichTextFormatState(editor, inspectRichTextSelection(editor));
+    setButtonActive("fmt-bold", formatState.bold);
+    setButtonActive("fmt-italic", formatState.italic);
+    setButtonActive("fmt-underline", formatState.underline);
+    setButtonActive("fmt-overline", formatState.overline);
+    setButtonActive("fmt-subscript", formatState.subscript);
+    setButtonActive("fmt-superscript", formatState.superscript);
   }
 
   function renderShapeInspector(shapeId) {
@@ -2298,6 +2306,7 @@
     const isComponentGroup = shape.kind === "component_group";
     const componentLabelsText = normalizeComponentLabels(shape.componentLabels, shape.componentCount).join("\n");
     const richText = sanitizeRichHtml(shape.richText, shape.text);
+    state.richTextSelection = null;
 
     els.inspector.innerHTML = [
       "<div>",
