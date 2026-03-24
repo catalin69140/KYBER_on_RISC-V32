@@ -42,7 +42,7 @@ def _endpoint_codegen(endpoint: Dict[str, Any], shape_map: Dict[str, Dict[str, A
 
 
 def _sorted_shapes(model: Dict[str, Any]) -> List[Dict[str, Any]]:
-    container_kinds = {"container", "header_container", "component_group"}
+    container_kinds = {"container", "header_container"}
     return sorted(
         model.get("shapes", []),
         key=lambda s: (int(s.get("z", 0)), s.get("kind") not in container_kinds, s.get("id", "")),
@@ -81,9 +81,11 @@ def _build_codegen_payload(model: Dict[str, Any]) -> Tuple[List[Dict[str, Any]],
                 "textColor": shape.get("textColor"),
                 "rounded": bool(shape.get("rounded", True)),
                 "borderStyle": shape.get("borderStyle", "solid"),
+                "borderWidth": _fmt_num(shape.get("borderWidth", 1.5)),
                 "textAlign": shape.get("textAlign", "center"),
                 "textVAlign": shape.get("textVAlign", "center"),
-                "fontSize": _fmt_num(shape.get("fontSize", 12.5)),
+                "fontSize": _fmt_num(shape.get("fontSize", 12)),
+                "fontFamily": shape.get("fontFamily"),
                 "componentDirection": shape.get("componentDirection", "horizontal"),
                 "componentCount": int(shape.get("componentCount", 1)),
                 "componentLabels": shape.get("componentLabels", []),
@@ -181,7 +183,11 @@ function generatedRenderPrimaryReferenceDiagram() {{
         markerHeight: 7,
         orient: "auto-start-reverse"
     }});
-    marker.appendChild(createSvgEl("path", {{ d: "M 0 0 L 10 5 L 0 10 z", fill: "#e8efff" }}));
+    marker.appendChild(createSvgEl("path", {{
+        d: "M 0 0 L 10 5 L 0 10 z",
+        fill: "context-stroke",
+        stroke: "context-stroke"
+    }}));
     defs.appendChild(marker);
     svg.appendChild(defs);
 
@@ -195,14 +201,6 @@ function generatedRenderPrimaryReferenceDiagram() {{
 
     const generatedShapes = {shape_json};
     generatedShapes.forEach((shapeSpec) => {{
-        if (shapeSpec.kind === "dk_group") {{
-            addRefDkGroup(svg, shapeSpec);
-            return;
-        }}
-        if (shapeSpec.kind === "ekpke_group") {{
-            addRefEkPkeGroup(svg, shapeSpec);
-            return;
-        }}
         addGeneratedRefShape(svg, shapeSpec);
     }});
 

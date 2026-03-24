@@ -11,7 +11,30 @@
     "#253f57",
   ];
   const DEFAULT_FONT_FAMILY = 'Georgia, "Times New Roman", serif';
-
+  const FONT_FAMILY_OPTIONS = [
+    { label: "Arial", value: "Arial, Helvetica, sans-serif" },
+    { label: "Helvetica", value: "Helvetica, Arial, sans-serif" },
+    { label: "Inter", value: "Inter, Arial, sans-serif" },
+    { label: "Roboto", value: "Roboto, Arial, sans-serif" },
+    { label: "Open Sans", value: '"Open Sans", Arial, sans-serif' },
+    { label: "Lato", value: "Lato, Arial, sans-serif" },
+    { label: "Verdana", value: "Verdana, Geneva, sans-serif" },
+    { label: "Tahoma", value: "Tahoma, Geneva, sans-serif" },
+    { label: "Trebuchet MS", value: '"Trebuchet MS", Helvetica, sans-serif' },
+    { label: "Georgia", value: DEFAULT_FONT_FAMILY },
+    { label: "Times New Roman", value: '"Times New Roman", Times, serif' },
+  ];
+  const FONT_FAMILY_VALUES = new Set(FONT_FAMILY_OPTIONS.map((option) => option.value));
+  const DEFAULT_SHAPE_SIZES = {
+    square: { width: 48, height: 48 },
+    rectangle: { width: 100, height: 48 },
+    triangle: { width: 90, height: 60 },
+    circle: { width: 60, height: 60 },
+    oval: { width: 100, height: 90 },
+    container: { width: 240, height: 200 },
+    header_container: { width: 240, height: 200 },
+    component_group: { width: 200, height: 70 },
+  };
   const DEFAULT_ANCHOR_STOPS = Array.from({ length: 11 }, (_, idx) => idx / 10);
   const HANDLE_SIZE = 8;
   const MIN_SHAPE_SIZE = 24;
@@ -34,8 +57,6 @@
     "container",
     "header_container",
     "component_group",
-    "dk_group",
-    "ekpke_group",
   ]);
 
   const state = {
@@ -110,6 +131,16 @@
     return out || "node";
   }
 
+  function normalizeShapeKind(raw) {
+    const kind = String(raw || "").trim().toLowerCase();
+    if (SHAPE_KINDS.has(kind)) return kind;
+    return "square";
+  }
+
+  function usesContainerPalette(kind) {
+    return isContainerKind(kind) || kind === "component_group";
+  }
+
   function deriveShapeId(text, containerText) {
     const base = sanitizeId(text || "node");
     if (containerText) {
@@ -131,23 +162,66 @@
     if (kind === "oval") return "Oval";
     if (kind === "triangle") return "Triangle";
     if (kind === "component_group") return "Group";
-    if (kind === "dk_group") return "dk";
-    if (kind === "ekpke_group") return "ekPKE";
     return "Node";
   }
 
   function defaultShapeSize(kind) {
-    if (kind === "square") return { width: 90, height: 90 };
-    if (kind === "rectangle") return { width: 128, height: 84 };
-    if (kind === "triangle") return { width: 118, height: 90 };
-    if (kind === "circle") return { width: 92, height: 92 };
-    if (kind === "oval") return { width: 132, height: 86 };
-    if (kind === "container") return { width: 240, height: 140 };
-    if (kind === "header_container") return { width: 260, height: 160 };
-    if (kind === "component_group") return { width: 320, height: 96 };
-    if (kind === "dk_group") return { width: 330, height: 96 };
-    if (kind === "ekpke_group") return { width: 220, height: 96 };
-    return { width: 120, height: 56 };
+    const normalized = normalizeShapeKind(kind);
+    const size = DEFAULT_SHAPE_SIZES[normalized];
+    return size ? { width: size.width, height: size.height } : { width: 100, height: 48 };
+  }
+
+  function defaultBorderWidth(kind) {
+    return usesContainerPalette(kind) ? 1.8 : 1.5;
+  }
+
+  function normalizeBorderWidth(raw, fallback) {
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return fallback;
+    return clamp(n, 0.5, 12);
+  }
+
+  function normalizeFontFamily(raw) {
+    const value = String(raw || "").trim();
+    if (FONT_FAMILY_VALUES.has(value)) return value;
+    return DEFAULT_FONT_FAMILY;
+  }
+
+  function anchorCount() {
+    const explicit = Number(state.model && state.model.anchors && state.model.anchors.countPerEdge);
+    if (Number.isFinite(explicit)) return Math.max(2, Math.round(explicit));
+    const stops = getAnchorStops();
+    return Math.max(2, stops.length || DEFAULT_ANCHOR_STOPS.length);
+  }
+
+  function normalizeAnchorIndex(raw, maxIndex, fallbackIndex) {
+    const n = Number(raw);
+    const idx = Number.isFinite(n) ? Math.round(n) : fallbackIndex;
+    return clamp(idx, 0, maxIndex);
+  }
+
+  function anchorFractionForIndex(index) {
+    const stops = getAnchorStops();
+    const count = anchorCount();
+    const idx = normalizeAnchorIndex(index, count - 1, 0);
+    if (idx < stops.length) return stops[idx];
+    if (count <= 1) return 0.5;
+    return idx / (count - 1);
+  }
+
+  function anchorIndexForFraction(rawFraction) {
+    const frac = clamp(Number(rawFraction), 0, 1);
+    const count = anchorCount();
+    let bestIndex = 0;
+    let bestDelta = Infinity;
+    for (let i = 0; i < count; i += 1) {
+      const delta = Math.abs(anchorFractionForIndex(i) - frac);
+      if (delta < bestDelta) {
+        bestDelta = delta;
+        bestIndex = i;
+      }
+    }
+    return bestIndex;
   }
 
   function defaultModel(elfName) {
@@ -330,7 +404,7 @@
     if (!Array.isArray(state.model.arrows)) state.model.arrows = [];
 
     state.model.shapes.forEach((shape, idx) => {
-      shape.kind = SHAPE_KINDS.has(shape.kind) ? shape.kind : "square";
+      shape.kind = normalizeShapeKind(shape.kind);
       shape.text = String(shape.text || defaultShapeText(shape.kind));
       shape.richText = typeof shape.richText === "string" && shape.richText.trim()
         ? shape.richText
@@ -346,19 +420,24 @@
         shape.width = side;
         shape.height = side;
       }
-      const usesContainerPalette = isContainerKind(shape.kind) || shape.kind === "component_group" || shape.kind === "dk_group" || shape.kind === "ekpke_group";
-      shape.fill = normalizeColor(shape.fill, usesContainerPalette ? "#0d172a" : "#1c2f4f");
-      shape.stroke = normalizeColor(shape.stroke, usesContainerPalette ? "#eef3ff" : "#80b6ff");
+      const usesContainerColors = usesContainerPalette(shape.kind);
+      shape.fill = normalizeColor(shape.fill, usesContainerColors ? "#0d172a" : "#1c2f4f");
+      shape.stroke = normalizeColor(shape.stroke, usesContainerColors ? "#eef3ff" : "#80b6ff");
       shape.borderStyle = normalizeBorderStyle(shape.borderStyle);
+      shape.borderWidth = normalizeBorderWidth(shape.borderWidth, defaultBorderWidth(shape.kind));
       shape.textColor = normalizeColor(shape.textColor, "#f4f7ff");
       shape.rounded = shape.rounded !== false;
       shape.textAlign = normalizeTextAlign(shape.textAlign || "center");
       shape.textVAlign = normalizeTextVAlign(shape.textVAlign || "center");
-      shape.fontSize = normalizeFontSize(shape.fontSize, (isContainerKind(shape.kind) ? 13 : 12.5));
-      shape.fontFamily = DEFAULT_FONT_FAMILY;
+      shape.fontSize = normalizeFontSize(shape.fontSize, 12);
+      shape.fontFamily = normalizeFontFamily(shape.fontFamily);
       shape.componentDirection = normalizeComponentDirection(shape.componentDirection);
-      shape.componentCount = Math.max(1, Math.min(24, Math.round(Number(shape.componentCount) || 4)));
-      shape.componentLabels = normalizeComponentLabels(shape.componentLabels, shape.componentCount);
+      const defaultComponentCount = shape.kind === "component_group" ? 4 : 1;
+      shape.componentCount = Math.max(1, Math.min(24, Math.round(Number.isFinite(Number(shape.componentCount)) ? Number(shape.componentCount) : defaultComponentCount)));
+      const rawComponentLabels = Array.isArray(shape.componentLabels) && shape.componentLabels.length
+        ? shape.componentLabels
+        : [];
+      shape.componentLabels = normalizeComponentLabels(rawComponentLabels, shape.componentCount);
       shape.z = Number(shape.z);
       if (!Number.isFinite(shape.z)) shape.z = idx;
       shape.parentId = shape.parentId ? String(shape.parentId) : null;
@@ -382,9 +461,10 @@
       arrow.to.shapeId = String(arrow.to.shapeId || "");
       arrow.from.side = normalizeSide(arrow.from.side || "right");
       arrow.to.side = normalizeSide(arrow.to.side || "left");
-      const maxAnchor = Math.max(1, state.model.anchors.countPerEdge - 1);
-      arrow.from.anchorIndex = clamp(Math.round(Number(arrow.from.anchorIndex) || maxAnchor / 2), 0, maxAnchor);
-      arrow.to.anchorIndex = clamp(Math.round(Number(arrow.to.anchorIndex) || maxAnchor / 2), 0, maxAnchor);
+      const maxAnchor = Math.max(1, anchorCount() - 1);
+      const fallbackAnchor = Math.floor(maxAnchor / 2);
+      arrow.from.anchorIndex = normalizeAnchorIndex(arrow.from.anchorIndex, maxAnchor, fallbackAnchor);
+      arrow.to.anchorIndex = normalizeAnchorIndex(arrow.to.anchorIndex, maxAnchor, fallbackAnchor);
       arrow.lineStyle = normalizeLineStyle(arrow.lineStyle);
       arrow.routing = normalizeRouting(arrow.routing);
       arrow.connectionType = normalizeConnectionType(arrow.connectionType);
@@ -694,7 +774,11 @@
       markerHeight: 7,
       orient: "auto-start-reverse",
     });
-    arrowHead.appendChild(createSvg("path", { d: "M 0 0 L 10 5 L 0 10 z", fill: "#e8efff" }));
+    arrowHead.appendChild(createSvg("path", {
+      d: "M 0 0 L 10 5 L 0 10 z",
+      fill: "context-stroke",
+      stroke: "context-stroke",
+    }));
     defs.appendChild(arrowHead);
 
     els.svg.appendChild(defs);
@@ -726,7 +810,7 @@
   }
 
   function sanitizeInlineStyle(styleText) {
-    const allowed = new Set(["color", "font-size", "text-decoration"]);
+    const allowed = new Set(["color", "text-decoration"]);
     const out = [];
     String(styleText || "").split(";").forEach((entry) => {
       const parts = entry.split(":");
@@ -782,7 +866,7 @@
       const headerH = Math.max(18, Math.min(36, Math.round(shape.height * 0.22)));
       return { x: shape.x + 8, y: shape.y + 2, width: Math.max(24, shape.width - 16), height: Math.max(14, headerH - 4) };
     }
-    if (shape.kind === "component_group" || shape.kind === "dk_group" || shape.kind === "ekpke_group") {
+    if (shape.kind === "component_group") {
       return { x: shape.x + 8, y: shape.y + 2, width: Math.max(24, shape.width - 16), height: 14 };
     }
     if (shape.kind === "circle" || shape.kind === "oval") {
@@ -813,8 +897,8 @@
         "justify-content:stretch",
         "overflow:hidden",
         "color:" + normalizeColor(shape.textColor, "#f4f7ff"),
-        "font-size:" + normalizeFontSize(shape.fontSize, 12.5) + "px",
-        "font-family:" + DEFAULT_FONT_FAMILY,
+        "font-size:" + normalizeFontSize(shape.fontSize, 12) + "px",
+        "font-family:" + normalizeFontFamily(shape.fontFamily),
         "text-align:" + normalizeTextAlign(shape.textAlign || "center"),
         "line-height:1.18",
         "white-space:pre-wrap",
@@ -835,7 +919,7 @@
   function renderMultilineText(group, cfg) {
     const text = String(cfg.text || "");
     const lines = text.split(/\r?\n/);
-    const fontSize = normalizeFontSize(cfg.fontSize, 12.5);
+    const fontSize = normalizeFontSize(cfg.fontSize, 12);
     const lineGap = fontSize * 1.18;
     const startY = cfg.y - ((lines.length - 1) * lineGap) / 2;
     const t = createSvg("text", {
@@ -843,7 +927,7 @@
       y: startY,
       fill: cfg.fill || "#f4f7ff",
       "font-size": fontSize,
-      "font-family": String(cfg.fontFamily || DEFAULT_FONT_FAMILY),
+      "font-family": normalizeFontFamily(cfg.fontFamily),
       "text-anchor": cfg.textAnchor || "middle",
       "dominant-baseline": "middle",
       "pointer-events": "none",
@@ -862,6 +946,8 @@
 
   function renderShapeVisual(group, shape, strokeColor, strokeWidth) {
     const dash = shape.borderStyle === "dashed" ? "7 4" : "";
+    const separatorWidth = Math.max(1, strokeWidth * 0.62);
+    const minorSeparatorWidth = Math.max(1, strokeWidth * 0.56);
     const commonStroke = {
       fill: shape.fill,
       stroke: strokeColor,
@@ -909,7 +995,7 @@
         x2: shape.x + shape.width,
         y2: shape.y + headerH,
         stroke: strokeColor,
-        "stroke-width": Math.max(1, strokeWidth * 0.9),
+        "stroke-width": separatorWidth,
         "stroke-dasharray": dash,
       }));
     } else if (shape.kind === "component_group") {
@@ -953,7 +1039,7 @@
         x2: shape.x + shape.width - 1,
         y2: shape.y + headerH + 1,
         stroke: strokeColor,
-        "stroke-width": 1.1,
+        "stroke-width": separatorWidth,
         "stroke-dasharray": dash,
       }));
 
@@ -972,7 +1058,7 @@
               x2: x0,
               y2: bodyY + bodyH - 2,
               stroke: strokeColor,
-              "stroke-width": 1,
+              "stroke-width": minorSeparatorWidth,
               "stroke-dasharray": dash,
             }));
           }
@@ -980,7 +1066,7 @@
             x: (x0 + x1) / 2,
             y: bodyY + bodyH / 2 + 1,
             text: labels[idx],
-            fontSize: Math.max(10, normalizeFontSize(shape.fontSize, 12) - 1),
+            fontSize: Math.max(9, normalizeFontSize(shape.fontSize, 12) - 1),
             fontFamily: shape.fontFamily,
             fill: shape.textColor || "#f4f7ff",
             textAnchor: "middle",
@@ -999,7 +1085,7 @@
               x2: shape.x + shape.width - 8,
               y2: y0,
               stroke: strokeColor,
-              "stroke-width": 1,
+              "stroke-width": minorSeparatorWidth,
               "stroke-dasharray": dash,
             }));
           }
@@ -1007,160 +1093,13 @@
             x: shape.x + shape.width / 2,
             y: (y0 + y1) / 2,
             text: labels[idx],
-            fontSize: Math.max(10, normalizeFontSize(shape.fontSize, 12) - 1),
+            fontSize: Math.max(9, normalizeFontSize(shape.fontSize, 12) - 1),
             fontFamily: shape.fontFamily,
             fill: shape.textColor || "#f4f7ff",
             textAnchor: "middle",
           });
         }
       }
-    } else if (shape.kind === "dk_group") {
-      const headerH = 18;
-      group.appendChild(createSvg("rect", {
-        x: shape.x,
-        y: shape.y,
-        width: shape.width,
-        height: shape.height,
-        fill: "none",
-        stroke: strokeColor,
-        "stroke-width": strokeWidth,
-        "stroke-dasharray": dash,
-        rx: shape.rounded === false ? 0 : 6,
-        ry: shape.rounded === false ? 0 : 6,
-      }));
-      group.appendChild(createSvg("rect", {
-        x: shape.x + 1,
-        y: shape.y + 1,
-        width: Math.max(1, shape.width - 2),
-        height: headerH,
-        fill: darken(shape.fill, -14),
-        stroke: "none",
-        rx: shape.rounded === false ? 0 : 5,
-        ry: shape.rounded === false ? 0 : 5,
-      }));
-      group.appendChild(createSvg("rect", {
-        x: shape.x + 1,
-        y: shape.y + headerH + 1,
-        width: Math.max(1, shape.width - 2),
-        height: Math.max(1, shape.height - headerH - 2),
-        fill: shape.fill,
-        stroke: "none",
-      }));
-      group.appendChild(createSvg("line", {
-        x1: shape.x + 1,
-        y1: shape.y + headerH + 1,
-        x2: shape.x + shape.width - 1,
-        y2: shape.y + headerH + 1,
-        stroke: strokeColor,
-        "stroke-width": 1.1,
-      }));
-
-      const bodyY = shape.y + headerH + 2;
-      const bodyH = shape.height - headerH - 4;
-      const cells = [
-        { label: "dkPKE", frac: 0.33 },
-        { label: "ek", frac: 0.22 },
-        { label: "H(ek)", frac: 0.25 },
-        { label: "z", frac: 0.20 },
-      ];
-      const innerW = shape.width - 16;
-      let cx = shape.x + 8;
-      cells.forEach((cell, idx) => {
-        const w = idx === cells.length - 1
-          ? shape.x + shape.width - 8 - cx
-          : Math.round(innerW * cell.frac);
-        if (idx > 0) {
-          group.appendChild(createSvg("line", {
-            x1: cx,
-            y1: bodyY + 2,
-            x2: cx,
-            y2: bodyY + bodyH - 2,
-            stroke: strokeColor,
-            "stroke-width": 1,
-            "stroke-dasharray": dash,
-          }));
-        }
-        renderMultilineText(group, {
-          x: cx + w / 2,
-          y: bodyY + bodyH / 2 + 1,
-          text: cell.label,
-          fontSize: 12,
-          fontFamily: shape.fontFamily,
-          fill: shape.textColor || "#f4f7ff",
-          textAnchor: "middle",
-        });
-        cx += w;
-      });
-    } else if (shape.kind === "ekpke_group") {
-      const headerH = 18;
-      group.appendChild(createSvg("rect", {
-        x: shape.x,
-        y: shape.y,
-        width: shape.width,
-        height: shape.height,
-        fill: "none",
-        stroke: strokeColor,
-        "stroke-width": strokeWidth,
-        "stroke-dasharray": dash,
-        rx: shape.rounded === false ? 0 : 6,
-        ry: shape.rounded === false ? 0 : 6,
-      }));
-      group.appendChild(createSvg("rect", {
-        x: shape.x + 1,
-        y: shape.y + 1,
-        width: Math.max(1, shape.width - 2),
-        height: headerH,
-        fill: darken(shape.fill, -14),
-        stroke: "none",
-        rx: shape.rounded === false ? 0 : 5,
-        ry: shape.rounded === false ? 0 : 5,
-      }));
-      group.appendChild(createSvg("rect", {
-        x: shape.x + 1,
-        y: shape.y + headerH + 1,
-        width: Math.max(1, shape.width - 2),
-        height: Math.max(1, shape.height - headerH - 2),
-        fill: shape.fill,
-        stroke: "none",
-      }));
-      group.appendChild(createSvg("line", {
-        x1: shape.x + 1,
-        y1: shape.y + headerH + 1,
-        x2: shape.x + shape.width - 1,
-        y2: shape.y + headerH + 1,
-        stroke: strokeColor,
-        "stroke-width": 1.1,
-      }));
-      const bodyY = shape.y + headerH + 2;
-      const bodyH = shape.height - headerH - 4;
-      const splitX = shape.x + Math.round(shape.width * 0.62);
-      group.appendChild(createSvg("line", {
-        x1: splitX,
-        y1: bodyY,
-        x2: splitX,
-        y2: bodyY + bodyH,
-        stroke: strokeColor,
-        "stroke-width": 1,
-        "stroke-dasharray": dash,
-      }));
-      renderMultilineText(group, {
-        x: shape.x + (splitX - shape.x) / 2,
-        y: bodyY + bodyH / 2 + 1,
-        text: "t^",
-        fontSize: 12,
-        fontFamily: shape.fontFamily,
-        fill: shape.textColor || "#f4f7ff",
-        textAnchor: "middle",
-      });
-      renderMultilineText(group, {
-        x: splitX + (shape.x + shape.width - splitX) / 2,
-        y: bodyY + bodyH / 2 + 1,
-        text: "rho",
-        fontSize: 12,
-        fontFamily: shape.fontFamily,
-        fill: shape.textColor || "#f4f7ff",
-        textAnchor: "middle",
-      });
     } else {
       group.appendChild(createSvg("rect", Object.assign({
         x: shape.x,
@@ -1178,8 +1117,11 @@
   function renderShape(shapeLayer, shape) {
     const isSelected = state.selected && state.selected.type === "shape" && state.selected.id === shape.id;
     const isConnectSource = state.connectSourceId === shape.id;
+    const baseStrokeWidth = normalizeBorderWidth(shape.borderWidth, defaultBorderWidth(shape.kind));
     const stroke = isConnectSource ? "#43d17e" : (isSelected ? "#ffd76b" : shape.stroke);
-    const strokeWidth = isSelected || isConnectSource ? 2.6 : 1.5;
+    const strokeWidth = isSelected || isConnectSource
+      ? Math.max(2.6, baseStrokeWidth + 1)
+      : baseStrokeWidth;
 
     const group = createSvg("g", {
       "data-shape-id": shape.id,
@@ -1199,10 +1141,8 @@
   function getAnchorPoint(endpoint) {
     const shape = shapeById(endpoint.shapeId);
     if (!shape) return { x: 0, y: 0 };
-    const stops = getAnchorStops();
-    const count = Math.max(2, state.model.anchors.countPerEdge || stops.length || DEFAULT_ANCHOR_STOPS.length);
-    const idx = clamp(Math.round(Number(endpoint.anchorIndex) || 0), 0, count - 1);
-    const frac = idx < stops.length ? stops[idx] : idx / (count - 1);
+    const idx = normalizeAnchorIndex(endpoint.anchorIndex, anchorCount() - 1, 0);
+    const frac = anchorFractionForIndex(idx);
     const side = normalizeSide(endpoint.side);
     const x0 = shape.x;
     const y0 = shape.y;
@@ -1266,13 +1206,12 @@
   }
 
   function getAllAnchors() {
-    const stops = getAnchorStops();
-    const count = Math.max(2, state.model.anchors.countPerEdge || stops.length || DEFAULT_ANCHOR_STOPS.length);
+    const count = anchorCount();
     const anchors = [];
 
     state.model.shapes.forEach((shape) => {
       for (let i = 0; i < count; i += 1) {
-        const frac = i < stops.length ? stops[i] : i / (count - 1);
+        const frac = anchorFractionForIndex(i);
         const left = getAnchorPoint({ shapeId: shape.id, side: "left", anchorIndex: i });
         const right = getAnchorPoint({ shapeId: shape.id, side: "right", anchorIndex: i });
         const top = getAnchorPoint({ shapeId: shape.id, side: "top", anchorIndex: i });
@@ -1293,34 +1232,114 @@
     return dx * dx + dy * dy;
   }
 
-  function nearestShapeForPoint(point) {
+  function distance2(a, b) {
+    const dx = (a.x || 0) - (b.x || 0);
+    const dy = (a.y || 0) - (b.y || 0);
+    return dx * dx + dy * dy;
+  }
+
+  function projectPointToSegment(point, a, b) {
+    const abx = b.x - a.x;
+    const aby = b.y - a.y;
+    const denom = abx * abx + aby * aby;
+    if (denom <= 0.000001) {
+      return { x: a.x, y: a.y, t: 0, d2: distance2(point, a) };
+    }
+    const t = clamp(((point.x - a.x) * abx + (point.y - a.y) * aby) / denom, 0, 1);
+    const projected = { x: a.x + abx * t, y: a.y + aby * t };
+    return { x: projected.x, y: projected.y, t: t, d2: distance2(point, projected) };
+  }
+
+  function buildAnchorCandidate(shape, side, frac, point) {
+    const anchorIndex = anchorIndexForFraction(frac);
+    const anchor = getAnchorPoint({ shapeId: shape.id, side: side, anchorIndex: anchorIndex });
+    return {
+      shapeId: shape.id,
+      side: side,
+      anchorIndex: anchorIndex,
+      x: anchor.x,
+      y: anchor.y,
+      d2: distance2(point, anchor),
+    };
+  }
+
+  function nearestAnchorForShape(shape, point) {
+    if (!shape) return null;
+    const x0 = shape.x;
+    const y0 = shape.y;
+    const x1 = shape.x + shape.width;
+    const y1 = shape.y + shape.height;
+    const cx = shape.x + shape.width / 2;
+    const cy = shape.y + shape.height / 2;
+    const candidates = [];
+
+    if (shape.kind === "triangle") {
+      const top = { x: cx, y: y0 };
+      const bl = { x: x0, y: y1 };
+      const br = { x: x1, y: y1 };
+      const leftProj = projectPointToSegment(point, top, bl);
+      const rightProj = projectPointToSegment(point, top, br);
+      const bottomFrac = shape.width <= 0 ? 0.5 : clamp((point.x - x0) / shape.width, 0, 1);
+      const topLeftProj = projectPointToSegment(point, bl, top);
+      const topRightProj = projectPointToSegment(point, top, br);
+
+      candidates.push(buildAnchorCandidate(shape, "left", leftProj.t, point));
+      candidates.push(buildAnchorCandidate(shape, "right", rightProj.t, point));
+      candidates.push(buildAnchorCandidate(shape, "bottom", bottomFrac, point));
+      candidates.push(buildAnchorCandidate(
+        shape,
+        "top",
+        point.x <= cx ? (0.5 * topLeftProj.t) : (0.5 + 0.5 * topRightProj.t),
+        point
+      ));
+    } else if (shape.kind === "circle" || shape.kind === "oval") {
+      const h = Math.max(0.01, shape.height);
+      const w = Math.max(0.01, shape.width);
+      candidates.push(buildAnchorCandidate(shape, "left", clamp((point.y - y0) / h, 0, 1), point));
+      candidates.push(buildAnchorCandidate(shape, "right", clamp((point.y - y0) / h, 0, 1), point));
+      candidates.push(buildAnchorCandidate(shape, "top", clamp((point.x - x0) / w, 0, 1), point));
+      candidates.push(buildAnchorCandidate(shape, "bottom", clamp((point.x - x0) / w, 0, 1), point));
+    } else {
+      const h = Math.max(0.01, shape.height);
+      const w = Math.max(0.01, shape.width);
+      candidates.push(buildAnchorCandidate(shape, "left", clamp((point.y - y0) / h, 0, 1), point));
+      candidates.push(buildAnchorCandidate(shape, "right", clamp((point.y - y0) / h, 0, 1), point));
+      candidates.push(buildAnchorCandidate(shape, "top", clamp((point.x - x0) / w, 0, 1), point));
+      candidates.push(buildAnchorCandidate(shape, "bottom", clamp((point.x - x0) / w, 0, 1), point));
+    }
+
     let best = null;
-    state.model.shapes.forEach((shape) => {
-      const d2 = pointRectDistance2(point, shape);
-      if (!best || d2 < best.d2) best = { d2: d2, shape: shape };
+    candidates.forEach((candidate) => {
+      if (!best || candidate.d2 < best.d2) best = candidate;
     });
-    if (!best) return null;
-    if (best.d2 > (140 * 140)) return null;
-    return best.shape;
+    return best;
   }
 
   function nearestAnchor(point, preferredShapeId) {
-    const anchors = getAllAnchors();
-    const nearbyShape = nearestShapeForPoint(point);
-    const selectedShapeId = nearbyShape ? nearbyShape.id : (preferredShapeId || null);
-    const filtered = selectedShapeId ? anchors.filter((a) => a.shapeId === selectedShapeId) : anchors;
-    const pool = filtered.length ? filtered : anchors;
-
+    const preferredShape = preferredShapeId ? shapeById(preferredShapeId) : null;
     let best = null;
-    pool.forEach((anchor) => {
-      const dx = anchor.x - point.x;
-      const dy = anchor.y - point.y;
-      const d2 = dx * dx + dy * dy;
-      if (!best || d2 < best.d2) {
-        best = { d2: d2, anchor: anchor };
+
+    state.model.shapes.forEach((shape) => {
+      const candidate = nearestAnchorForShape(shape, point);
+      if (!candidate) return;
+      let score = candidate.d2;
+      if (preferredShape && preferredShape.id === shape.id) score -= 64;
+      if (!best || score < best.score) {
+        best = Object.assign({ score: score }, candidate);
       }
     });
-    return best ? best.anchor : null;
+
+    if (!best) return null;
+    if (best.score > (220 * 220) && preferredShape) {
+      return nearestAnchorForShape(preferredShape, point);
+    }
+    return {
+      shapeId: best.shapeId,
+      side: best.side,
+      anchorIndex: best.anchorIndex,
+      x: best.x,
+      y: best.y,
+    };
   }
 
   function defaultCurveControl(from, to, side) {
@@ -1627,6 +1646,18 @@
     return { x: transformed.x, y: transformed.y };
   }
 
+  function currentViewportCenter() {
+    const rect = els.canvasScroll.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+      return clientToSvg({
+        clientX: rect.left + rect.width / 2,
+        clientY: rect.top + rect.height / 2,
+      });
+    }
+    const vb = state.model.metadata.viewBox || { width: 1980, height: 1200 };
+    return { x: vb.width / 2, y: vb.height / 2 };
+  }
+
   function onBackgroundPointerDown(evt) {
     if (evt.button !== 0) return;
     state.selected = null;
@@ -1892,7 +1923,7 @@
         ? (isFromEndpoint ? "bottom" : "top")
         : (isFromEndpoint ? "top" : "bottom");
     }
-    const anchorIndex = Math.floor((Math.max(2, state.model.anchors.countPerEdge || DEFAULT_ANCHOR_STOPS.length) - 1) / 2);
+    const anchorIndex = Math.floor((anchorCount() - 1) / 2);
     return {
       shapeId: isFromEndpoint ? fromShape.id : toShape.id,
       side: side,
@@ -1926,22 +1957,24 @@
   }
 
   function addShape(kind) {
-    if (!SHAPE_KINDS.has(kind)) return;
+    const normalizedKind = normalizeShapeKind(kind);
+    if (!SHAPE_KINDS.has(normalizedKind)) return;
     pushHistory();
 
     const vb = state.model.metadata.viewBox || { width: 1980, height: 1200 };
-    const size = defaultShapeSize(kind);
-    const x = vb.width * 0.5 - size.width / 2 + (Math.random() * 18 - 9);
-    const y = vb.height * 0.5 - size.height / 2 + (Math.random() * 18 - 9);
-    const text = defaultShapeText(kind);
+    const size = defaultShapeSize(normalizedKind);
+    const center = currentViewportCenter();
+    const x = clamp(center.x - size.width / 2, 0, Math.max(0, vb.width - size.width));
+    const y = clamp(center.y - size.height / 2, 0, Math.max(0, vb.height - size.height));
+    const text = defaultShapeText(normalizedKind);
     const id = uniqueShapeId(deriveShapeId(text, ""), null);
 
-    const isContainer = isContainerKind(kind) || kind === "component_group" || kind === "dk_group" || kind === "ekpke_group";
-    const componentCount = kind === "component_group" ? 4 : 1;
+    const isContainer = usesContainerPalette(normalizedKind);
+    const componentCount = normalizedKind === "component_group" ? 4 : 1;
     const shape = {
       id: id,
       idManual: false,
-      kind: kind,
+      kind: normalizedKind,
       text: text,
       richText: plainTextToRichHtml(text),
       x: x,
@@ -1951,11 +1984,12 @@
       fill: isContainer ? "#0d172a" : "#1c2f4f",
       stroke: isContainer ? "#eef3ff" : "#80b6ff",
       borderStyle: "solid",
+      borderWidth: defaultBorderWidth(normalizedKind),
       textColor: "#f4f7ff",
       rounded: true,
       textAlign: "center",
       textVAlign: "center",
-      fontSize: isContainer ? 13 : 12.5,
+      fontSize: 12,
       fontFamily: DEFAULT_FONT_FAMILY,
       componentDirection: "horizontal",
       componentCount: componentCount,
@@ -2379,12 +2413,16 @@
 
     const palette = state.model.metadata.colorPalette || DEFAULT_COLOR_PALETTE;
     const borderPalette = palette.map((color) => borderNuance(color));
-    const parentText = shape.parentId
-      ? (shapeById(shape.parentId) ? shapeById(shape.parentId).text : shape.parentId)
-      : "None";
     const isComponentGroup = shape.kind === "component_group";
     const componentLabelsText = normalizeComponentLabels(shape.componentLabels, shape.componentCount).join("\n");
     const richText = sanitizeRichHtml(shape.richText, shape.text);
+    const selectedFontFamily = normalizeFontFamily(shape.fontFamily);
+    const fontFamilyOptions = FONT_FAMILY_OPTIONS
+      .map((option) => '<option value="' + escapeHtml(option.value) + '"' + (selectedFontFamily === option.value ? " selected" : "") + '>' + escapeHtml(option.label) + '</option>')
+      .join("");
+    const parentOptions = ['<option value="">None</option>']
+      .concat(containers.map((c) => '<option value="' + escapeHtml(c.id) + '"' + (shape.parentId === c.id ? " selected" : "") + '>' + escapeHtml(c.text) + ' (' + escapeHtml(c.id) + ')</option>'))
+      .join("");
     state.richTextSelection = null;
 
     els.inspector.innerHTML = [
@@ -2407,15 +2445,18 @@
         '<button id="fmt-v-bottom" type="button" title="Text bottom"' + (shape.textVAlign === "bottom" ? ' class="active"' : "") + '><span class="format-icon">⇣</span></button>' +
       "</div>",
       '<div class="text-style-row">' +
-        '<input id="ins-shape-font-color" type="color" title="Font color" value="' + normalizeColor(shape.textColor, "#f4f7ff") + '"/>' +
-        '<input id="ins-shape-font-size" type="number" min="8" max="40" step="0.5" title="Font size" value="' + roundNum(shape.fontSize || 12.5) + '"/>' +
+        '<select id="ins-shape-font-family" title="Font family">' + fontFamilyOptions + '</select>' +
+        '<input id="ins-shape-font-color" class="compact-color" type="color" title="Font color" value="' + normalizeColor(shape.textColor, "#f4f7ff") + '"/>' +
+        '<input id="ins-shape-font-size" class="font-size-input" type="number" min="8" max="1000" step="0.5" title="Font size" value="' + roundNum(shape.fontSize || 12) + '"/>' +
       "</div>",
       '<div><label>ID</label><input id="ins-shape-id" type="text" value="' + escapeHtml(shape.id) + '"/></div>',
       '<div class="switch-row"><label for="ins-shape-auto-id">Auto ID</label><label class="switch"><input id="ins-shape-auto-id" type="checkbox"' + (!shape.idManual ? " checked" : "") + '/><span class="switch-slider"></span></label></div>',
-      '<div class="hint">Parent container: <strong>' + escapeHtml(parentText) + '</strong></div>',
-      '<div class="hint">Type: <strong>' + escapeHtml(shape.kind) + '</strong></div>',
+      '<div><label>Parent container:</label><select id="ins-parent">' + parentOptions + '</select></div>',
       "<h3>Style</h3>",
-      '<div><label>Border style</label><select id="ins-shape-border-style"><option value="solid"' + (shape.borderStyle === "solid" ? " selected" : "") + '>solid</option><option value="dashed"' + (shape.borderStyle === "dashed" ? " selected" : "") + '>dashed</option></select></div>',
+      '<div><label>Border</label><div class="border-controls">' +
+        '<select id="ins-shape-border-style"><option value="solid"' + (shape.borderStyle === "solid" ? " selected" : "") + '>solid</option><option value="dashed"' + (shape.borderStyle === "dashed" ? " selected" : "") + '>dashed</option></select>' +
+        '<input id="ins-shape-border-width" type="number" min="0.5" max="12" step="0.1" title="Border thickness" value="' + roundNum(shape.borderWidth || defaultBorderWidth(shape.kind)) + '"/>' +
+      '</div></div>',
       '<div class="row"><label style="margin:0;"><input id="ins-shape-rounded" type="checkbox"' + (shape.rounded ? " checked" : "") + '> Rounded corners</label></div>',
       isComponentGroup
         ? '<h3>Group Layout</h3>' +
@@ -2437,11 +2478,6 @@
       '</div>',
       "<h3>Z-Order</h3>",
       '<div class="row"><button id="ins-z-back">Send Back</button><button id="ins-z-front">Bring Front</button></div>',
-      containers.length
-        ? '<h3>Container Assign</h3><div><label>Parent container</label><select id="ins-parent"><option value="">None</option>' +
-          containers.map((c) => '<option value="' + escapeHtml(c.id) + '"' + (shape.parentId === c.id ? " selected" : "") + '>' + escapeHtml(c.text) + ' (' + escapeHtml(c.id) + ')</option>').join("") +
-          '</select></div>'
-        : "",
       "</div>",
     ].join("");
 
@@ -2556,6 +2592,12 @@
       render();
     });
 
+    bindInput("ins-shape-font-family", "change", (value) => {
+      pushHistory();
+      shape.fontFamily = normalizeFontFamily(value);
+      render();
+    });
+
     bindInput("ins-shape-font-color", "input", (value) => {
       const nextColor = normalizeColor(value, shape.textColor);
       if (hasActiveRichTextSelection()) {
@@ -2568,11 +2610,7 @@
     });
 
     bindCommittedNumber("ins-shape-font-size", (num) => {
-      const nextSize = normalizeFontSize(num, shape.fontSize || 12.5);
-      if (hasActiveRichTextSelection()) {
-        applyInlineStyleCommand(shape, { fontSize: nextSize + "px" }, false);
-        return;
-      }
+      const nextSize = normalizeFontSize(num, shape.fontSize || 12);
       pushHistory();
       shape.fontSize = nextSize;
       render();
@@ -2593,6 +2631,12 @@
     bindInput("ins-shape-border-style", "change", (value) => {
       pushHistory();
       shape.borderStyle = normalizeBorderStyle(value);
+      render();
+    });
+
+    bindCommittedNumber("ins-shape-border-width", (num) => {
+      pushHistory();
+      shape.borderWidth = normalizeBorderWidth(num, shape.borderWidth || defaultBorderWidth(shape.kind));
       render();
     });
 

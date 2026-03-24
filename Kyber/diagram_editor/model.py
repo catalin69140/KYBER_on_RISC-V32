@@ -9,6 +9,20 @@ DEFAULT_VIEWBOX = {"width": 1980.0, "height": 1200.0}
 DEFAULT_BACKGROUND = "#0b1220"
 DEFAULT_ANCHOR_STOPS = [i / 10 for i in range(11)]
 DEFAULT_FONT_FAMILY = 'Georgia, "Times New Roman", serif'
+FONT_FAMILY_OPTIONS = [
+    "Arial, Helvetica, sans-serif",
+    "Helvetica, Arial, sans-serif",
+    "Inter, Arial, sans-serif",
+    "Roboto, Arial, sans-serif",
+    '"Open Sans", Arial, sans-serif',
+    "Lato, Arial, sans-serif",
+    "Verdana, Geneva, sans-serif",
+    "Tahoma, Geneva, sans-serif",
+    '"Trebuchet MS", Helvetica, sans-serif',
+    DEFAULT_FONT_FAMILY,
+    '"Times New Roman", Times, serif',
+]
+VALID_FONT_FAMILIES = set(FONT_FAMILY_OPTIONS)
 
 # Existing primary diagram role colors from CryptoTool UI.
 DEFAULT_COLOR_PALETTE = [
@@ -42,8 +56,6 @@ VALID_SHAPE_KINDS = {
     "container",
     "header_container",
     "component_group",
-    "dk_group",
-    "ekpke_group",
 }
 VALID_CONTAINER_KINDS = {"container", "header_container"}
 VALID_SIDES = {"left", "right", "top", "bottom"}
@@ -90,11 +102,31 @@ def _default_shape_text(kind: str) -> str:
         return "Header"
     if kind == "component_group":
         return "Group"
-    if kind == "dk_group":
-        return "dk"
-    if kind == "ekpke_group":
-        return "ekPKE"
     return "Node"
+
+
+def _default_shape_size(kind: str) -> Tuple[float, float]:
+    if kind == "square":
+        return 48.0, 48.0
+    if kind == "rectangle":
+        return 100.0, 48.0
+    if kind == "triangle":
+        return 90.0, 60.0
+    if kind == "circle":
+        return 60.0, 60.0
+    if kind == "oval":
+        return 100.0, 90.0
+    if kind in VALID_CONTAINER_KINDS:
+        return 240.0, 200.0
+    if kind == "component_group":
+        return 200.0, 70.0
+    return 100.0, 48.0
+
+
+def _default_border_width(kind: str) -> float:
+    if kind in VALID_CONTAINER_KINDS or kind == "component_group":
+        return 1.8
+    return 1.5
 
 
 def default_model(elf_name: str = "") -> Dict[str, Any]:
@@ -138,8 +170,6 @@ def _as_side(value: Any, fallback: str) -> str:
 
 def _as_shape_kind(value: Any) -> str:
     kind = str(value or "").strip().lower()
-    if kind == "shape":
-        return "square"
     if kind in VALID_SHAPE_KINDS:
         return kind
     return "square"
@@ -196,6 +226,13 @@ def _as_component_direction(value: Any) -> str:
     return "vertical" if str(value or "").strip().lower() == "vertical" else "horizontal"
 
 
+def _as_font_family(value: Any) -> str:
+    family = str(value or "").strip()
+    if family in VALID_FONT_FAMILIES:
+        return family
+    return DEFAULT_FONT_FAMILY
+
+
 def _normalize_component_labels(value: Any, count: int) -> List[str]:
     out: List[str] = []
     if isinstance(value, list):
@@ -207,7 +244,7 @@ def _normalize_component_labels(value: Any, count: int) -> List[str]:
 
 
 def _shape_defaults(kind: str) -> Tuple[str, str]:
-    if kind in VALID_CONTAINER_KINDS or kind in {"component_group", "dk_group", "ekpke_group"}:
+    if kind in VALID_CONTAINER_KINDS or kind == "component_group":
         return DEFAULT_CONTAINER_FILL, DEFAULT_CONTAINER_STROKE
     return DEFAULT_SHAPE_FILL, DEFAULT_SHAPE_STROKE
 
@@ -312,12 +349,16 @@ def normalize_model(raw_model: Any, elf_name: str = "") -> Dict[str, Any]:
         used_ids.append(sid)
 
         fill_default, stroke_default = _shape_defaults(kind)
-        width = max(18.0, _to_float(raw_shape.get("width"), raw_shape.get("w", 120)))
-        height = max(18.0, _to_float(raw_shape.get("height"), raw_shape.get("h", 56)))
+        default_width, default_height = _default_shape_size(kind)
+        width = max(18.0, _to_float(raw_shape.get("width"), raw_shape.get("w", default_width)))
+        height = max(18.0, _to_float(raw_shape.get("height"), raw_shape.get("h", default_height)))
         if kind in {"square", "circle"}:
             side = max(width, height)
             width = side
             height = side
+        component_count_fallback = 4 if kind == "component_group" else 1
+        component_count = max(1, min(24, _to_int(raw_shape.get("componentCount"), component_count_fallback)))
+        component_labels_raw = raw_shape.get("componentLabels")
 
         shape = {
             "id": sid,
@@ -332,18 +373,19 @@ def normalize_model(raw_model: Any, elf_name: str = "") -> Dict[str, Any]:
             "fill": str(raw_shape.get("fill") or fill_default),
             "stroke": str(raw_shape.get("stroke") or stroke_default),
             "borderStyle": _as_border_style(raw_shape.get("borderStyle")),
+            "borderWidth": max(0.5, min(12.0, _to_float(raw_shape.get("borderWidth"), _default_border_width(kind)))),
             "textColor": str(raw_shape.get("textColor") or DEFAULT_TEXT_COLOR),
             "rounded": bool(raw_shape.get("rounded", True)),
             "textAlign": _as_text_align(raw_shape.get("textAlign")),
             "textVAlign": _as_text_v_align(raw_shape.get("textVAlign")),
-            "fontSize": max(8.0, min(40.0, _to_float(raw_shape.get("fontSize"), 13.0 if kind in VALID_CONTAINER_KINDS or kind in {"component_group", "dk_group", "ekpke_group"} else 12.5))),
-            "fontFamily": DEFAULT_FONT_FAMILY,
+            "fontSize": max(8.0, min(40.0, _to_float(raw_shape.get("fontSize"), 12.0))),
+            "fontFamily": _as_font_family(raw_shape.get("fontFamily")),
             "componentDirection": _as_component_direction(raw_shape.get("componentDirection")),
-            "componentCount": max(1, min(24, _to_int(raw_shape.get("componentCount"), 4 if kind == "component_group" else 1))),
+            "componentCount": component_count,
             "z": _to_int(raw_shape.get("z"), idx),
             "parentId": parent_id,
         }
-        shape["componentLabels"] = _normalize_component_labels(raw_shape.get("componentLabels"), shape["componentCount"])
+        shape["componentLabels"] = _normalize_component_labels(component_labels_raw, shape["componentCount"])
         normalized_shapes.append(shape)
 
     all_shape_ids = {s["id"] for s in normalized_shapes}

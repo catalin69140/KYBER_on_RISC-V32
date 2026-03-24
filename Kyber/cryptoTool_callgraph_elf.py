@@ -2018,7 +2018,8 @@ def write_html_animation(
         marker.setAttribute("orient", "auto-start-reverse");
         const arrowPath = document.createElementNS(ns, "path");
         arrowPath.setAttribute("d", "M 0 0 L 10 5 L 0 10 z");
-        arrowPath.setAttribute("fill", "#95a5ce");
+        arrowPath.setAttribute("fill", "context-stroke");
+        arrowPath.setAttribute("stroke", "context-stroke");
         marker.appendChild(arrowPath);
         defs.appendChild(marker);
         svg.appendChild(defs);
@@ -2380,7 +2381,7 @@ def write_html_animation(
             const headerH = Math.max(18, Math.min(36, Math.round(spec.h * 0.22)));
             return { x: spec.x + 8, y: spec.y + 2, width: Math.max(24, spec.w - 16), height: Math.max(14, headerH - 4) };
         }
-        if (kind === "component_group" || kind === "dk_group" || kind === "ekpke_group") {
+        if (kind === "component_group") {
             return { x: spec.x + 8, y: spec.y + 2, width: Math.max(24, spec.w - 16), height: 14 };
         }
         if (kind === "circle" || kind === "oval") {
@@ -2411,8 +2412,8 @@ def write_html_animation(
             "justify-content:stretch",
             "overflow:hidden",
             "color:" + (spec.textColor || "#f4f7ff"),
-            "font-size:" + (Math.max(8, Math.min(40, Number(spec.fontSize) || 12.5))) + "px",
-            "font-family:" + REF_TEXT_FONT_FAMILY,
+            "font-size:" + (Math.max(8, Math.min(40, Number(spec.fontSize) || 12))) + "px",
+            "font-family:" + String(spec.fontFamily || REF_TEXT_FONT_FAMILY),
             "text-align:" + (String(spec.textAlign || "center").toLowerCase()),
             "line-height:1.18",
             "white-space:pre-wrap",
@@ -2429,7 +2430,7 @@ def write_html_animation(
     }
 
     function refRenderMultilineText(g, opts = {}) {
-        const fontSize = Math.max(8, Math.min(40, Number(opts.fontSize) || 12.5));
+        const fontSize = Math.max(8, Math.min(40, Number(opts.fontSize) || 12));
         const lines = String(opts.text || "").split(/\\r?\\n/);
         const lineGap = fontSize * 1.18;
         const startY = Number(opts.y || 0) - ((lines.length - 1) * lineGap) / 2;
@@ -2438,7 +2439,7 @@ def write_html_animation(
             y: startY,
             fill: opts.fill || "#f4f7ff",
             "font-size": fontSize,
-            "font-family": REF_TEXT_FONT_FAMILY,
+            "font-family": String(opts.fontFamily || REF_TEXT_FONT_FAMILY),
             "text-anchor": opts.textAnchor || "middle",
             "dominant-baseline": "middle",
             "pointer-events": "none"
@@ -2518,10 +2519,7 @@ def write_html_animation(
     }
 
     function addGeneratedRefShape(svg, spec) {
-        const shapeKindRaw = String(spec.kind || "square");
-        const shapeKind = shapeKindRaw === "shape" ? "square" : shapeKindRaw;
-        if (shapeKind === "dk_group") return addRefDkGroup(svg, spec);
-        if (shapeKind === "ekpke_group") return addRefEkPkeGroup(svg, spec);
+        const shapeKind = String(spec.kind || "square").toLowerCase();
 
         const g = createSvgEl("g", {
             class: `ref-node generated-ref-node kind-${shapeKind}`,
@@ -2530,6 +2528,9 @@ def write_html_animation(
         const isContainer = (shapeKind === "container" || shapeKind === "header_container" || shapeKind === "component_group");
         const fill = spec.fill || (isContainer ? "#0d172a" : "#1c2f4f");
         const stroke = spec.stroke || (isContainer ? "#eef3ff" : "#80b6ff");
+        const borderWidth = Math.max(0.5, Math.min(12, Number(spec.borderWidth) || (isContainer ? 1.8 : 1.5)));
+        const separatorWidth = Math.max(1, borderWidth * 0.62);
+        const minorSeparatorWidth = Math.max(1, borderWidth * 0.56);
         const rounded = (spec.rounded === false) ? 0 : 7;
         const borderStyle = String(spec.borderStyle || "solid").toLowerCase() === "dashed" ? "dashed" : "solid";
         const dash = borderStyle === "dashed" ? "7 4" : "";
@@ -2543,10 +2544,10 @@ def write_html_animation(
             const polygon = createSvgEl("polygon", { points });
             polygon.setAttribute("fill", fill);
             polygon.setAttribute("stroke", stroke);
-            polygon.setAttribute("stroke-width", "1.5");
+            polygon.setAttribute("stroke-width", String(borderWidth));
             if (dash) polygon.setAttribute("stroke-dasharray", dash);
             polygon.setAttribute("data-base-stroke", stroke);
-            polygon.setAttribute("data-base-stroke-width", "1.5");
+            polygon.setAttribute("data-base-stroke-width", String(borderWidth));
             g.appendChild(polygon);
         } else if (shapeKind === "circle" || shapeKind === "oval") {
             const ellipse = createSvgEl("ellipse", {
@@ -2557,10 +2558,10 @@ def write_html_animation(
             });
             ellipse.setAttribute("fill", fill);
             ellipse.setAttribute("stroke", stroke);
-            ellipse.setAttribute("stroke-width", "1.5");
+            ellipse.setAttribute("stroke-width", String(borderWidth));
             if (dash) ellipse.setAttribute("stroke-dasharray", dash);
             ellipse.setAttribute("data-base-stroke", stroke);
-            ellipse.setAttribute("data-base-stroke-width", "1.5");
+            ellipse.setAttribute("data-base-stroke-width", String(borderWidth));
             g.appendChild(ellipse);
         } else if (shapeKind === "header_container") {
             const headerH = Math.max(18, Math.min(36, Math.round(spec.h * 0.22)));
@@ -2570,10 +2571,10 @@ def write_html_animation(
             });
             rect.setAttribute("fill", fill);
             rect.setAttribute("stroke", stroke);
-            rect.setAttribute("stroke-width", "1.8");
+            rect.setAttribute("stroke-width", String(borderWidth));
             if (dash) rect.setAttribute("stroke-dasharray", dash);
             rect.setAttribute("data-base-stroke", stroke);
-            rect.setAttribute("data-base-stroke-width", "1.8");
+            rect.setAttribute("data-base-stroke-width", String(borderWidth));
             g.appendChild(rect);
             g.appendChild(createSvgEl("rect", {
                 x: spec.x + 1,
@@ -2592,7 +2593,7 @@ def write_html_animation(
                 y2: spec.y + headerH
             });
             sep.setAttribute("stroke", stroke);
-            sep.setAttribute("stroke-width", "1.3");
+            sep.setAttribute("stroke-width", String(separatorWidth));
             if (dash) sep.setAttribute("stroke-dasharray", dash);
             g.appendChild(sep);
         } else if (shapeKind === "component_group") {
@@ -2600,8 +2601,8 @@ def write_html_animation(
             const direction = String(spec.componentDirection || "horizontal").toLowerCase() === "vertical" ? "vertical" : "horizontal";
             const count = Math.max(1, Math.min(24, Number(spec.componentCount) || 4));
             const labels = normalizeRefComponentLabels(spec.componentLabels, count);
-            const fontSize = Math.max(8, Math.min(40, Number(spec.fontSize) || 12.5));
-            const fontFamily = REF_TEXT_FONT_FAMILY;
+            const fontSize = Math.max(8, Math.min(40, Number(spec.fontSize) || 12));
+            const fontFamily = String(spec.fontFamily || REF_TEXT_FONT_FAMILY);
 
             const outer = createSvgEl("rect", {
                 x: spec.x,
@@ -2613,10 +2614,10 @@ def write_html_animation(
             });
             outer.setAttribute("fill", "none");
             outer.setAttribute("stroke", stroke);
-            outer.setAttribute("stroke-width", "1.8");
+            outer.setAttribute("stroke-width", String(borderWidth));
             if (dash) outer.setAttribute("stroke-dasharray", dash);
             outer.setAttribute("data-base-stroke", stroke);
-            outer.setAttribute("data-base-stroke-width", "1.8");
+            outer.setAttribute("data-base-stroke-width", String(borderWidth));
             g.appendChild(outer);
 
             g.appendChild(createSvgEl("rect", {
@@ -2645,7 +2646,7 @@ def write_html_animation(
                 y2: spec.y + headerH + 1
             });
             splitTop.setAttribute("stroke", stroke);
-            splitTop.setAttribute("stroke-width", "1.1");
+            splitTop.setAttribute("stroke-width", String(separatorWidth));
             if (dash) splitTop.setAttribute("stroke-dasharray", dash);
             g.appendChild(splitTop);
 
@@ -2665,7 +2666,7 @@ def write_html_animation(
                             y2: bodyY + bodyH - 2
                         });
                         sep.setAttribute("stroke", stroke);
-                        sep.setAttribute("stroke-width", "1");
+                        sep.setAttribute("stroke-width", String(minorSeparatorWidth));
                         if (dash) sep.setAttribute("stroke-dasharray", dash);
                         g.appendChild(sep);
                     }
@@ -2673,7 +2674,7 @@ def write_html_animation(
                         x: (x0 + x1) / 2,
                         y: bodyY + bodyH / 2 + 1,
                         text: labels[idx],
-                        fontSize: Math.max(10, fontSize - 1),
+                        fontSize: Math.max(9, fontSize - 1),
                         fontFamily,
                         fill: spec.textColor || "#f4f7ff",
                         textAnchor: "middle"
@@ -2693,7 +2694,7 @@ def write_html_animation(
                             y2: y0
                         });
                         sep.setAttribute("stroke", stroke);
-                        sep.setAttribute("stroke-width", "1");
+                        sep.setAttribute("stroke-width", String(minorSeparatorWidth));
                         if (dash) sep.setAttribute("stroke-dasharray", dash);
                         g.appendChild(sep);
                     }
@@ -2701,7 +2702,7 @@ def write_html_animation(
                         x: spec.x + spec.w / 2,
                         y: (y0 + y1) / 2,
                         text: labels[idx],
-                        fontSize: Math.max(10, fontSize - 1),
+                        fontSize: Math.max(9, fontSize - 1),
                         fontFamily,
                         fill: spec.textColor || "#f4f7ff",
                         textAnchor: "middle"
@@ -2715,10 +2716,10 @@ def write_html_animation(
             });
             rect.setAttribute("fill", fill);
             rect.setAttribute("stroke", stroke);
-            rect.setAttribute("stroke-width", isContainer ? "1.8" : "1.5");
+            rect.setAttribute("stroke-width", String(borderWidth));
             if (dash) rect.setAttribute("stroke-dasharray", dash);
             rect.setAttribute("data-base-stroke", stroke);
-            rect.setAttribute("data-base-stroke-width", isContainer ? "1.8" : "1.5");
+            rect.setAttribute("data-base-stroke-width", String(borderWidth));
             g.appendChild(rect);
         }
 
@@ -3578,7 +3579,11 @@ def write_html_animation(
             refX: 9, refY: 5, markerWidth: 7, markerHeight: 7,
             orient: "auto-start-reverse"
         });
-        marker.appendChild(createSvgEl("path", { d: "M 0 0 L 10 5 L 0 10 z", fill: "#e8efff" }));
+        marker.appendChild(createSvgEl("path", {
+            d: "M 0 0 L 10 5 L 0 10 z",
+            fill: "context-stroke",
+            stroke: "context-stroke"
+        }));
         defs.appendChild(marker);
         svg.appendChild(defs);
 
