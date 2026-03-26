@@ -2670,6 +2670,46 @@
     }
   }
 
+  function isBoundaryMarker(node) {
+    return !!(node && node.nodeType === Node.ELEMENT_NODE && node.hasAttribute("data-rt-boundary"));
+  }
+
+  function hasRenderableChildren(node) {
+    if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
+    return Array.from(node.childNodes || []).some((child) => {
+      if (isBoundaryMarker(child)) return false;
+      if (child.nodeType === Node.TEXT_NODE) {
+        return String(child.textContent || "").replace(/\u200b/g, "").length > 0;
+      }
+      return child.nodeType === Node.ELEMENT_NODE;
+    });
+  }
+
+  function cleanupEmptyAncestors(node, editor) {
+    let current = node;
+    while (current && current !== editor) {
+      const parent = current.parentNode;
+      if (current.nodeType === Node.ELEMENT_NODE && !hasRenderableChildren(current)) {
+        current.remove();
+      }
+      current = parent;
+    }
+  }
+
+  function liftMarkerAcrossMatchingAncestors(marker, editor, matcher, towardStart) {
+    if (!marker || !editor || !matcher) return;
+    let current = marker.parentNode;
+    while (current && current !== editor) {
+      const parent = current.parentNode;
+      if (current.nodeType === Node.ELEMENT_NODE && matcher(current) && parent) {
+        const cleanupRoot = marker.parentNode;
+        parent.insertBefore(marker, towardStart ? current : current.nextSibling);
+        cleanupEmptyAncestors(cleanupRoot, editor);
+      }
+      current = parent;
+    }
+  }
+
   function applyStyleToRange(range, styles, blockTag) {
     if (!range) return null;
     const tag = blockTag ? "div" : "span";
@@ -2702,6 +2742,8 @@
       const matcher = formatMatcherForKey(key);
       splitMatchingAncestorsAtMarker(markers.endMarker, editor, matcher);
       splitMatchingAncestorsAtMarker(markers.startMarker, editor, matcher);
+      liftMarkerAcrossMatchingAncestors(markers.startMarker, editor, matcher, true);
+      liftMarkerAcrossMatchingAncestors(markers.endMarker, editor, matcher, false);
     });
 
     const isolatedRange = document.createRange();
@@ -2737,8 +2779,12 @@
     const nextRange = document.createRange();
     nextRange.setStartBefore(firstNode);
     nextRange.setEndAfter(lastNode);
+    const startCleanupRoot = markers.startMarker.parentNode;
+    const endCleanupRoot = markers.endMarker.parentNode;
     markers.startMarker.remove();
     markers.endMarker.remove();
+    cleanupEmptyAncestors(startCleanupRoot, editor);
+    cleanupEmptyAncestors(endCleanupRoot, editor);
     setEditorSelection(nextRange);
     clearPendingRichTextFormat(shape.id);
     captureRichTextSelection();
