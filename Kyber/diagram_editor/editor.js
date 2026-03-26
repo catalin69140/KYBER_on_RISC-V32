@@ -47,6 +47,7 @@
     connect_bi: "bi",
     connect_line: "line",
   };
+  const TEXT_FORMAT_KEYS = ["bold", "italic", "underline", "overline", "subscript", "superscript"];
 
   const CONTAINER_KINDS = new Set(["container", "header_container"]);
   const SHAPE_KINDS = new Set([
@@ -2348,6 +2349,152 @@
     document.execCommand("insertText", false, value);
   }
 
+  function isManagedFormatElement(node) {
+    if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
+    const tag = String(node.tagName || "").toLowerCase();
+    return tag === "b" || tag === "strong" || tag === "i" || tag === "em" ||
+      tag === "u" || tag === "sub" || tag === "sup" || tag === "span";
+  }
+
+  function restoreSelectionFromMarkers(editor, markers) {
+    if (!editor || !markers || !markers.startMarker || !markers.endMarker) return;
+    const range = document.createRange();
+    range.setStartAfter(markers.startMarker);
+    range.setEndBefore(markers.endMarker);
+    setEditorSelection(range);
+    const startCleanupRoot = markers.startMarker.parentNode;
+    const endCleanupRoot = markers.endMarker.parentNode;
+    markers.startMarker.remove();
+    markers.endMarker.remove();
+    cleanupEmptyAncestors(startCleanupRoot, editor);
+    cleanupEmptyAncestors(endCleanupRoot, editor);
+  }
+
+  function normalizeRichTextEditor(editor) {
+    if (!editor) return;
+    const selection = window.getSelection();
+    const liveRange = selectionInsideNode(editor, selection) && selection.rangeCount
+      ? selection.getRangeAt(0).cloneRange()
+      : null;
+    const markers = liveRange ? insertRangeBoundaryMarkers(liveRange) : null;
+
+    const textNodes = [];
+    const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT, null);
+    let textNode = walker.nextNode();
+    while (textNode) {
+      textNodes.push(textNode);
+      textNode = walker.nextNode();
+    }
+    textNodes.forEach((node) => {
+      const cleaned = String(node.textContent || "").replace(/\u200b/g, "");
+      if (cleaned !== node.textContent) {
+        node.textContent = cleaned;
+      }
+    });
+
+    Array.from(editor.querySelectorAll("*")).reverse().forEach((node) => {
+      if (isBoundaryMarker(node)) return;
+      cleanupFormatElement(node);
+      if (isManagedFormatElement(node) && !hasRenderableChildren(node)) {
+        node.remove();
+      }
+    });
+
+    editor.normalize();
+    if (markers) {
+      restoreSelectionFromMarkers(editor, markers);
+    }
+  }
+
+  function wrapContainerWithState(container, formatState) {
+    const next = normalizeTextFormatState(formatState);
+    const order = ["subscript", "superscript", "overline", "underline", "italic", "bold"];
+    order.forEach((formatKey) => {
+      if (next[formatKey]) {
+        wrapContainerWithFormat(container, formatKey);
+      }
+    });
+  }
+
+  function findLastTextNode(node) {
+    if (!node) return null;
+    if (node.nodeType === Node.TEXT_NODE) return node;
+    const children = Array.from(node.childNodes || []);
+    for (let idx = children.length - 1; idx >= 0; idx -= 1) {
+      const match = findLastTextNode(children[idx]);
+      if (match) return match;
+    }
+    return null;
+  }
+
+  function buildFormattedFragment(text, formatState) {
+    const value = String(text || "");
+    const container = document.createElement("div");
+    const parts = value.split(/\n/);
+    if (!parts.length) parts.push("");
+    parts.forEach((part, idx) => {
+      if (idx > 0) {
+        container.appendChild(document.createElement("br"));
+      }
+      if (part.length || idx === parts.length - 1) {
+        container.appendChild(document.createTextNode(part));
+      }
+    });
+    wrapContainerWithState(container, formatState);
+
+    const firstNode = container.firstChild;
+    const lastNode = container.lastChild;
+    const lastTextNode = findLastTextNode(container);
+    const fragment = document.createDocumentFragment();
+    while (container.firstChild) {
+      fragment.appendChild(container.firstChild);
+    }
+    return {
+      fragment: fragment,
+      firstNode: firstNode,
+      lastNode: lastNode,
+      lastTextNode: lastTextNode,
+    };
+  }
+
+  function insertCollapsedFormattedText(editor, text, formatState) {
+    if (!editor) return false;
+    const range = restoreRichTextSelection(editor, false);
+    if (!range || !range.collapsed) return false;
+
+    const marker = createBoundaryMarker("caret");
+    range.insertNode(marker);
+    TEXT_FORMAT_KEYS.forEach((key) => {
+      const matcher = formatMatcherForKey(key);
+      splitMatchingAncestorsAtMarker(marker, editor, matcher);
+      liftMarkerAcrossMatchingAncestors(marker, editor, matcher, false);
+    });
+
+    const built = buildFormattedFragment(text, formatState);
+    if (!built.firstNode || !built.lastNode) {
+      const cleanupRoot = marker.parentNode;
+      marker.remove();
+      cleanupEmptyAncestors(cleanupRoot, editor);
+      return false;
+    }
+
+    marker.parentNode.insertBefore(built.fragment, marker);
+    const cleanupRoot = marker.parentNode;
+    marker.remove();
+    cleanupEmptyAncestors(cleanupRoot, editor);
+
+    const nextRange = document.createRange();
+    if (built.lastTextNode) {
+      nextRange.setStart(built.lastTextNode, built.lastTextNode.textContent.length);
+      nextRange.collapse(true);
+    } else {
+      nextRange.setStartAfter(built.lastNode);
+      nextRange.collapse(true);
+    }
+    setEditorSelection(nextRange);
+    return true;
+  }
+
   function handleRichTextBeforeInput(evt, shape) {
     const editor = getRichTextEditorEl();
     if (!editor || !shape) return;
@@ -2357,6 +2504,31 @@
     }
 
     const available = remainingEditorTextCapacity(editor);
+    const pending = getPendingRichTextFormat(shape.id);
+    const range = inspectRichTextSelection(editor);
+    if (pending && range && range.collapsed && (inputType === "insertText" || inputType === "insertCompositionText")) {
+      evt.preventDefault();
+      const clipped = String(evt.data || "").slice(0, Math.max(0, available));
+      if (!clipped) return;
+      if (insertCollapsedFormattedText(editor, clipped, pending)) {
+        clearPendingRichTextFormat(shape.id);
+        normalizeRichTextEditor(editor);
+        editor.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      return;
+    }
+
+    if (pending && range && range.collapsed && (inputType === "insertParagraph" || inputType === "insertLineBreak")) {
+      evt.preventDefault();
+      if (available < 1) return;
+      if (insertCollapsedFormattedText(editor, "\n", pending)) {
+        clearPendingRichTextFormat(shape.id);
+        normalizeRichTextEditor(editor);
+        editor.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      return;
+    }
+
     if (inputType === "insertText" || inputType === "insertCompositionText") {
       const text = String(evt.data || "");
       if (text.length <= available) return;
@@ -2380,9 +2552,22 @@
     if (!editor || !shape) return;
     const pasted = String(evt.clipboardData && evt.clipboardData.getData("text/plain") || "");
     const available = remainingEditorTextCapacity(editor);
+    const clipped = pasted.slice(0, Math.max(0, available));
+    const pending = getPendingRichTextFormat(shape.id);
+    const range = inspectRichTextSelection(editor);
+    if (pending && range && range.collapsed) {
+      evt.preventDefault();
+      if (!clipped) return;
+      if (insertCollapsedFormattedText(editor, clipped, pending)) {
+        clearPendingRichTextFormat(shape.id);
+        normalizeRichTextEditor(editor);
+        editor.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      return;
+    }
     if (pasted.length <= available) return;
     evt.preventDefault();
-    insertTextIntoEditor(pasted.slice(0, Math.max(0, available)));
+    insertTextIntoEditor(clipped);
   }
 
   function getRichTextEditorEl() {
@@ -2447,53 +2632,6 @@
       return state.richTextSelection.range.cloneRange();
     }
     return null;
-  }
-
-  function findStyledAncestor(node, editor, predicate) {
-    let cur = node;
-    if (cur && cur.nodeType === Node.TEXT_NODE) cur = cur.parentNode;
-    while (cur && cur !== editor) {
-      if (cur.nodeType === Node.ELEMENT_NODE && predicate(cur)) return cur;
-      cur = cur.parentNode;
-    }
-    return null;
-  }
-
-  function insertCaretStyleSpan(editor, styles) {
-    if (!editor) return;
-    const range = restoreRichTextSelection(editor, true);
-    if (!range) return;
-    const span = document.createElement("span");
-    Object.keys(styles || {}).forEach((key) => {
-      span.style[key] = styles[key];
-    });
-    span.appendChild(document.createTextNode("\u200b"));
-    range.insertNode(span);
-    const nextRange = document.createRange();
-    nextRange.setStart(span.firstChild, 1);
-    nextRange.collapse(true);
-    const selection = window.getSelection();
-    selection.removeAllRanges();
-    selection.addRange(nextRange);
-  }
-
-  function exitCaretStyle(editor, matcher) {
-    const range = restoreRichTextSelection(editor, false);
-    if (!range || !range.collapsed) return false;
-    const activeNode = findStyledAncestor(range.startContainer, editor, matcher);
-    if (!activeNode) return false;
-    const marker = document.createTextNode("\u200b");
-    if (activeNode.parentNode) {
-      activeNode.parentNode.insertBefore(marker, activeNode.nextSibling);
-      const nextRange = document.createRange();
-      nextRange.setStart(marker, 1);
-      nextRange.collapse(true);
-      const selection = window.getSelection();
-      selection.removeAllRanges();
-      selection.addRange(nextRange);
-      return true;
-    }
-    return false;
   }
 
   function setEditorSelection(range) {
@@ -2681,7 +2819,10 @@
       if (child.nodeType === Node.TEXT_NODE) {
         return String(child.textContent || "").replace(/\u200b/g, "").length > 0;
       }
-      return child.nodeType === Node.ELEMENT_NODE;
+      if (child.nodeType === Node.ELEMENT_NODE) {
+        return String(child.tagName || "").toLowerCase() !== "br";
+      }
+      return false;
     });
   }
 
@@ -2810,18 +2951,14 @@
     }
   }
 
-  function executeTextCommand(shape, formatKey, command) {
+  function executeTextCommand(shape, formatKey) {
     const editor = getRichTextEditorEl();
     if (!editor) return;
     const range = restoreRichTextSelection(editor, false);
     if (!range) return;
     pushHistory();
     if (!range.collapsed) {
-      clearPendingRichTextFormat(shape.id);
-      restoreRichTextSelection(editor, true);
-      document.execCommand(command, false, null);
-      captureRichTextSelection();
-      syncShapeRichText(shape, editor, false);
+      toggleRangeFormat(shape, formatKey);
       return;
     }
 
@@ -2830,17 +2967,9 @@
     nextState[formatKey] = !currentState[formatKey];
     if (formatKey === "subscript" && nextState.subscript) nextState.superscript = false;
     if (formatKey === "superscript" && nextState.superscript) nextState.subscript = false;
-
-    restoreRichTextSelection(editor, true);
-    if (formatKey === "subscript" && currentState.superscript) {
-      document.execCommand("superscript", false, null);
-    } else if (formatKey === "superscript" && currentState.subscript) {
-      document.execCommand("subscript", false, null);
-    }
-    document.execCommand(command, false, null);
     setPendingRichTextFormat(shape.id, nextState);
     captureRichTextSelection();
-    syncShapeRichText(shape, editor, false);
+    updateRichTextToolbarState();
   }
 
   function executeOverlineCommand(shape) {
@@ -2857,26 +2986,9 @@
     const currentState = getSelectionFormatState(editor, range);
     const nextState = cloneTextFormatState(currentState);
     nextState.overline = !currentState.overline;
-    if (!nextState.overline && exitCaretStyle(editor, (el) => {
-      const textDecoration = String(window.getComputedStyle(el).textDecorationLine || el.style.textDecoration || "").toLowerCase();
-      return textDecoration.indexOf("overline") >= 0;
-    })) {
-      setPendingRichTextFormat(shape.id, nextState);
-      captureRichTextSelection();
-      syncShapeRichText(shape, editor, false);
-      return;
-    }
-    if (nextState.overline) {
-      insertCaretStyleSpan(editor, { textDecoration: "overline" });
-    } else {
-      setPendingRichTextFormat(shape.id, nextState);
-      captureRichTextSelection();
-      syncShapeRichText(shape, editor, false);
-      return;
-    }
     setPendingRichTextFormat(shape.id, nextState);
     captureRichTextSelection();
-    syncShapeRichText(shape, editor, false);
+    updateRichTextToolbarState();
   }
 
   function applyInlineStyleCommand(shape, styles, blockWhenAll) {
@@ -3052,6 +3164,8 @@
       textEditor.addEventListener("beforeinput", (evt) => handleRichTextBeforeInput(evt, shape));
       textEditor.addEventListener("paste", (evt) => handleRichTextPaste(evt, shape));
       textEditor.addEventListener("input", () => {
+        clearPendingRichTextFormat(shape.id);
+        normalizeRichTextEditor(textEditor);
         if (!pushedTextHistory) {
           pushHistory();
           pushedTextHistory = true;
@@ -3084,16 +3198,17 @@
       });
       textEditor.addEventListener("blur", () => {
         clearPendingRichTextFormat(shape.id);
+        normalizeRichTextEditor(textEditor);
         syncShapeRichText(shape, textEditor, true);
       });
     }
 
-    bindIconButton("fmt-bold", () => executeTextCommand(shape, "bold", "bold"));
-    bindIconButton("fmt-italic", () => executeTextCommand(shape, "italic", "italic"));
-    bindIconButton("fmt-underline", () => executeTextCommand(shape, "underline", "underline"));
+    bindIconButton("fmt-bold", () => executeTextCommand(shape, "bold"));
+    bindIconButton("fmt-italic", () => executeTextCommand(shape, "italic"));
+    bindIconButton("fmt-underline", () => executeTextCommand(shape, "underline"));
     bindIconButton("fmt-overline", () => executeOverlineCommand(shape));
-    bindIconButton("fmt-subscript", () => executeTextCommand(shape, "subscript", "subscript"));
-    bindIconButton("fmt-superscript", () => executeTextCommand(shape, "superscript", "superscript"));
+    bindIconButton("fmt-subscript", () => executeTextCommand(shape, "subscript"));
+    bindIconButton("fmt-superscript", () => executeTextCommand(shape, "superscript"));
     bindIconButton("fmt-align-left", () => {
       pushHistory();
       shape.textAlign = "left";
