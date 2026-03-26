@@ -36,6 +36,7 @@
     component_group: { width: 200, height: 70 },
   };
   const DEFAULT_ANCHOR_STOPS = Array.from({ length: 11 }, (_, idx) => idx / 10);
+  const MAX_SHAPE_TEXT_LENGTH = 500;
   const HANDLE_SIZE = 8;
   const MIN_SHAPE_SIZE = 24;
   const HISTORY_LIMIT = 120;
@@ -71,6 +72,7 @@
     future: [],
     clipboard: null,
     richTextSelection: null,
+    richTextPendingFormat: null,
     view: {
       zoom: 1,
       minZoom: 0.15,
@@ -2035,6 +2037,7 @@
   function renderInspector() {
     if (!state.selected) {
       state.richTextSelection = null;
+      clearPendingRichTextFormat();
       els.inspector.innerHTML = '<div class="empty-state">Select a shape or arrow to edit properties.</div>';
       return;
     }
@@ -2046,11 +2049,13 @@
 
     if (state.selected.type === "arrow") {
       state.richTextSelection = null;
+      clearPendingRichTextFormat();
       renderArrowInspector(state.selected.id);
       return;
     }
 
     state.richTextSelection = null;
+    clearPendingRichTextFormat();
     els.inspector.innerHTML = '<div class="empty-state">Selection unsupported.</div>';
   }
 
@@ -2130,6 +2135,256 @@
     });
   }
 
+  function emptyTextFormatState() {
+    return {
+      bold: false,
+      italic: false,
+      underline: false,
+      overline: false,
+      subscript: false,
+      superscript: false,
+    };
+  }
+
+  function normalizeTextFormatState(format) {
+    const next = Object.assign(emptyTextFormatState(), format || {});
+    Object.keys(next).forEach((key) => {
+      next[key] = !!next[key];
+    });
+    if (next.subscript && next.superscript) {
+      next.subscript = false;
+    }
+    return next;
+  }
+
+  function cloneTextFormatState(format) {
+    return normalizeTextFormatState(format);
+  }
+
+  function setPendingRichTextFormat(shapeId, format) {
+    state.richTextPendingFormat = {
+      shapeId: shapeId,
+      format: normalizeTextFormatState(format),
+    };
+  }
+
+  function clearPendingRichTextFormat(shapeId) {
+    if (!state.richTextPendingFormat) return;
+    if (shapeId && state.richTextPendingFormat.shapeId !== shapeId) return;
+    state.richTextPendingFormat = null;
+  }
+
+  function getPendingRichTextFormat(shapeId) {
+    if (!state.richTextPendingFormat) return null;
+    if (!shapeId || state.richTextPendingFormat.shapeId !== shapeId) return null;
+    return cloneTextFormatState(state.richTextPendingFormat.format);
+  }
+
+  function parseTextDecoration(styleText) {
+    return String(styleText || "")
+      .toLowerCase()
+      .split(/\s+/)
+      .map((token) => token.trim())
+      .filter(Boolean);
+  }
+
+  function textDecorationHas(styleText, token) {
+    return parseTextDecoration(styleText).indexOf(token) >= 0;
+  }
+
+  function nodeFormatContribution(node) {
+    const next = emptyTextFormatState();
+    if (!node || node.nodeType !== Node.ELEMENT_NODE) return next;
+    const tag = String(node.tagName || "").toLowerCase();
+    const textDecoration = String(node.style && node.style.textDecoration || "");
+
+    if (tag === "b" || tag === "strong") next.bold = true;
+    if (tag === "i" || tag === "em") next.italic = true;
+    if (tag === "u") next.underline = true;
+    if (tag === "sub") next.subscript = true;
+    if (tag === "sup") next.superscript = true;
+    if (textDecorationHas(textDecoration, "underline")) next.underline = true;
+    if (textDecorationHas(textDecoration, "overline")) next.overline = true;
+    return next;
+  }
+
+  function applyNodeFormatState(baseState, node) {
+    const next = cloneTextFormatState(baseState);
+    const contribution = nodeFormatContribution(node);
+    Object.keys(contribution).forEach((key) => {
+      if (contribution[key]) next[key] = true;
+    });
+    if (contribution.subscript) next.superscript = false;
+    if (contribution.superscript) next.subscript = false;
+    return normalizeTextFormatState(next);
+  }
+
+  function getCaretFormatState(editor, range) {
+    const formatState = emptyTextFormatState();
+    if (!editor || !range) return formatState;
+    let node = range.startContainer;
+    if (node && node.nodeType === Node.TEXT_NODE) node = node.parentNode;
+    while (node && node !== editor) {
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        const next = applyNodeFormatState(formatState, node);
+        Object.assign(formatState, next);
+      }
+      node = node.parentNode;
+    }
+    return normalizeTextFormatState(formatState);
+  }
+
+  function mergeFormatCoverage(coverage, formatState) {
+    if (!coverage.hasText) {
+      coverage.hasText = true;
+      coverage.all = cloneTextFormatState(formatState);
+      return;
+    }
+    Object.keys(coverage.all).forEach((key) => {
+      coverage.all[key] = coverage.all[key] && !!formatState[key];
+    });
+  }
+
+  function rangeIntersectsNode(range, node) {
+    if (!range || !node) return false;
+    if (typeof range.intersectsNode === "function") {
+      try {
+        return range.intersectsNode(node);
+      } catch (err) {}
+    }
+    const nodeRange = document.createRange();
+    try {
+      nodeRange.selectNodeContents(node);
+    } catch (err) {
+      return false;
+    }
+    return range.compareBoundaryPoints(Range.END_TO_START, nodeRange) < 0 &&
+      range.compareBoundaryPoints(Range.START_TO_END, nodeRange) > 0;
+  }
+
+  function textNodeHasContent(node) {
+    if (!node || node.nodeType !== Node.TEXT_NODE) return false;
+    return String(node.textContent || "").replace(/\u200b/g, "").length > 0;
+  }
+
+  function getRangeTextNodes(editor, range) {
+    const textNodes = [];
+    if (!editor || !range) return textNodes;
+    const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT, null);
+    let node = walker.nextNode();
+    while (node) {
+      if (textNodeHasContent(node) && rangeIntersectsNode(range, node)) {
+        textNodes.push(node);
+      }
+      node = walker.nextNode();
+    }
+    return textNodes;
+  }
+
+  function getTextNodeFormatState(editor, textNode) {
+    const formatState = emptyTextFormatState();
+    let node = textNode && textNode.parentNode;
+    while (node && node !== editor) {
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        const next = applyNodeFormatState(formatState, node);
+        Object.assign(formatState, next);
+      }
+      node = node.parentNode;
+    }
+    return normalizeTextFormatState(formatState);
+  }
+
+  function getSelectionFormatState(editor, range) {
+    if (!editor || !range) return emptyTextFormatState();
+    if (range.collapsed) {
+      const pending = state.selected && state.selected.type === "shape" ? getPendingRichTextFormat(state.selected.id) : null;
+      return pending || getCaretFormatState(editor, range);
+    }
+    const textNodes = getRangeTextNodes(editor, range);
+    const coverage = {
+      hasText: false,
+      all: emptyTextFormatState(),
+    };
+    textNodes.forEach((textNode) => {
+      mergeFormatCoverage(coverage, getTextNodeFormatState(editor, textNode));
+    });
+    if (!coverage.hasText) return getCaretFormatState(editor, range);
+    return normalizeTextFormatState(coverage.all);
+  }
+
+  function rangePlainText(range) {
+    if (!range) return "";
+    const wrapper = document.createElement("div");
+    wrapper.appendChild(range.cloneContents());
+    return richHtmlToPlainText(wrapper.innerHTML);
+  }
+
+  function currentEditorTextLength(editor) {
+    if (!editor) return 0;
+    return richHtmlToPlainText(editor.innerHTML).length;
+  }
+
+  function updateTextInspectorMeta(shape, editor) {
+    const label = document.getElementById("ins-shape-text-label");
+    const idInput = document.getElementById("ins-shape-id");
+    if (label) {
+      const currentLength = editor ? currentEditorTextLength(editor) : String(shape && shape.text || "").length;
+      label.textContent = "Text - " + currentLength + "/" + MAX_SHAPE_TEXT_LENGTH;
+    }
+    if (idInput && shape && !shape.idManual) {
+      idInput.value = shape.id;
+    }
+  }
+
+  function remainingEditorTextCapacity(editor) {
+    const range = inspectRichTextSelection(editor);
+    const selectedLength = range ? rangePlainText(range).length : 0;
+    return MAX_SHAPE_TEXT_LENGTH - (currentEditorTextLength(editor) - selectedLength);
+  }
+
+  function insertTextIntoEditor(text) {
+    const value = String(text || "");
+    if (!value) return;
+    document.execCommand("insertText", false, value);
+  }
+
+  function handleRichTextBeforeInput(evt, shape) {
+    const editor = getRichTextEditorEl();
+    if (!editor || !shape) return;
+    const inputType = String(evt.inputType || "");
+    if (!inputType || inputType.indexOf("delete") === 0 || inputType === "historyUndo" || inputType === "historyRedo") {
+      return;
+    }
+
+    const available = remainingEditorTextCapacity(editor);
+    if (inputType === "insertText" || inputType === "insertCompositionText") {
+      const text = String(evt.data || "");
+      if (text.length <= available) return;
+      evt.preventDefault();
+      insertTextIntoEditor(text.slice(0, Math.max(0, available)));
+      return;
+    }
+
+    if ((inputType === "insertParagraph" || inputType === "insertLineBreak") && available < 1) {
+      evt.preventDefault();
+      return;
+    }
+
+    if (inputType === "insertFromPaste" && available < 1) {
+      evt.preventDefault();
+    }
+  }
+
+  function handleRichTextPaste(evt, shape) {
+    const editor = getRichTextEditorEl();
+    if (!editor || !shape) return;
+    const pasted = String(evt.clipboardData && evt.clipboardData.getData("text/plain") || "");
+    const available = remainingEditorTextCapacity(editor);
+    if (pasted.length <= available) return;
+    evt.preventDefault();
+    insertTextIntoEditor(pasted.slice(0, Math.max(0, available)));
+  }
+
   function getRichTextEditorEl() {
     return document.getElementById("ins-shape-text-editor");
   }
@@ -2146,13 +2401,18 @@
     if (!editor || !state.selected || state.selected.type !== "shape") return;
     const selection = window.getSelection();
     if (!selectionInsideNode(editor, selection) || !selection.rangeCount) {
+      clearPendingRichTextFormat(state.selected.id);
       updateRichTextToolbarState();
       return;
     }
+    const range = selection.getRangeAt(0).cloneRange();
     state.richTextSelection = {
       shapeId: state.selected.id,
-      range: selection.getRangeAt(0).cloneRange(),
+      range: range,
     };
+    if (!range.collapsed) {
+      clearPendingRichTextFormat(state.selected.id);
+    }
     updateRichTextToolbarState();
   }
 
@@ -2199,15 +2459,6 @@
     return null;
   }
 
-  function caretInsideOverline(editor, range) {
-    if (!editor || !range) return false;
-    const node = range.startContainer;
-    return !!findStyledAncestor(node, editor, (el) => {
-      const textDecoration = String(window.getComputedStyle(el).textDecorationLine || el.style.textDecoration || "").toLowerCase();
-      return textDecoration.indexOf("overline") >= 0;
-    });
-  }
-
   function insertCaretStyleSpan(editor, styles) {
     if (!editor) return;
     const range = restoreRichTextSelection(editor, true);
@@ -2245,6 +2496,180 @@
     return false;
   }
 
+  function setEditorSelection(range) {
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    if (range) selection.addRange(range);
+  }
+
+  function unwrapElement(node) {
+    if (!node || !node.parentNode) return;
+    while (node.firstChild) {
+      node.parentNode.insertBefore(node.firstChild, node);
+    }
+    node.parentNode.removeChild(node);
+  }
+
+  function stripTextDecorationToken(styleText, token) {
+    const nextTokens = parseTextDecoration(styleText).filter((value) => value !== token);
+    return nextTokens.join(" ");
+  }
+
+  function cleanupFormatElement(node) {
+    if (!node || node.nodeType !== Node.ELEMENT_NODE) return;
+    const tag = String(node.tagName || "").toLowerCase();
+    if (tag === "span" && !String(node.getAttribute("style") || "").trim()) {
+      unwrapElement(node);
+    }
+  }
+
+  function stripFormatFromContainer(container, formatKey) {
+    Array.from(container.childNodes || []).forEach((child) => {
+      if (child.nodeType === Node.ELEMENT_NODE) {
+        stripFormatFromContainer(child, formatKey);
+      }
+    });
+
+    Array.from(container.querySelectorAll ? container.querySelectorAll("*") : []).reverse().forEach((node) => {
+      const tag = String(node.tagName || "").toLowerCase();
+      if (formatKey === "bold" && (tag === "b" || tag === "strong")) {
+        unwrapElement(node);
+        return;
+      }
+      if (formatKey === "italic" && (tag === "i" || tag === "em")) {
+        unwrapElement(node);
+        return;
+      }
+      if (formatKey === "underline") {
+        if (tag === "u") {
+          unwrapElement(node);
+          return;
+        }
+        if (node.style && node.style.textDecoration) {
+          node.style.textDecoration = stripTextDecorationToken(node.style.textDecoration, "underline");
+          if (!String(node.style.textDecoration || "").trim()) node.style.removeProperty("text-decoration");
+          cleanupFormatElement(node);
+        }
+        return;
+      }
+      if (formatKey === "overline") {
+        if (node.style && node.style.textDecoration) {
+          node.style.textDecoration = stripTextDecorationToken(node.style.textDecoration, "overline");
+          if (!String(node.style.textDecoration || "").trim()) node.style.removeProperty("text-decoration");
+          cleanupFormatElement(node);
+        }
+        return;
+      }
+      if (formatKey === "subscript" && tag === "sub") {
+        unwrapElement(node);
+        return;
+      }
+      if (formatKey === "superscript" && tag === "sup") {
+        unwrapElement(node);
+      }
+    });
+  }
+
+  function wrapContainerWithFormat(container, formatKey) {
+    if (!container || !container.firstChild) return;
+    let wrapper;
+    if (formatKey === "bold") wrapper = document.createElement("strong");
+    else if (formatKey === "italic") wrapper = document.createElement("em");
+    else if (formatKey === "underline") wrapper = document.createElement("u");
+    else if (formatKey === "subscript") wrapper = document.createElement("sub");
+    else if (formatKey === "superscript") wrapper = document.createElement("sup");
+    else {
+      wrapper = document.createElement("span");
+      wrapper.style.textDecoration = "overline";
+    }
+    while (container.firstChild) {
+      wrapper.appendChild(container.firstChild);
+    }
+    container.appendChild(wrapper);
+  }
+
+  function formatMatcherForKey(formatKey) {
+    return function (node) {
+      if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
+      const tag = String(node.tagName || "").toLowerCase();
+      if (formatKey === "bold") return tag === "b" || tag === "strong";
+      if (formatKey === "italic") return tag === "i" || tag === "em";
+      if (formatKey === "underline") {
+        return tag === "u" || textDecorationHas(String(node.style && node.style.textDecoration || ""), "underline");
+      }
+      if (formatKey === "overline") {
+        return textDecorationHas(String(node.style && node.style.textDecoration || ""), "overline");
+      }
+      if (formatKey === "subscript") return tag === "sub";
+      if (formatKey === "superscript") return tag === "sup";
+      return false;
+    };
+  }
+
+  function createBoundaryMarker(name) {
+    const marker = document.createElement("span");
+    marker.setAttribute("data-rt-boundary", name);
+    marker.style.display = "inline-block";
+    marker.style.width = "0";
+    marker.style.overflow = "hidden";
+    marker.style.lineHeight = "0";
+    marker.textContent = "\u200b";
+    return marker;
+  }
+
+  function insertRangeBoundaryMarkers(range) {
+    const startMarker = createBoundaryMarker("start");
+    const endMarker = createBoundaryMarker("end");
+    const endRange = range.cloneRange();
+    endRange.collapse(false);
+    endRange.insertNode(endMarker);
+    const startRange = range.cloneRange();
+    startRange.collapse(true);
+    startRange.insertNode(startMarker);
+    return { startMarker: startMarker, endMarker: endMarker };
+  }
+
+  function splitElementAtMarker(element, marker) {
+    if (!element || !marker || !element.parentNode) return;
+    let current = marker;
+    while (current.parentNode && current.parentNode !== element) {
+      const parent = current.parentNode;
+      const clone = parent.cloneNode(false);
+      let next = current.nextSibling;
+      while (next) {
+        const move = next;
+        next = next.nextSibling;
+        clone.appendChild(move);
+      }
+      if (clone.firstChild) {
+        parent.parentNode.insertBefore(clone, parent.nextSibling);
+      }
+      current = parent;
+    }
+    const elementClone = element.cloneNode(false);
+    let next = current.nextSibling;
+    while (next) {
+      const move = next;
+      next = next.nextSibling;
+      elementClone.appendChild(move);
+    }
+    if (elementClone.firstChild) {
+      element.parentNode.insertBefore(elementClone, element.nextSibling);
+    }
+  }
+
+  function splitMatchingAncestorsAtMarker(marker, editor, matcher) {
+    if (!marker || !editor || !matcher) return;
+    let current = marker.parentNode;
+    while (current && current !== editor) {
+      const parent = current.parentNode;
+      if (current.nodeType === Node.ELEMENT_NODE && matcher(current)) {
+        splitElementAtMarker(current, marker);
+      }
+      current = parent;
+    }
+  }
+
   function applyStyleToRange(range, styles, blockTag) {
     if (!range) return null;
     const tag = blockTag ? "div" : "span";
@@ -2258,6 +2683,67 @@
     const nextRange = document.createRange();
     nextRange.selectNodeContents(wrapper);
     return nextRange;
+  }
+
+  function toggleRangeFormat(shape, formatKey) {
+    const editor = getRichTextEditorEl();
+    if (!editor) return false;
+    const range = restoreRichTextSelection(editor, false);
+    if (!range || range.collapsed) return false;
+
+    const currentState = getSelectionFormatState(editor, range);
+    const shouldEnable = !currentState[formatKey];
+    const markers = insertRangeBoundaryMarkers(range);
+    const splitKeys = [formatKey];
+    if (formatKey === "subscript") splitKeys.push("superscript");
+    if (formatKey === "superscript") splitKeys.push("subscript");
+
+    splitKeys.forEach((key) => {
+      const matcher = formatMatcherForKey(key);
+      splitMatchingAncestorsAtMarker(markers.endMarker, editor, matcher);
+      splitMatchingAncestorsAtMarker(markers.startMarker, editor, matcher);
+    });
+
+    const isolatedRange = document.createRange();
+    isolatedRange.setStartAfter(markers.startMarker);
+    isolatedRange.setEndBefore(markers.endMarker);
+    const fragmentContainer = document.createElement("div");
+    fragmentContainer.appendChild(isolatedRange.extractContents());
+
+    stripFormatFromContainer(fragmentContainer, formatKey);
+    if (formatKey === "subscript") {
+      stripFormatFromContainer(fragmentContainer, "superscript");
+    } else if (formatKey === "superscript") {
+      stripFormatFromContainer(fragmentContainer, "subscript");
+    }
+    if (shouldEnable) {
+      wrapContainerWithFormat(fragmentContainer, formatKey);
+    }
+
+    const firstNode = fragmentContainer.firstChild;
+    const lastNode = fragmentContainer.lastChild;
+    if (!firstNode || !lastNode) {
+      markers.startMarker.remove();
+      markers.endMarker.remove();
+      return false;
+    }
+
+    const fragment = document.createDocumentFragment();
+    while (fragmentContainer.firstChild) {
+      fragment.appendChild(fragmentContainer.firstChild);
+    }
+    markers.endMarker.parentNode.insertBefore(fragment, markers.endMarker);
+
+    const nextRange = document.createRange();
+    nextRange.setStartBefore(firstNode);
+    nextRange.setEndAfter(lastNode);
+    markers.startMarker.remove();
+    markers.endMarker.remove();
+    setEditorSelection(nextRange);
+    clearPendingRichTextFormat(shape.id);
+    captureRichTextSelection();
+    syncShapeRichText(shape, editor, false);
+    return true;
   }
 
   function syncShapeRichText(shape, editor, finalize) {
@@ -2278,12 +2764,35 @@
     }
   }
 
-  function executeTextCommand(shape, command) {
+  function executeTextCommand(shape, formatKey, command) {
     const editor = getRichTextEditorEl();
     if (!editor) return;
+    const range = restoreRichTextSelection(editor, false);
+    if (!range) return;
     pushHistory();
+    if (!range.collapsed) {
+      clearPendingRichTextFormat(shape.id);
+      restoreRichTextSelection(editor, true);
+      document.execCommand(command, false, null);
+      captureRichTextSelection();
+      syncShapeRichText(shape, editor, false);
+      return;
+    }
+
+    const currentState = getSelectionFormatState(editor, range);
+    const nextState = cloneTextFormatState(currentState);
+    nextState[formatKey] = !currentState[formatKey];
+    if (formatKey === "subscript" && nextState.subscript) nextState.superscript = false;
+    if (formatKey === "superscript" && nextState.superscript) nextState.subscript = false;
+
     restoreRichTextSelection(editor, true);
+    if (formatKey === "subscript" && currentState.superscript) {
+      document.execCommand("superscript", false, null);
+    } else if (formatKey === "superscript" && currentState.subscript) {
+      document.execCommand("subscript", false, null);
+    }
     document.execCommand(command, false, null);
+    setPendingRichTextFormat(shape.id, nextState);
     captureRichTextSelection();
     syncShapeRichText(shape, editor, false);
   }
@@ -2291,21 +2800,35 @@
   function executeOverlineCommand(shape) {
     const editor = getRichTextEditorEl();
     if (!editor) return;
-    pushHistory();
     const range = restoreRichTextSelection(editor, false);
-    if (range && !range.collapsed) {
-      applyInlineStyleCommand(shape, { textDecoration: "overline" }, false);
+    if (!range) return;
+
+    pushHistory();
+    if (!range.collapsed) {
+      toggleRangeFormat(shape, "overline");
       return;
     }
-    if (exitCaretStyle(editor, (el) => {
+    const currentState = getSelectionFormatState(editor, range);
+    const nextState = cloneTextFormatState(currentState);
+    nextState.overline = !currentState.overline;
+    if (!nextState.overline && exitCaretStyle(editor, (el) => {
       const textDecoration = String(window.getComputedStyle(el).textDecorationLine || el.style.textDecoration || "").toLowerCase();
       return textDecoration.indexOf("overline") >= 0;
     })) {
+      setPendingRichTextFormat(shape.id, nextState);
       captureRichTextSelection();
       syncShapeRichText(shape, editor, false);
       return;
     }
-    insertCaretStyleSpan(editor, { textDecoration: "overline" });
+    if (nextState.overline) {
+      insertCaretStyleSpan(editor, { textDecoration: "overline" });
+    } else {
+      setPendingRichTextFormat(shape.id, nextState);
+      captureRichTextSelection();
+      syncShapeRichText(shape, editor, false);
+      return;
+    }
+    setPendingRichTextFormat(shape.id, nextState);
     captureRichTextSelection();
     syncShapeRichText(shape, editor, false);
   }
@@ -2346,52 +2869,11 @@
     el.classList.toggle("active", !!active);
   }
 
-  function collectRichTextFormatState(editor, range) {
-    const stateFlags = {
-      bold: false,
-      italic: false,
-      underline: false,
-      overline: false,
-      subscript: false,
-      superscript: false,
-    };
-    if (!editor || !range) return stateFlags;
-
-    let node = range.startContainer;
-    if (node && node.nodeType === Node.TEXT_NODE) node = node.parentNode;
-    while (node && node !== editor) {
-      if (node.nodeType === Node.ELEMENT_NODE) {
-        const tag = String(node.tagName || "").toLowerCase();
-        const computed = window.getComputedStyle(node);
-        const fontWeight = String(computed.fontWeight || "").toLowerCase();
-        const textDecoration = String(computed.textDecorationLine || computed.textDecoration || "").toLowerCase();
-        const verticalAlign = String(computed.verticalAlign || "").toLowerCase();
-
-        if (tag === "b" || tag === "strong" || fontWeight === "bold" || Number(fontWeight) >= 600) stateFlags.bold = true;
-        if (tag === "i" || tag === "em" || String(computed.fontStyle || "").toLowerCase() === "italic") stateFlags.italic = true;
-        if (tag === "u" || textDecoration.indexOf("underline") >= 0) stateFlags.underline = true;
-        if (textDecoration.indexOf("overline") >= 0) stateFlags.overline = true;
-        if (tag === "sub" || verticalAlign === "sub") stateFlags.subscript = true;
-        if (tag === "sup" || verticalAlign === "super") stateFlags.superscript = true;
-      }
-      node = node.parentNode;
-    }
-    return stateFlags;
-  }
-
   function updateRichTextToolbarState() {
     const editor = getRichTextEditorEl();
     if (!editor) return;
     const range = inspectRichTextSelection(editor);
-    let formatState = collectRichTextFormatState(editor, range);
-    if (range && range.collapsed && selectionInsideNode(editor, window.getSelection())) {
-      try { formatState.bold = !!document.queryCommandState("bold") || formatState.bold; } catch (err) {}
-      try { formatState.italic = !!document.queryCommandState("italic") || formatState.italic; } catch (err) {}
-      try { formatState.underline = !!document.queryCommandState("underline") || formatState.underline; } catch (err) {}
-      try { formatState.subscript = !!document.queryCommandState("subscript") || formatState.subscript; } catch (err) {}
-      try { formatState.superscript = !!document.queryCommandState("superscript") || formatState.superscript; } catch (err) {}
-      formatState.overline = caretInsideOverline(editor, range) || formatState.overline;
-    }
+    const formatState = getSelectionFormatState(editor, range);
     setButtonActive("fmt-bold", formatState.bold);
     setButtonActive("fmt-italic", formatState.italic);
     setButtonActive("fmt-underline", formatState.underline);
@@ -2424,10 +2906,11 @@
       .concat(containers.map((c) => '<option value="' + escapeHtml(c.id) + '"' + (shape.parentId === c.id ? " selected" : "") + '>' + escapeHtml(c.text) + ' (' + escapeHtml(c.id) + ')</option>'))
       .join("");
     state.richTextSelection = null;
+    clearPendingRichTextFormat();
 
     els.inspector.innerHTML = [
       "<div>",
-      '<div><label>Text</label><div id="ins-shape-text-editor" class="rich-text-editor" contenteditable="true" spellcheck="false">' + richText + "</div></div>",
+      '<div><label id="ins-shape-text-label">Text - ' + shape.text.length + '/' + MAX_SHAPE_TEXT_LENGTH + '</label><div id="ins-shape-text-editor" class="rich-text-editor" contenteditable="true" spellcheck="false">' + richText + "</div></div>",
       '<div class="format-row">' +
         '<button id="fmt-bold" type="button" title="Bold"><span class="format-icon"><strong>B</strong></span></button>' +
         '<button id="fmt-italic" type="button" title="Italic"><span class="format-icon"><em>I</em></span></button>' +
@@ -2484,6 +2967,7 @@
     const textEditor = document.getElementById("ins-shape-text-editor");
     if (textEditor) {
       textEditor.innerHTML = richText;
+      updateTextInspectorMeta(shape, textEditor);
     }
 
     const fillPaletteEl = document.getElementById("ins-shape-fill-palette");
@@ -2519,6 +3003,8 @@
 
     let pushedTextHistory = false;
     if (textEditor) {
+      textEditor.addEventListener("beforeinput", (evt) => handleRichTextBeforeInput(evt, shape));
+      textEditor.addEventListener("paste", (evt) => handleRichTextPaste(evt, shape));
       textEditor.addEventListener("input", () => {
         if (!pushedTextHistory) {
           pushHistory();
@@ -2526,23 +3012,42 @@
         }
         shape.richText = String(textEditor.innerHTML || "");
         shape.text = richHtmlToPlainText(shape.richText);
+        if (shape.text.length > MAX_SHAPE_TEXT_LENGTH) {
+          shape.text = shape.text.slice(0, MAX_SHAPE_TEXT_LENGTH);
+          shape.richText = plainTextToRichHtml(shape.text);
+          textEditor.innerHTML = shape.richText;
+        }
+        if (!shape.idManual) {
+          updateAutoId(shape, shape.parentId);
+        }
+        updateTextInspectorMeta(shape, textEditor);
         captureRichTextSelection();
         render(true);
       });
-      textEditor.addEventListener("keyup", captureRichTextSelection);
-      textEditor.addEventListener("mouseup", captureRichTextSelection);
-      textEditor.addEventListener("focus", updateRichTextToolbarState);
+      textEditor.addEventListener("keyup", () => {
+        clearPendingRichTextFormat(shape.id);
+        captureRichTextSelection();
+      });
+      textEditor.addEventListener("mouseup", () => {
+        clearPendingRichTextFormat(shape.id);
+        captureRichTextSelection();
+      });
+      textEditor.addEventListener("focus", () => {
+        updateTextInspectorMeta(shape, textEditor);
+        updateRichTextToolbarState();
+      });
       textEditor.addEventListener("blur", () => {
+        clearPendingRichTextFormat(shape.id);
         syncShapeRichText(shape, textEditor, true);
       });
     }
 
-    bindIconButton("fmt-bold", () => executeTextCommand(shape, "bold"));
-    bindIconButton("fmt-italic", () => executeTextCommand(shape, "italic"));
-    bindIconButton("fmt-underline", () => executeTextCommand(shape, "underline"));
+    bindIconButton("fmt-bold", () => executeTextCommand(shape, "bold", "bold"));
+    bindIconButton("fmt-italic", () => executeTextCommand(shape, "italic", "italic"));
+    bindIconButton("fmt-underline", () => executeTextCommand(shape, "underline", "underline"));
     bindIconButton("fmt-overline", () => executeOverlineCommand(shape));
-    bindIconButton("fmt-subscript", () => executeTextCommand(shape, "subscript"));
-    bindIconButton("fmt-superscript", () => executeTextCommand(shape, "superscript"));
+    bindIconButton("fmt-subscript", () => executeTextCommand(shape, "subscript", "subscript"));
+    bindIconButton("fmt-superscript", () => executeTextCommand(shape, "superscript", "superscript"));
     bindIconButton("fmt-align-left", () => {
       pushHistory();
       shape.textAlign = "left";
