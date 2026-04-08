@@ -137,8 +137,8 @@ def generate_renderer_source(model: Dict[str, Any]) -> str:
     normalized = normalize_model(model)
     metadata = normalized.get("metadata", {})
     view_box = metadata.get("viewBox", {})
-    vb_w = _fmt_num(view_box.get("width", 1980))
-    vb_h = _fmt_num(view_box.get("height", 1200))
+    vb_w = _fmt_num(view_box.get("width", 2000))
+    vb_h = _fmt_num(view_box.get("height", 1000))
     bg = str(metadata.get("background") or "#0b1220")
 
     shape_specs, connector_specs = _build_codegen_payload(normalized)

@@ -35,6 +35,12 @@
     header_container: { width: 240, height: 200 },
     component_group: { width: 200, height: 70 },
   };
+  const DEFAULT_VIEWBOX = { width: 2000, height: 1000 };
+  const GRID_MINOR_STEP = 10;
+  const GRID_MAJOR_STEP = 40;
+  const WORKSPACE_EXPAND_CHUNK = 1000;
+  const WORKSPACE_EDGE_BUFFER = 180;
+  const KEYBOARD_NUDGE_STEP = 1;
   const DEFAULT_ANCHOR_STOPS = Array.from({ length: 11 }, (_, idx) => idx / 10);
   const MAX_SHAPE_TEXT_LENGTH = 500;
   const HANDLE_SIZE = 8;
@@ -233,7 +239,7 @@
       version: 2,
       metadata: {
         elf: elfName || "",
-        viewBox: { width: 1980, height: 1200 },
+        viewBox: { width: DEFAULT_VIEWBOX.width, height: DEFAULT_VIEWBOX.height },
         background: "#0b1220",
         colorPalette: DEFAULT_COLOR_PALETTE.slice(),
       },
@@ -350,6 +356,24 @@
     return fallback || "#1c2f4f";
   }
 
+  function isNearlyInteger(value) {
+    return Math.abs(Number(value) - Math.round(Number(value))) < 0.000001;
+  }
+
+  function snapToStep(value, step) {
+    const safeStep = Math.max(1, Number(step) || 1);
+    return Math.round(Number(value || 0) / safeStep) * safeStep;
+  }
+
+  function nudgeFromCurrent(value, direction, stepSize) {
+    const current = Number(value) || 0;
+    const step = Math.max(1, Number(stepSize) || 1);
+    if (!isNearlyInteger(current)) {
+      return direction > 0 ? Math.ceil(current) : Math.floor(current);
+    }
+    return current + direction * step;
+  }
+
   function swatchTextColor(hex) {
     const value = normalizeColor(hex, "#1c2f4f").replace("#", "");
     const r = parseInt(value.slice(0, 2), 16);
@@ -371,9 +395,11 @@
   function ensureModelDefaults() {
     if (!state.model) state.model = defaultModel(state.elf);
     if (!state.model.metadata) state.model.metadata = {};
-    if (!state.model.metadata.viewBox) state.model.metadata.viewBox = { width: 1980, height: 1200 };
-    state.model.metadata.viewBox.width = Math.max(600, Number(state.model.metadata.viewBox.width) || 1980);
-    state.model.metadata.viewBox.height = Math.max(1200, Number(state.model.metadata.viewBox.height) || 1200);
+    if (!state.model.metadata.viewBox) {
+      state.model.metadata.viewBox = { width: DEFAULT_VIEWBOX.width, height: DEFAULT_VIEWBOX.height };
+    }
+    state.model.metadata.viewBox.width = Math.max(600, Number(state.model.metadata.viewBox.width) || DEFAULT_VIEWBOX.width);
+    state.model.metadata.viewBox.height = Math.max(400, Number(state.model.metadata.viewBox.height) || DEFAULT_VIEWBOX.height);
     if (!state.model.metadata.background) state.model.metadata.background = "#0b1220";
     if (!Array.isArray(state.model.metadata.colorPalette) || !state.model.metadata.colorPalette.length) {
       state.model.metadata.colorPalette = DEFAULT_COLOR_PALETTE.slice();
@@ -717,14 +743,24 @@
     if (!selectedIds.length) return false;
     const movePlan = moveShapeIdsForSelection(selectedIds);
     if (!movePlan.moveIds.length) return false;
+    const primary = shapeById(state.selected && state.selected.type === "shape" ? state.selected.id : movePlan.rootIds[0]);
+    const axisDx = dx
+      ? (nudgeFromCurrent(primary ? primary.x : 0, Math.sign(dx), KEYBOARD_NUDGE_STEP) - (primary ? primary.x : 0))
+      : 0;
+    const axisDy = dy
+      ? (nudgeFromCurrent(primary ? primary.y : 0, Math.sign(dy), KEYBOARD_NUDGE_STEP) - (primary ? primary.y : 0))
+      : 0;
+    if (!axisDx && !axisDy) return false;
     pushHistory();
     movePlan.moveIds.forEach((id) => {
       const shape = shapeById(id);
       if (!shape) return;
-      shape.x += dx;
-      shape.y += dy;
+      shape.x += axisDx;
+      shape.y += axisDy;
     });
     finalizeMovedRoots(movePlan.rootIds);
+    const movedBounds = selectionBounds(movePlan.rootIds);
+    if (movedBounds) ensureWorkspaceForRect(movedBounds);
     render();
     return true;
   }
@@ -829,7 +865,7 @@
   }
 
   function canvasFitScale() {
-    const vb = state.model.metadata.viewBox || { width: 1980, height: 1200 };
+    const vb = currentViewBox();
     const minW = Math.max(320, (els.canvasScroll.clientWidth || 0) - 8);
     const minH = Math.max(260, (els.canvasScroll.clientHeight || 0) - 8);
     return Math.max(minW / vb.width, minH / vb.height);
@@ -842,7 +878,7 @@
   }
 
   function applyViewBox() {
-    const vb = state.model.metadata.viewBox || { width: 1980, height: 1200 };
+    const vb = currentViewBox();
     const zoom = state.view.zoom || 1;
     const scale = effectiveCanvasScale(zoom);
     const widthPx = Math.round(vb.width * scale);
@@ -908,6 +944,34 @@
 
   function ensureDefs() {
     const defs = createSvg("defs");
+
+    const minorGrid = createSvg("pattern", {
+      id: "editor-grid-minor",
+      width: GRID_MINOR_STEP,
+      height: GRID_MINOR_STEP,
+      patternUnits: "userSpaceOnUse",
+    });
+    minorGrid.appendChild(createSvg("path", {
+      d: "M " + GRID_MINOR_STEP + " 0 L 0 0 0 " + GRID_MINOR_STEP,
+      fill: "none",
+      stroke: "#16263f",
+      "stroke-width": 1,
+    }));
+    defs.appendChild(minorGrid);
+
+    const majorGrid = createSvg("pattern", {
+      id: "editor-grid-major",
+      width: GRID_MAJOR_STEP,
+      height: GRID_MAJOR_STEP,
+      patternUnits: "userSpaceOnUse",
+    });
+    majorGrid.appendChild(createSvg("path", {
+      d: "M " + GRID_MAJOR_STEP + " 0 L 0 0 0 " + GRID_MAJOR_STEP,
+      fill: "none",
+      stroke: "#294063",
+      "stroke-width": 1.2,
+    }));
+    defs.appendChild(majorGrid);
 
     const arrowHead = createSvg("marker", {
       id: "editor-arrow-head",
@@ -1729,6 +1793,43 @@
     };
   }
 
+  function currentViewBox() {
+    return state.model.metadata.viewBox || { width: DEFAULT_VIEWBOX.width, height: DEFAULT_VIEWBOX.height };
+  }
+
+  function ensureWorkspaceForRect(rect) {
+    if (!rect || !state.model || !state.model.metadata) return false;
+    const vb = currentViewBox();
+    let changed = false;
+    while (rect.x + rect.width > vb.width - WORKSPACE_EDGE_BUFFER) {
+      vb.width += WORKSPACE_EXPAND_CHUNK;
+      changed = true;
+    }
+    while (rect.y + rect.height > vb.height - WORKSPACE_EDGE_BUFFER) {
+      vb.height += WORKSPACE_EXPAND_CHUNK;
+      changed = true;
+    }
+    state.model.metadata.viewBox = vb;
+    return changed;
+  }
+
+  function currentVisibleCanvasRect() {
+    const scale = effectiveCanvasScale(state.view.zoom || 1);
+    return {
+      x: els.canvasScroll.scrollLeft / scale,
+      y: els.canvasScroll.scrollTop / scale,
+      width: (els.canvasScroll.clientWidth || 0) / scale,
+      height: (els.canvasScroll.clientHeight || 0) / scale,
+    };
+  }
+
+  function extendWorkspaceForViewport() {
+    if (!state.model || !state.model.metadata) return;
+    if (ensureWorkspaceForRect(currentVisibleCanvasRect())) {
+      render(true);
+    }
+  }
+
   function shapeIdsInSelectionRect(rect) {
     if (!rect || rect.width < 1 || rect.height < 1) return [];
     return sortedShapes()
@@ -1893,13 +1994,31 @@
     state.arrowRenderCache = {};
     ensureDefs();
 
-    const vb = state.model.metadata.viewBox;
+    const vb = currentViewBox();
     els.svg.appendChild(createSvg("rect", {
       x: 0,
       y: 0,
       width: vb.width,
       height: vb.height,
       fill: state.model.metadata.background || "#0b1220",
+    }));
+    els.svg.appendChild(createSvg("rect", {
+      x: 0,
+      y: 0,
+      width: vb.width,
+      height: vb.height,
+      fill: "url(#editor-grid-minor)",
+      opacity: 0.9,
+      "pointer-events": "none",
+    }));
+    els.svg.appendChild(createSvg("rect", {
+      x: 0,
+      y: 0,
+      width: vb.width,
+      height: vb.height,
+      fill: "url(#editor-grid-major)",
+      opacity: 1,
+      "pointer-events": "none",
     }));
 
     const shapeLayer = createSvg("g");
@@ -1961,7 +2080,7 @@
         clientY: rect.top + rect.height / 2,
       });
     }
-    const vb = state.model.metadata.viewBox || { width: 1980, height: 1200 };
+    const vb = currentViewBox();
     return { x: vb.width / 2, y: vb.height / 2 };
   }
 
@@ -2144,14 +2263,16 @@
     const point = clientToSvg(evt);
 
     if (state.drag.type === "move-shapes") {
-      const dx = point.x - state.drag.start.x;
-      const dy = point.y - state.drag.start.y;
+      const dx = snapToStep(point.x - state.drag.start.x, GRID_MINOR_STEP);
+      const dy = snapToStep(point.y - state.drag.start.y, GRID_MINOR_STEP);
       state.drag.movedShapeIds.forEach((id) => {
         const shape = shapeById(id);
         const before = state.drag.before[id];
         shape.x = before.x + dx;
         shape.y = before.y + dy;
       });
+      const movedBounds = selectionBounds(state.drag.rootShapeIds || state.drag.movedShapeIds);
+      if (movedBounds) ensureWorkspaceForRect(movedBounds);
       render();
       return;
     }
@@ -2166,21 +2287,23 @@
       const shape = shapeById(state.drag.shapeId);
       if (!shape) return;
       const b = state.drag.before;
+      const deltaX = snapToStep(point.x - state.drag.start.x, GRID_MINOR_STEP);
+      const deltaY = snapToStep(point.y - state.drag.start.y, GRID_MINOR_STEP);
       let x = b.x;
       let y = b.y;
       let w = b.width;
       let h = b.height;
 
-      if (state.drag.corner.indexOf("e") >= 0) w = Math.max(MIN_SHAPE_SIZE, b.width + (point.x - state.drag.start.x));
-      if (state.drag.corner.indexOf("s") >= 0) h = Math.max(MIN_SHAPE_SIZE, b.height + (point.y - state.drag.start.y));
+      if (state.drag.corner.indexOf("e") >= 0) w = Math.max(MIN_SHAPE_SIZE, b.width + deltaX);
+      if (state.drag.corner.indexOf("s") >= 0) h = Math.max(MIN_SHAPE_SIZE, b.height + deltaY);
       if (state.drag.corner.indexOf("w") >= 0) {
-        const nx = b.x + (point.x - state.drag.start.x);
+        const nx = b.x + deltaX;
         const maxX = b.x + b.width - MIN_SHAPE_SIZE;
         x = Math.min(nx, maxX);
         w = Math.max(MIN_SHAPE_SIZE, b.width - (x - b.x));
       }
       if (state.drag.corner.indexOf("n") >= 0) {
-        const ny = b.y + (point.y - state.drag.start.y);
+        const ny = b.y + deltaY;
         const maxY = b.y + b.height - MIN_SHAPE_SIZE;
         y = Math.min(ny, maxY);
         h = Math.max(MIN_SHAPE_SIZE, b.height - (y - b.y));
@@ -2198,6 +2321,7 @@
       shape.y = y;
       shape.width = w;
       shape.height = h;
+      ensureWorkspaceForRect(shapeBounds(shape));
       render();
       return;
     }
@@ -2334,11 +2458,10 @@
     if (!SHAPE_KINDS.has(normalizedKind)) return;
     pushHistory();
 
-    const vb = state.model.metadata.viewBox || { width: 1980, height: 1200 };
     const size = defaultShapeSize(normalizedKind);
     const center = currentViewportCenter();
-    const x = clamp(center.x - size.width / 2, 0, Math.max(0, vb.width - size.width));
-    const y = clamp(center.y - size.height / 2, 0, Math.max(0, vb.height - size.height));
+    const x = Math.max(0, snapToStep(center.x - size.width / 2, GRID_MINOR_STEP));
+    const y = Math.max(0, snapToStep(center.y - size.height / 2, GRID_MINOR_STEP));
     const text = defaultShapeText(normalizedKind);
     const id = uniqueShapeId(deriveShapeId(text, ""), null);
 
@@ -2372,6 +2495,7 @@
     };
 
     state.model.shapes.push(shape);
+    ensureWorkspaceForRect(shapeBounds(shape));
     setSelected({ type: "shape", id: shape.id });
   }
 
@@ -2499,6 +2623,17 @@
         el.blur();
       }
     });
+  }
+
+  function syncShapeGeometryInputs(shape) {
+    const xEl = document.getElementById("ins-shape-x");
+    const yEl = document.getElementById("ins-shape-y");
+    const wEl = document.getElementById("ins-shape-w");
+    const hEl = document.getElementById("ins-shape-h");
+    if (xEl) xEl.value = roundNum(shape.x);
+    if (yEl) yEl.value = roundNum(shape.y);
+    if (wEl) wEl.value = roundNum(shape.width);
+    if (hEl) hEl.value = roundNum(shape.height);
   }
 
   function bindIconButton(id, handler) {
@@ -3480,8 +3615,8 @@
           '<div><label>Component labels (one line per component)</label><textarea id="ins-group-labels">' + escapeHtml(componentLabelsText) + '</textarea></div>'
         : "",
       "<h3>Color</h3>",
-      '<div><label>Fill palette</label><div class="palette" id="ins-shape-fill-palette"></div></div>',
-      '<div><label>Border palette</label><div class="palette" id="ins-shape-stroke-palette"></div></div>',
+      '<div class="palette-block"><label>Fill palette</label><div class="palette" id="ins-shape-fill-palette"></div></div>',
+      '<div class="palette-block spaced"><label>Border palette</label><div class="palette" id="ins-shape-stroke-palette"></div></div>',
       '<div class="color-inline-row"><label for="ins-shape-fill">Fill:</label><input id="ins-shape-fill" type="color" value="' + normalizeColor(shape.fill, "#1c2f4f") + '"/><label for="ins-shape-stroke">Border:</label><input id="ins-shape-stroke" type="color" value="' + normalizeColor(shape.stroke, "#80b6ff") + '"/></div>',
       "<h3>Geometry</h3>",
       '<div class="grid2">' +
@@ -3717,31 +3852,67 @@
       render();
     });
 
-    bindCommittedNumber("ins-shape-x", (num) => {
+    function commitGeometryChange(mutator) {
       pushHistory();
-      shape.x = num;
+      mutator();
+      ensureWorkspaceForRect(shapeBounds(shape));
       render();
+    }
+
+    function stepGeometryValue(id, getter, applyValue) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener("keydown", (evt) => {
+        if (evt.key !== "ArrowUp" && evt.key !== "ArrowDown") return;
+        evt.preventDefault();
+        const direction = evt.key === "ArrowUp" ? 1 : -1;
+        pushHistory();
+        applyValue(nudgeFromCurrent(getter(), direction, 1));
+        ensureWorkspaceForRect(shapeBounds(shape));
+        render(true);
+        syncShapeGeometryInputs(shape);
+      });
+    }
+
+    bindCommittedNumber("ins-shape-x", (num) => {
+      commitGeometryChange(() => {
+        shape.x = num;
+      });
     });
     bindCommittedNumber("ins-shape-y", (num) => {
-      pushHistory();
-      shape.y = num;
-      render();
+      commitGeometryChange(() => {
+        shape.y = num;
+      });
     });
     bindCommittedNumber("ins-shape-w", (num) => {
-      pushHistory();
-      shape.width = Math.max(MIN_SHAPE_SIZE, num);
+      commitGeometryChange(() => {
+        shape.width = Math.max(MIN_SHAPE_SIZE, num);
+        if (shape.kind === "square" || shape.kind === "circle") {
+          shape.height = shape.width;
+        }
+      });
+    });
+    bindCommittedNumber("ins-shape-h", (num) => {
+      commitGeometryChange(() => {
+        shape.height = Math.max(MIN_SHAPE_SIZE, num);
+        if (shape.kind === "square" || shape.kind === "circle") {
+          shape.width = shape.height;
+        }
+      });
+    });
+    stepGeometryValue("ins-shape-x", () => shape.x, (next) => { shape.x = next; });
+    stepGeometryValue("ins-shape-y", () => shape.y, (next) => { shape.y = next; });
+    stepGeometryValue("ins-shape-w", () => shape.width, (next) => {
+      shape.width = Math.max(MIN_SHAPE_SIZE, next);
       if (shape.kind === "square" || shape.kind === "circle") {
         shape.height = shape.width;
       }
-      render();
     });
-    bindCommittedNumber("ins-shape-h", (num) => {
-      pushHistory();
-      shape.height = Math.max(MIN_SHAPE_SIZE, num);
+    stepGeometryValue("ins-shape-h", () => shape.height, (next) => {
+      shape.height = Math.max(MIN_SHAPE_SIZE, next);
       if (shape.kind === "square" || shape.kind === "circle") {
         shape.width = shape.height;
       }
-      render();
     });
 
     const zBack = document.getElementById("ins-z-back");
@@ -4043,6 +4214,7 @@
     window.addEventListener("pointercancel", cancelActiveDrag);
 
     window.addEventListener("wheel", zoomFromWheelEvent, { passive: false });
+    els.canvasScroll.addEventListener("scroll", extendWorkspaceForViewport, { passive: true });
 
     // Safari/macOS trackpad pinch support.
     let gestureStartZoom = 1;
@@ -4105,10 +4277,10 @@
       const moveKey = String(evt.key || "").toLowerCase();
       if (!inInput && (moveKey === "w" || moveKey === "a" || moveKey === "s" || moveKey === "d")) {
         const deltas = {
-          w: { x: 0, y: -5 },
-          a: { x: -5, y: 0 },
-          s: { x: 0, y: 5 },
-          d: { x: 5, y: 0 },
+          w: { x: 0, y: -KEYBOARD_NUDGE_STEP },
+          a: { x: -KEYBOARD_NUDGE_STEP, y: 0 },
+          s: { x: 0, y: KEYBOARD_NUDGE_STEP },
+          d: { x: KEYBOARD_NUDGE_STEP, y: 0 },
         };
         const delta = deltas[moveKey];
         if (delta && moveSelectedShapesBy(delta.x, delta.y)) {

@@ -5,7 +5,7 @@ import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 MODEL_VERSION = 2
-DEFAULT_VIEWBOX = {"width": 1980.0, "height": 1200.0}
+DEFAULT_VIEWBOX = {"width": 2000.0, "height": 1000.0}
 DEFAULT_BACKGROUND = "#0b1220"
 DEFAULT_ANCHOR_STOPS = [i / 10 for i in range(11)]
 DEFAULT_FONT_FAMILY = 'Georgia, "Times New Roman", serif'
