@@ -1,15 +1,15 @@
 (function () {
   "use strict";
 
-  const DEFAULT_COLOR_PALETTE = [
-    "#3a2d55",
-    "#1c2f4f",
-    "#15362f",
-    "#542f2f",
-    "#3f5667",
-    "#5e3b00",
-    "#253f57",
+  const TYPE_COLOR_SWATCHES = [
+    { key: "input", label: "Input", letter: "I", fill: "#21341d", stroke: "#5a7c3c" },
+    { key: "process", label: "Process", letter: "P", fill: "#423548", stroke: "#9d81af" },
+    { key: "data", label: "Data", letter: "D", fill: "#263347", stroke: "#6886b4" },
+    { key: "random_generation", label: "Random generation", letter: "R", fill: "#4b3313", stroke: "#b18034" },
+    { key: "output", label: "Output", letter: "O", fill: "#633c39", stroke: "#d6948c" },
+    { key: "usage_hints", label: "Usage hints", letter: "U", fill: "#4e5a69", stroke: "#b6cadf" },
   ];
+  const DEFAULT_COLOR_PALETTE = TYPE_COLOR_SWATCHES.map((entry) => entry.fill);
   const DEFAULT_FONT_FAMILY = 'Georgia, "Times New Roman", serif';
   const FONT_FAMILY_OPTIONS = [
     { label: "Arial", value: "Arial, Helvetica, sans-serif" },
@@ -72,6 +72,7 @@
     history: [],
     future: [],
     clipboard: null,
+    selectedShapeIds: [],
     richTextSelection: null,
     richTextPendingFormat: null,
     view: {
@@ -349,22 +350,21 @@
     return fallback || "#1c2f4f";
   }
 
+  function swatchTextColor(hex) {
+    const value = normalizeColor(hex, "#1c2f4f").replace("#", "");
+    const r = parseInt(value.slice(0, 2), 16);
+    const g = parseInt(value.slice(2, 4), 16);
+    const b = parseInt(value.slice(4, 6), 16);
+    const luminance = (r * 299 + g * 587 + b * 114) / 1000;
+    return luminance >= 154 ? "#122033" : "#f7fbff";
+  }
+
   function darken(hex, amount) {
     const h = String(hex || "").replace("#", "");
     if (!/^[0-9a-fA-F]{6}$/.test(h)) return "#80b6ff";
     const r = clamp(parseInt(h.slice(0, 2), 16) + amount, 0, 255);
     const g = clamp(parseInt(h.slice(2, 4), 16) + amount, 0, 255);
     const b = clamp(parseInt(h.slice(4, 6), 16) + amount, 0, 255);
-    return "#" + [r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("");
-  }
-
-  function borderNuance(hex) {
-    // CryptoTool-like border nuance: brighter, slightly cooler than fill.
-    const value = normalizeColor(hex, "#1c2f4f");
-    const h = value.replace("#", "");
-    const r = clamp(parseInt(h.slice(0, 2), 16) + 58, 0, 255);
-    const g = clamp(parseInt(h.slice(2, 4), 16) + 68, 0, 255);
-    const b = clamp(parseInt(h.slice(4, 6), 16) + 92, 0, 255);
     return "#" + [r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("");
   }
 
@@ -583,6 +583,9 @@
     if (state.connectSourceId === oldId) {
       state.connectSourceId = nextId;
     }
+    if (Array.isArray(state.selectedShapeIds) && state.selectedShapeIds.length) {
+      state.selectedShapeIds = state.selectedShapeIds.map((id) => id === oldId ? nextId : id);
+    }
   }
 
   function updateAutoId(shape, oldParentId) {
@@ -623,26 +626,107 @@
     const prev = state.history.pop();
     restoreSnapshot(prev);
     state.selected = null;
+    state.selectedShapeIds = [];
     state.connectSourceId = null;
     render();
     setStatus("Undo applied.", "ok");
   }
 
+  function normalizeSelectionIds(ids) {
+    const out = [];
+    const seen = new Set();
+    (ids || []).forEach((id) => {
+      if (!id || seen.has(id) || !shapeById(id)) return;
+      seen.add(id);
+      out.push(id);
+    });
+    return out;
+  }
+
+  function currentSelectedShapeIds() {
+    if (Array.isArray(state.selectedShapeIds) && state.selectedShapeIds.length) {
+      return normalizeSelectionIds(state.selectedShapeIds);
+    }
+    if (state.selected && state.selected.type === "shape" && shapeById(state.selected.id)) {
+      return [state.selected.id];
+    }
+    return [];
+  }
+
+  function isShapeSelected(shapeId) {
+    return currentSelectedShapeIds().indexOf(shapeId) >= 0;
+  }
+
+  function topLevelShapeIds(ids) {
+    const selectedIds = normalizeSelectionIds(ids);
+    return selectedIds.filter((id) => !selectedIds.some((otherId) => otherId !== id && isDescendant(id, otherId)));
+  }
+
+  function setShapeSelection(ids, primaryId, skipRender) {
+    const nextIds = normalizeSelectionIds(ids);
+    state.selectedShapeIds = nextIds;
+    if (!nextIds.length) {
+      state.selected = null;
+    } else {
+      const primary = nextIds.indexOf(primaryId) >= 0 ? primaryId : nextIds[nextIds.length - 1];
+      state.selected = { type: "shape", id: primary };
+    }
+    if (!skipRender) render();
+  }
+
+  function moveShapeIdsForSelection(ids) {
+    const rootIds = topLevelShapeIds(ids);
+    const moveIds = [];
+    const seen = new Set();
+    rootIds.forEach((id) => {
+      if (!seen.has(id)) {
+        seen.add(id);
+        moveIds.push(id);
+      }
+      const shape = shapeById(id);
+      if (shape && isContainerKind(shape.kind)) {
+        descendantsOf(id).forEach((childId) => {
+          if (!seen.has(childId)) {
+            seen.add(childId);
+            moveIds.push(childId);
+          }
+        });
+      }
+    });
+    return {
+      rootIds: rootIds,
+      moveIds: moveIds,
+    };
+  }
+
   function copySelectedShapeBundle() {
-    if (!state.selected || state.selected.type !== "shape") {
+    const selectedIds = currentSelectedShapeIds();
+    if (!selectedIds.length) {
       setStatus("Select a shape/container to copy.", "error");
       return;
     }
-    const root = shapeById(state.selected.id);
-    if (!root) return;
-    const ids = [root.id].concat(descendantsOf(root.id));
+    const rootIds = topLevelShapeIds(selectedIds);
+    const ids = [];
+    const seen = new Set();
+    rootIds.forEach((rootId) => {
+      if (!seen.has(rootId)) {
+        seen.add(rootId);
+        ids.push(rootId);
+      }
+      descendantsOf(rootId).forEach((childId) => {
+        if (!seen.has(childId)) {
+          seen.add(childId);
+          ids.push(childId);
+        }
+      });
+    });
     const idSet = new Set(ids);
     const bundle = state.model.shapes
       .filter((shape) => idSet.has(shape.id))
       .map((shape) => deepClone(shape));
     state.clipboard = {
       type: "shapeBundle",
-      rootId: root.id,
+      rootIds: rootIds,
       shapes: bundle,
       pasteCount: 0,
     };
@@ -681,8 +765,10 @@
     });
 
     state.clipboard.pasteCount += 1;
-    const rootNewId = idMap[state.clipboard.rootId];
-    if (rootNewId) state.selected = { type: "shape", id: rootNewId };
+    const pastedRootIds = normalizeSelectionIds((state.clipboard.rootIds || []).map((id) => idMap[id]));
+    if (pastedRootIds.length) {
+      setShapeSelection(pastedRootIds, pastedRootIds[pastedRootIds.length - 1], true);
+    }
     ensureModelDefaults();
     render();
     setStatus("Pasted " + bundle.length + " shape(s).", "ok");
@@ -864,21 +950,84 @@
     return "center";
   }
 
+  function proportionalInset(size, ratio, minInset, maxInset, minRemaining) {
+    const safeMinRemaining = Math.max(8, Number(minRemaining) || 0);
+    const upperBound = Math.max(minInset, Math.floor((Math.max(size, safeMinRemaining) - safeMinRemaining) / 2));
+    return clamp(Math.round(size * ratio), minInset, Math.max(minInset, Math.min(maxInset, upperBound)));
+  }
+
+  function insetTextBox(shape, insetRatios, minSize) {
+    const left = proportionalInset(shape.width, insetRatios.left, insetRatios.minX || 6, insetRatios.maxX || 20, minSize && minSize.width || 22);
+    const right = proportionalInset(shape.width, insetRatios.right, insetRatios.minX || 6, insetRatios.maxX || 20, minSize && minSize.width || 22);
+    const top = proportionalInset(shape.height, insetRatios.top, insetRatios.minY || 5, insetRatios.maxY || 18, minSize && minSize.height || 20);
+    const bottom = proportionalInset(shape.height, insetRatios.bottom, insetRatios.minY || 5, insetRatios.maxY || 18, minSize && minSize.height || 20);
+    const innerWidth = Math.max(8, shape.width - left - right);
+    const innerHeight = Math.max(8, shape.height - top - bottom);
+    return {
+      x: shape.x + left,
+      y: shape.y + top,
+      width: innerWidth,
+      height: innerHeight,
+    };
+  }
+
   function shapeTextBox(shape) {
     if (shape.kind === "header_container") {
       const headerH = Math.max(18, Math.min(36, Math.round(shape.height * 0.22)));
-      return { x: shape.x + 8, y: shape.y + 2, width: Math.max(24, shape.width - 16), height: Math.max(14, headerH - 4) };
+      const padX = proportionalInset(shape.width, 0.04, 8, 18, 24);
+      const padY = Math.max(2, proportionalInset(headerH, 0.16, 2, 8, 14));
+      return {
+        x: shape.x + padX,
+        y: shape.y + padY,
+        width: Math.max(8, shape.width - padX * 2),
+        height: Math.max(8, headerH - padY * 2),
+      };
     }
     if (shape.kind === "component_group") {
-      return { x: shape.x + 8, y: shape.y + 2, width: Math.max(24, shape.width - 16), height: 14 };
+      const titleHeight = Math.max(14, Math.min(28, Math.round(shape.height * 0.24)));
+      const padX = proportionalInset(shape.width, 0.04, 8, 18, 24);
+      const padY = Math.max(2, proportionalInset(titleHeight, 0.16, 2, 8, 14));
+      return {
+        x: shape.x + padX,
+        y: shape.y + padY,
+        width: Math.max(8, shape.width - padX * 2),
+        height: Math.max(8, titleHeight - padY * 2),
+      };
     }
     if (shape.kind === "circle" || shape.kind === "oval") {
-      return { x: shape.x + 12, y: shape.y + 10, width: Math.max(20, shape.width - 24), height: Math.max(20, shape.height - 20) };
+      return insetTextBox(shape, {
+        left: 0.18,
+        right: 0.18,
+        top: 0.14,
+        bottom: 0.14,
+        minX: 7,
+        maxX: 24,
+        minY: 6,
+        maxY: 18,
+      }, { width: 20, height: 20 });
     }
     if (shape.kind === "triangle") {
-      return { x: shape.x + 12, y: shape.y + 14, width: Math.max(20, shape.width - 24), height: Math.max(20, shape.height - 24) };
+      return insetTextBox(shape, {
+        left: 0.16,
+        right: 0.16,
+        top: 0.24,
+        bottom: 0.18,
+        minX: 8,
+        maxX: 24,
+        minY: 7,
+        maxY: 22,
+      }, { width: 20, height: 20 });
     }
-    return { x: shape.x + 10, y: shape.y + 8, width: Math.max(20, shape.width - 20), height: Math.max(20, shape.height - 16) };
+    return insetTextBox(shape, {
+      left: 0.08,
+      right: 0.08,
+      top: 0.08,
+      bottom: 0.08,
+      minX: 6,
+      maxX: 18,
+      minY: 5,
+      maxY: 16,
+    }, { width: 20, height: 20 });
   }
 
   function renderRichTextBlock(group, shape, box) {
@@ -888,7 +1037,7 @@
       y: box.y,
       width: box.width,
       height: box.height,
-      style: "pointer-events:none;overflow:visible",
+      style: "pointer-events:none;overflow:hidden",
     });
     const wrapper = createHtml("div", {
       xmlns: HTML_NS,
@@ -1118,7 +1267,7 @@
   }
 
   function renderShape(shapeLayer, shape) {
-    const isSelected = state.selected && state.selected.type === "shape" && state.selected.id === shape.id;
+    const isSelected = isShapeSelected(shape.id);
     const isConnectSource = state.connectSourceId === shape.id;
     const baseStrokeWidth = normalizeBorderWidth(shape.borderWidth, defaultBorderWidth(shape.kind));
     const stroke = isConnectSource ? "#43d17e" : (isSelected ? "#ffd76b" : shape.stroke);
@@ -1481,11 +1630,100 @@
     arrowLayer.appendChild(path);
   }
 
+  function selectionBounds(shapeIds) {
+    const shapes = normalizeSelectionIds(shapeIds)
+      .map((id) => shapeById(id))
+      .filter(Boolean);
+    if (!shapes.length) return null;
+    const left = Math.min.apply(null, shapes.map((shape) => shape.x));
+    const top = Math.min.apply(null, shapes.map((shape) => shape.y));
+    const right = Math.max.apply(null, shapes.map((shape) => shape.x + shape.width));
+    const bottom = Math.max.apply(null, shapes.map((shape) => shape.y + shape.height));
+    return {
+      x: left,
+      y: top,
+      width: right - left,
+      height: bottom - top,
+    };
+  }
+
+  function rectFromPoints(a, b) {
+    return {
+      x: Math.min(a.x, b.x),
+      y: Math.min(a.y, b.y),
+      width: Math.abs(a.x - b.x),
+      height: Math.abs(a.y - b.y),
+    };
+  }
+
+  function rectsIntersect(a, b) {
+    if (!a || !b) return false;
+    return a.x <= b.x + b.width &&
+      a.x + a.width >= b.x &&
+      a.y <= b.y + b.height &&
+      a.y + a.height >= b.y;
+  }
+
+  function shapeBounds(shape) {
+    if (!shape) return null;
+    return {
+      x: shape.x,
+      y: shape.y,
+      width: shape.width,
+      height: shape.height,
+    };
+  }
+
+  function shapeIdsInSelectionRect(rect) {
+    if (!rect || rect.width < 1 || rect.height < 1) return [];
+    return sortedShapes()
+      .filter((shape) => rectsIntersect(rect, shapeBounds(shape)))
+      .map((shape) => shape.id);
+  }
+
   function renderSelectionOverlay(overlayLayer) {
+    if (state.drag && state.drag.type === "marquee-select") {
+      const marquee = rectFromPoints(state.drag.start, state.drag.current || state.drag.start);
+      overlayLayer.appendChild(createSvg("rect", {
+        x: marquee.x,
+        y: marquee.y,
+        width: marquee.width,
+        height: marquee.height,
+        fill: "rgba(126, 174, 255, 0.12)",
+        stroke: "#8ab8ff",
+        "stroke-width": 1.2,
+        "stroke-dasharray": "6 4",
+        rx: 4,
+        ry: 4,
+        "pointer-events": "none",
+      }));
+    }
+
     if (!state.selected) return;
 
     if (state.selected.type === "shape") {
-      const shape = shapeById(state.selected.id);
+      const selectedIds = currentSelectedShapeIds();
+      if (!selectedIds.length) return;
+      if (selectedIds.length > 1) {
+        const bounds = selectionBounds(selectedIds);
+        if (!bounds) return;
+        overlayLayer.appendChild(createSvg("rect", {
+          x: bounds.x - 6,
+          y: bounds.y - 6,
+          width: bounds.width + 12,
+          height: bounds.height + 12,
+          fill: "none",
+          stroke: "#ffd76b",
+          "stroke-width": 1.5,
+          "stroke-dasharray": "8 5",
+          rx: 8,
+          ry: 8,
+          "pointer-events": "none",
+        }));
+        return;
+      }
+
+      const shape = shapeById(selectedIds[0]);
       if (!shape) return;
       const handles = [
         { key: "nw", x: shape.x, y: shape.y },
@@ -1635,7 +1873,18 @@
   }
 
   function setSelected(sel) {
+    if (!sel) {
+      state.selected = null;
+      state.selectedShapeIds = [];
+      render();
+      return;
+    }
+    if (sel.type === "shape") {
+      setShapeSelection([sel.id], sel.id);
+      return;
+    }
     state.selected = sel;
+    state.selectedShapeIds = [];
     render();
   }
 
@@ -1662,9 +1911,30 @@
   }
 
   function onBackgroundPointerDown(evt) {
-    if (evt.button !== 0) return;
-    state.selected = null;
+    if (evt.button !== 0 && evt.button !== 1) return;
+    evt.preventDefault();
     state.connectSourceId = null;
+    if (state.mode === "select" && evt.button === 0 && !evt.altKey) {
+      const additive = !!(evt.shiftKey || evt.metaKey || evt.ctrlKey);
+      const start = clientToSvg(evt);
+      const baseSelection = additive ? currentSelectedShapeIds() : [];
+      state.drag = {
+        type: "marquee-select",
+        start: start,
+        current: start,
+        additive: additive,
+        baseSelection: baseSelection,
+      };
+      if (!additive || !baseSelection.length) {
+        state.selected = null;
+        state.selectedShapeIds = [];
+      }
+      render(true);
+      return;
+    }
+
+    state.selected = null;
+    state.selectedShapeIds = [];
     state.drag = {
       type: "pan-canvas",
       startClientX: evt.clientX,
@@ -1700,16 +1970,32 @@
       return;
     }
 
-    setSelected({ type: "shape", id: shapeId });
+    const modifier = !!(evt.shiftKey || evt.metaKey || evt.ctrlKey);
+    const selectedIds = currentSelectedShapeIds();
+    if (modifier) {
+      const nextIds = selectedIds.slice();
+      const existingIdx = nextIds.indexOf(shapeId);
+      if (existingIdx >= 0) {
+        nextIds.splice(existingIdx, 1);
+      } else {
+        nextIds.push(shapeId);
+      }
+      setShapeSelection(nextIds, shapeId);
+      return;
+    }
+
+    if (!isShapeSelected(shapeId) || selectedIds.length <= 1) {
+      setShapeSelection([shapeId], shapeId);
+    } else {
+      setShapeSelection(selectedIds, shapeId);
+    }
     pushHistory();
 
     const start = clientToSvg(evt);
-    const moveIds = [shapeId];
-    if (isContainerKind(shape.kind)) {
-      moveIds.push.apply(moveIds, descendantsOf(shapeId));
-    }
+    const selection = isShapeSelected(shapeId) ? currentSelectedShapeIds() : [shapeId];
+    const movePlan = moveShapeIdsForSelection(selection);
     const before = {};
-    moveIds.forEach((id) => {
+    movePlan.moveIds.forEach((id) => {
       const s = shapeById(id);
       before[id] = { x: s.x, y: s.y };
     });
@@ -1717,7 +2003,8 @@
     state.drag = {
       type: "move-shapes",
       shapeId: shapeId,
-      movedShapeIds: moveIds,
+      rootShapeIds: movePlan.rootIds,
+      movedShapeIds: movePlan.moveIds,
       before: before,
       start: start,
     };
@@ -1814,6 +2101,12 @@
       return;
     }
 
+    if (state.drag.type === "marquee-select") {
+      state.drag.current = point;
+      render(true);
+      return;
+    }
+
     if (state.drag.type === "resize-shape") {
       const shape = shapeById(state.drag.shapeId);
       if (!shape) return;
@@ -1892,16 +2185,39 @@
     if (!state.drag) return;
 
     if (state.drag.type === "move-shapes") {
-      const moved = shapeById(state.drag.shapeId);
-      if (moved) {
+      (state.drag.rootShapeIds || []).forEach((rootId) => {
+        const moved = shapeById(rootId);
+        if (!moved) return;
         const prevParent = moved.parentId;
         const parent = pickContainerForShape(moved);
         moved.parentId = parent ? parent.id : null;
         if (moved.parentId !== prevParent) {
           updateAutoId(moved, prevParent);
         }
-      }
+      });
       render();
+    }
+
+    if (state.drag.type === "marquee-select") {
+      const rect = rectFromPoints(state.drag.start, state.drag.current || state.drag.start);
+      const hitIds = shapeIdsInSelectionRect(rect);
+      const nextIds = state.drag.additive
+        ? normalizeSelectionIds((state.drag.baseSelection || []).concat(hitIds))
+        : normalizeSelectionIds(hitIds);
+      const isClick = rect.width < 4 && rect.height < 4;
+
+      if (isClick) {
+        if (!state.drag.additive) {
+          state.selected = null;
+          state.selectedShapeIds = [];
+          render();
+        } else {
+          render();
+        }
+      } else {
+        setShapeSelection(nextIds, nextIds[nextIds.length - 1] || "", true);
+        render();
+      }
     }
 
     if (state.drag.type === "pan-canvas") {
@@ -2010,13 +2326,17 @@
     pushHistory();
 
     if (state.selected.type === "shape") {
-      const shape = shapeById(state.selected.id);
-      if (!shape) return;
-      const ids = [shape.id].concat(descendantsOf(shape.id));
-      const idSet = new Set(ids);
+      const selectedIds = currentSelectedShapeIds();
+      if (!selectedIds.length) return;
+      const idSet = new Set();
+      topLevelShapeIds(selectedIds).forEach((id) => {
+        idSet.add(id);
+        descendantsOf(id).forEach((childId) => idSet.add(childId));
+      });
       state.model.shapes = state.model.shapes.filter((s) => !idSet.has(s.id));
       state.model.arrows = state.model.arrows.filter((a) => !idSet.has(a.from.shapeId) && !idSet.has(a.to.shapeId));
       state.selected = null;
+      state.selectedShapeIds = [];
       state.connectSourceId = null;
       render();
       return;
@@ -2025,6 +2345,7 @@
     if (state.selected.type === "arrow") {
       state.model.arrows = state.model.arrows.filter((a) => a.id !== state.selected.id);
       state.selected = null;
+      state.selectedShapeIds = [];
       render();
     }
   }
@@ -3051,8 +3372,7 @@
       isContainerKind(s.kind) && s.id !== shape.id && !isDescendant(s.id, shape.id)
     );
 
-    const palette = state.model.metadata.colorPalette || DEFAULT_COLOR_PALETTE;
-    const borderPalette = palette.map((color) => borderNuance(color));
+    const colorSwatches = TYPE_COLOR_SWATCHES;
     const isComponentGroup = shape.kind === "component_group";
     const componentLabelsText = normalizeComponentLabels(shape.componentLabels, shape.componentCount).join("\n");
     const richText = sanitizeRichHtml(shape.richText, shape.text);
@@ -3130,29 +3450,41 @@
 
     const fillPaletteEl = document.getElementById("ins-shape-fill-palette");
     const strokePaletteEl = document.getElementById("ins-shape-stroke-palette");
-    palette.forEach((color) => {
+    colorSwatches.forEach((entry) => {
       if (fillPaletteEl) {
         const sw = document.createElement("button");
         sw.type = "button";
-        sw.className = "swatch" + (normalizeColor(shape.fill, "#1c2f4f") === normalizeColor(color, "#1c2f4f") ? " active" : "");
-        sw.style.background = color;
+        sw.className = "swatch" + (normalizeColor(shape.fill, "#1c2f4f") === normalizeColor(entry.fill, "#1c2f4f") ? " active" : "");
+        sw.style.background = entry.fill;
+        sw.style.color = swatchTextColor(entry.fill);
+        sw.style.textShadow = swatchTextColor(entry.fill) === "#122033"
+          ? "0 1px 0 rgba(255,255,255,0.28)"
+          : "0 1px 0 rgba(0,0,0,0.22)";
+        sw.title = entry.label + " fill";
+        sw.textContent = entry.letter;
         sw.addEventListener("click", () => {
           pushHistory();
-          shape.fill = normalizeColor(color, shape.fill);
+          shape.fill = normalizeColor(entry.fill, shape.fill);
           render();
         });
         fillPaletteEl.appendChild(sw);
       }
     });
-    borderPalette.forEach((color) => {
+    colorSwatches.forEach((entry) => {
       if (strokePaletteEl) {
         const sw2 = document.createElement("button");
         sw2.type = "button";
-        sw2.className = "swatch" + (normalizeColor(shape.stroke, "#80b6ff") === normalizeColor(color, "#80b6ff") ? " active" : "");
-        sw2.style.background = color;
+        sw2.className = "swatch" + (normalizeColor(shape.stroke, "#80b6ff") === normalizeColor(entry.stroke, "#80b6ff") ? " active" : "");
+        sw2.style.background = entry.stroke;
+        sw2.style.color = swatchTextColor(entry.stroke);
+        sw2.style.textShadow = swatchTextColor(entry.stroke) === "#122033"
+          ? "0 1px 0 rgba(255,255,255,0.28)"
+          : "0 1px 0 rgba(0,0,0,0.22)";
+        sw2.title = entry.label + " border";
+        sw2.textContent = entry.letter;
         sw2.addEventListener("click", () => {
           pushHistory();
-          shape.stroke = normalizeColor(color, shape.stroke);
+          shape.stroke = normalizeColor(entry.stroke, shape.stroke);
           render();
         });
         strokePaletteEl.appendChild(sw2);
