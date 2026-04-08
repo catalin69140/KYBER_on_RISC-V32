@@ -699,6 +699,36 @@
     };
   }
 
+  function finalizeMovedRoots(rootIds) {
+    (rootIds || []).forEach((rootId) => {
+      const moved = shapeById(rootId);
+      if (!moved) return;
+      const prevParent = moved.parentId;
+      const parent = pickContainerForShape(moved);
+      moved.parentId = parent ? parent.id : null;
+      if (moved.parentId !== prevParent) {
+        updateAutoId(moved, prevParent);
+      }
+    });
+  }
+
+  function moveSelectedShapesBy(dx, dy) {
+    const selectedIds = currentSelectedShapeIds();
+    if (!selectedIds.length) return false;
+    const movePlan = moveShapeIdsForSelection(selectedIds);
+    if (!movePlan.moveIds.length) return false;
+    pushHistory();
+    movePlan.moveIds.forEach((id) => {
+      const shape = shapeById(id);
+      if (!shape) return;
+      shape.x += dx;
+      shape.y += dy;
+    });
+    finalizeMovedRoots(movePlan.rootIds);
+    render();
+    return true;
+  }
+
   function copySelectedShapeBundle() {
     const selectedIds = currentSelectedShapeIds();
     if (!selectedIds.length) {
@@ -825,14 +855,21 @@
     }
   }
 
-  function setZoom(nextZoom) {
+  function setZoom(nextZoom, focusPoint) {
     const prev = state.view.zoom;
     const next = clamp(nextZoom, state.view.minZoom, state.view.maxZoom);
     if (Math.abs(next - prev) < 0.0001) return;
 
     const scroll = els.canvasScroll;
-    const cx = scroll.scrollLeft + scroll.clientWidth / 2;
-    const cy = scroll.scrollTop + scroll.clientHeight / 2;
+    const rect = scroll.getBoundingClientRect();
+    const focusX = focusPoint && Number.isFinite(focusPoint.clientX)
+      ? clamp(focusPoint.clientX - rect.left, 0, rect.width || 0)
+      : scroll.clientWidth / 2;
+    const focusY = focusPoint && Number.isFinite(focusPoint.clientY)
+      ? clamp(focusPoint.clientY - rect.top, 0, rect.height || 0)
+      : scroll.clientHeight / 2;
+    const cx = scroll.scrollLeft + focusX;
+    const cy = scroll.scrollTop + focusY;
     const prevScale = effectiveCanvasScale(prev);
     const nextScale = effectiveCanvasScale(next);
     const ratio = nextScale / prevScale;
@@ -840,8 +877,8 @@
     state.view.zoom = next;
     render();
 
-    scroll.scrollLeft = Math.max(0, cx * ratio - scroll.clientWidth / 2);
-    scroll.scrollTop = Math.max(0, cy * ratio - scroll.clientHeight / 2);
+    scroll.scrollLeft = Math.max(0, cx * ratio - focusX);
+    scroll.scrollTop = Math.max(0, cy * ratio - focusY);
   }
 
   function resetView() {
@@ -849,6 +886,24 @@
     render();
     els.canvasScroll.scrollLeft = 0;
     els.canvasScroll.scrollTop = 0;
+  }
+
+  function eventTargetsCanvas(evt) {
+    if (evt && evt.target && els.canvasScroll.contains(evt.target)) return true;
+    if (evt && Number.isFinite(evt.clientX) && Number.isFinite(evt.clientY) && document.elementFromPoint) {
+      const hit = document.elementFromPoint(evt.clientX, evt.clientY);
+      return !!(hit && els.canvasScroll.contains(hit));
+    }
+    return false;
+  }
+
+  function zoomFromWheelEvent(evt) {
+    if (!eventTargetsCanvas(evt)) return;
+    const isPinchGesture = !!(evt.ctrlKey || evt.metaKey);
+    if (!isPinchGesture) return;
+    evt.preventDefault();
+    const factor = Math.exp(-Number(evt.deltaY || 0) * 0.0025);
+    setZoom(state.view.zoom * factor, { clientX: evt.clientX, clientY: evt.clientY });
   }
 
   function ensureDefs() {
@@ -1914,21 +1969,21 @@
     if (evt.button !== 0 && evt.button !== 1) return;
     evt.preventDefault();
     state.connectSourceId = null;
-    if (state.mode === "select" && evt.button === 0 && !evt.altKey) {
-      const additive = !!(evt.shiftKey || evt.metaKey || evt.ctrlKey);
+    const multiSelectModifier = !!(evt.metaKey || evt.ctrlKey);
+    if (state.mode === "select" && evt.button === 0 && multiSelectModifier && !evt.altKey) {
       const start = clientToSvg(evt);
-      const baseSelection = additive ? currentSelectedShapeIds() : [];
+      const baseSelection = currentSelectedShapeIds();
+      if (!baseSelection.length) {
+        state.selected = null;
+        state.selectedShapeIds = [];
+      }
       state.drag = {
         type: "marquee-select",
         start: start,
         current: start,
-        additive: additive,
+        additive: true,
         baseSelection: baseSelection,
       };
-      if (!additive || !baseSelection.length) {
-        state.selected = null;
-        state.selectedShapeIds = [];
-      }
       render(true);
       return;
     }
@@ -1970,7 +2025,7 @@
       return;
     }
 
-    const modifier = !!(evt.shiftKey || evt.metaKey || evt.ctrlKey);
+    const modifier = !!(evt.metaKey || evt.ctrlKey);
     const selectedIds = currentSelectedShapeIds();
     if (modifier) {
       const nextIds = selectedIds.slice();
@@ -2181,50 +2236,49 @@
     }
   }
 
+  function cancelActiveDrag() {
+    if (!state.drag) return;
+    const shouldRender = state.drag.type === "marquee-select";
+    state.drag = null;
+    els.canvasScroll.classList.remove("panning");
+    if (shouldRender) {
+      render();
+    }
+  }
+
   function handlePointerUp() {
     if (!state.drag) return;
+    const drag = state.drag;
+    state.drag = null;
 
-    if (state.drag.type === "move-shapes") {
-      (state.drag.rootShapeIds || []).forEach((rootId) => {
-        const moved = shapeById(rootId);
-        if (!moved) return;
-        const prevParent = moved.parentId;
-        const parent = pickContainerForShape(moved);
-        moved.parentId = parent ? parent.id : null;
-        if (moved.parentId !== prevParent) {
-          updateAutoId(moved, prevParent);
-        }
-      });
+    if (drag.type === "move-shapes") {
+      finalizeMovedRoots(drag.rootShapeIds);
       render();
     }
 
-    if (state.drag.type === "marquee-select") {
-      const rect = rectFromPoints(state.drag.start, state.drag.current || state.drag.start);
+    if (drag.type === "marquee-select") {
+      const rect = rectFromPoints(drag.start, drag.current || drag.start);
       const hitIds = shapeIdsInSelectionRect(rect);
-      const nextIds = state.drag.additive
-        ? normalizeSelectionIds((state.drag.baseSelection || []).concat(hitIds))
+      const nextIds = drag.additive
+        ? normalizeSelectionIds((drag.baseSelection || []).concat(hitIds))
         : normalizeSelectionIds(hitIds);
       const isClick = rect.width < 4 && rect.height < 4;
 
       if (isClick) {
-        if (!state.drag.additive) {
+        if (!drag.additive) {
           state.selected = null;
           state.selectedShapeIds = [];
-          render();
-        } else {
-          render();
         }
+        render();
       } else {
         setShapeSelection(nextIds, nextIds[nextIds.length - 1] || "", true);
         render();
       }
     }
 
-    if (state.drag.type === "pan-canvas") {
+    if (drag.type === "pan-canvas") {
       els.canvasScroll.classList.remove("panning");
     }
-
-    state.drag = null;
   }
 
   function chooseEndpointForNewArrow(fromShape, toShape, isFromEndpoint) {
@@ -3413,8 +3467,8 @@
       '<div><label>ID</label><input id="ins-shape-id" type="text" value="' + escapeHtml(shape.id) + '"/></div>',
       '<div class="switch-row"><label for="ins-shape-auto-id">Auto ID</label><label class="switch"><input id="ins-shape-auto-id" type="checkbox"' + (!shape.idManual ? " checked" : "") + '/><span class="switch-slider"></span></label></div>',
       '<div><label>Parent container:</label><select id="ins-parent">' + parentOptions + '</select></div>',
-      "<h3>Style</h3>",
-      '<div><label>Border</label><div class="border-controls">' +
+      "<h3>Border</h3>",
+      '<div><div class="border-controls">' +
         '<select id="ins-shape-border-style"><option value="solid"' + (shape.borderStyle === "solid" ? " selected" : "") + '>solid</option><option value="dashed"' + (shape.borderStyle === "dashed" ? " selected" : "") + '>dashed</option></select>' +
         '<input id="ins-shape-border-width" type="number" min="0.5" max="12" step="0.1" title="Border thickness" value="' + roundNum(shape.borderWidth || defaultBorderWidth(shape.kind)) + '"/>' +
       '</div></div>',
@@ -3428,8 +3482,7 @@
       "<h3>Color</h3>",
       '<div><label>Fill palette</label><div class="palette" id="ins-shape-fill-palette"></div></div>',
       '<div><label>Border palette</label><div class="palette" id="ins-shape-stroke-palette"></div></div>',
-      '<div><label>Fill</label><input id="ins-shape-fill" type="color" value="' + normalizeColor(shape.fill, "#1c2f4f") + '"/></div>',
-      '<div><label>Border color</label><input id="ins-shape-stroke" type="color" value="' + normalizeColor(shape.stroke, "#80b6ff") + '"/></div>',
+      '<div class="color-inline-row"><label for="ins-shape-fill">Fill:</label><input id="ins-shape-fill" type="color" value="' + normalizeColor(shape.fill, "#1c2f4f") + '"/><label for="ins-shape-stroke">Border:</label><input id="ins-shape-stroke" type="color" value="' + normalizeColor(shape.stroke, "#80b6ff") + '"/></div>',
       "<h3>Geometry</h3>",
       '<div class="grid2">' +
         '<div class="inline-field"><label for="ins-shape-x">x:</label><input id="ins-shape-x" type="number" step="1" value="' + roundNum(shape.x) + '"/></div>' +
@@ -3987,24 +4040,22 @@
     els.svg.addEventListener("pointerdown", onBackgroundPointerDown);
     window.addEventListener("pointermove", handlePointerMove);
     window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", cancelActiveDrag);
 
-    els.canvasScroll.addEventListener("wheel", (evt) => {
-      if (!evt.ctrlKey && !evt.metaKey) return;
-      evt.preventDefault();
-      const factor = evt.deltaY < 0 ? 1.1 : 0.9;
-      setZoom(state.view.zoom * factor);
-    }, { passive: false });
+    window.addEventListener("wheel", zoomFromWheelEvent, { passive: false });
 
     // Safari/macOS trackpad pinch support.
     let gestureStartZoom = 1;
     els.canvasScroll.addEventListener("gesturestart", (evt) => {
+      if (!eventTargetsCanvas(evt)) return;
       evt.preventDefault();
       gestureStartZoom = state.view.zoom;
     }, { passive: false });
     els.canvasScroll.addEventListener("gesturechange", (evt) => {
+      if (!eventTargetsCanvas(evt)) return;
       evt.preventDefault();
       const scale = Number(evt.scale) || 1;
-      setZoom(gestureStartZoom * scale);
+      setZoom(gestureStartZoom * scale, { clientX: evt.clientX, clientY: evt.clientY });
     }, { passive: false });
 
     els.elfInput.addEventListener("change", () => {
@@ -4051,10 +4102,24 @@
         return;
       }
 
+      const moveKey = String(evt.key || "").toLowerCase();
+      if (!inInput && (moveKey === "w" || moveKey === "a" || moveKey === "s" || moveKey === "d")) {
+        const deltas = {
+          w: { x: 0, y: -5 },
+          a: { x: -5, y: 0 },
+          s: { x: 0, y: 5 },
+          d: { x: 5, y: 0 },
+        };
+        const delta = deltas[moveKey];
+        if (delta && moveSelectedShapesBy(delta.x, delta.y)) {
+          evt.preventDefault();
+        }
+        return;
+      }
+
       if (evt.key === "Escape") {
         state.connectSourceId = null;
-        state.drag = null;
-        els.canvasScroll.classList.remove("panning");
+        cancelActiveDrag();
         setMode("select");
       }
     });

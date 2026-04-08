@@ -306,6 +306,26 @@
       align-items: center;
     }
 
+    .color-inline-row {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr);
+      gap: 8px;
+      align-items: center;
+    }
+
+    .color-inline-row label {
+      margin: 0;
+      white-space: nowrap;
+    }
+
+    .color-inline-row input[type="color"] {
+      width: 100%;
+      min-width: 0;
+      height: 34px;
+      padding: 2px;
+      border-radius: 8px;
+    }
+
     .switch-row {
       display: flex;
       align-items: center;
