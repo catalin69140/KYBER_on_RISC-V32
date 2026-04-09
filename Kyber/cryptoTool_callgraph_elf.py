@@ -2376,21 +2376,205 @@ def write_html_animation(
         return "center";
     }
 
+    function refClamp(v, lo, hi) {
+        return Math.max(lo, Math.min(hi, v));
+    }
+
+    function refProportionalInset(size, ratio, minInset, maxInset, minRemaining) {
+        const safeMinRemaining = Math.max(8, Number(minRemaining) || 0);
+        const upperBound = Math.max(minInset, Math.floor((Math.max(size, safeMinRemaining) - safeMinRemaining) / 2));
+        return refClamp(Math.round(size * ratio), minInset, Math.max(minInset, Math.min(maxInset, upperBound)));
+    }
+
+    function refInsetTextBox(spec, insetRatios, minSize = {}) {
+        const left = refProportionalInset(spec.w, insetRatios.left, insetRatios.minX || 6, insetRatios.maxX || 20, minSize.width || 22);
+        const right = refProportionalInset(spec.w, insetRatios.right, insetRatios.minX || 6, insetRatios.maxX || 20, minSize.width || 22);
+        const top = refProportionalInset(spec.h, insetRatios.top, insetRatios.minY || 5, insetRatios.maxY || 18, minSize.height || 20);
+        const bottom = refProportionalInset(spec.h, insetRatios.bottom, insetRatios.minY || 5, insetRatios.maxY || 18, minSize.height || 20);
+        return {
+            x: spec.x + left,
+            y: spec.y + top,
+            width: Math.max(8, spec.w - left - right),
+            height: Math.max(8, spec.h - top - bottom)
+        };
+    }
+
+    function refPointStr(point) {
+        return `${point.x},${point.y}`;
+    }
+
+    function refLerpPoint(a, b, t) {
+        return {
+            x: a.x + (b.x - a.x) * t,
+            y: a.y + (b.y - a.y) * t
+        };
+    }
+
+    function refDistanceBetweenPoints(a, b) {
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    function refRoundedPolygonPath(points, radius) {
+        if (!Array.isArray(points) || points.length < 3) return "";
+        const r = Math.max(0, Number(radius) || 0);
+        if (r <= 0.01) {
+            return "M " + points.map(refPointStr).join(" L ") + " Z";
+        }
+        const d = [];
+        const len = points.length;
+        for (let i = 0; i < len; i += 1) {
+            const prev = points[(i - 1 + len) % len];
+            const curr = points[i];
+            const next = points[(i + 1) % len];
+            const prevDist = refDistanceBetweenPoints(prev, curr);
+            const nextDist = refDistanceBetweenPoints(curr, next);
+            const cornerRadius = Math.min(r, prevDist / 2, nextDist / 2);
+            const start = refLerpPoint(curr, prev, cornerRadius / Math.max(0.001, prevDist));
+            const end = refLerpPoint(curr, next, cornerRadius / Math.max(0.001, nextDist));
+            if (i === 0) d.push(`M ${start.x} ${start.y}`);
+            else d.push(`L ${start.x} ${start.y}`);
+            d.push(`Q ${curr.x} ${curr.y} ${end.x} ${end.y}`);
+        }
+        d.push("Z");
+        return d.join(" ");
+    }
+
+    function refShapeSupportsRounding(kind) {
+        return (
+            kind === "square" ||
+            kind === "rectangle" ||
+            kind === "container" ||
+            kind === "header_container" ||
+            kind === "component_group" ||
+            kind === "triangle" ||
+            kind === "diamond" ||
+            kind === "parallelogram" ||
+            kind === "trapezoid" ||
+            kind === "pentagon" ||
+            kind === "hexagon" ||
+            kind === "octagon"
+        );
+    }
+
+    function refShapeCornerRadius(spec, kind) {
+        if (!refShapeSupportsRounding(kind) || spec.rounded === false) return 0;
+        return Math.max(3, Math.min(14, Math.min(spec.w, spec.h) * 0.12));
+    }
+
+    function refPolygonVertices(spec, kind) {
+        const x = spec.x;
+        const y = spec.y;
+        const w = spec.w;
+        const h = spec.h;
+        const cx = x + w / 2;
+        if (kind === "triangle") {
+            return [{ x: cx, y: y }, { x: x + w, y: y + h }, { x: x, y: y + h }];
+        }
+        if (kind === "diamond") {
+            return [{ x: cx, y: y }, { x: x + w, y: y + h / 2 }, { x: cx, y: y + h }, { x: x, y: y + h / 2 }];
+        }
+        if (kind === "parallelogram") {
+            return [{ x: x + w * 0.18, y: y }, { x: x + w, y: y }, { x: x + w * 0.82, y: y + h }, { x: x, y: y + h }];
+        }
+        if (kind === "trapezoid") {
+            return [{ x: x + w * 0.18, y: y }, { x: x + w * 0.82, y: y }, { x: x + w, y: y + h }, { x: x, y: y + h }];
+        }
+        if (kind === "pentagon") {
+            return [{ x: cx, y: y }, { x: x + w, y: y + h * 0.38 }, { x: x + w * 0.82, y: y + h }, { x: x + w * 0.18, y: y + h }, { x: x, y: y + h * 0.38 }];
+        }
+        if (kind === "hexagon" || kind === "hexagonal_prism") {
+            return [{ x: x + w * 0.18, y: y }, { x: x + w * 0.82, y: y }, { x: x + w, y: y + h / 2 }, { x: x + w * 0.82, y: y + h }, { x: x + w * 0.18, y: y + h }, { x: x, y: y + h / 2 }];
+        }
+        if (kind === "octagon") {
+            return [{ x: x + w * 0.22, y: y }, { x: x + w * 0.78, y: y }, { x: x + w, y: y + h * 0.22 }, { x: x + w, y: y + h * 0.78 }, { x: x + w * 0.78, y: y + h }, { x: x + w * 0.22, y: y + h }, { x: x, y: y + h * 0.78 }, { x: x, y: y + h * 0.22 }];
+        }
+        if (kind === "message") {
+            return [{ x: x, y: y }, { x: x + w, y: y }, { x: x + w, y: y + h * 0.76 }, { x: x + w * 0.42, y: y + h * 0.76 }, { x: x + w * 0.26, y: y + h }, { x: x + w * 0.3, y: y + h * 0.76 }, { x: x, y: y + h * 0.76 }];
+        }
+        if (kind === "card") {
+            return [{ x: x + w * 0.16, y: y }, { x: x + w, y: y }, { x: x + w, y: y + h }, { x: x, y: y + h }, { x: x, y: y + h * 0.16 }];
+        }
+        if (kind === "note") {
+            return [{ x: x, y: y }, { x: x + w * 0.8, y: y }, { x: x + w, y: y + h * 0.2 }, { x: x + w, y: y + h }, { x: x, y: y + h }];
+        }
+        if (kind === "cube" || kind === "cuboid") {
+            const offX = Math.min(w * 0.22, 24);
+            const offY = Math.min(h * 0.2, 20);
+            return [{ x: x + offX, y: y }, { x: x + w - offX * 0.2, y: y }, { x: x + w, y: y + offY }, { x: x + w, y: y + h }, { x: x + offX, y: y + h }, { x: x, y: y + h - offY }, { x: x, y: y + offY }];
+        }
+        return null;
+    }
+
+    function refProjectPointToSegment(point, a, b) {
+        const abx = b.x - a.x;
+        const aby = b.y - a.y;
+        const denom = abx * abx + aby * aby;
+        if (denom < 1e-6) return { x: a.x, y: a.y };
+        const t = refClamp(((point.x - a.x) * abx + (point.y - a.y) * aby) / denom, 0, 1);
+        return {
+            x: a.x + abx * t,
+            y: a.y + aby * t
+        };
+    }
+
+    function refClosestPointOnPolygon(point, vertices) {
+        if (!Array.isArray(vertices) || !vertices.length) return null;
+        let best = null;
+        let bestDist = Infinity;
+        for (let i = 0; i < vertices.length; i += 1) {
+            const a = vertices[i];
+            const b = vertices[(i + 1) % vertices.length];
+            const projected = refProjectPointToSegment(point, a, b);
+            const dx = projected.x - point.x;
+            const dy = projected.y - point.y;
+            const dist = dx * dx + dy * dy;
+            if (dist < bestDist) {
+                best = projected;
+                bestDist = dist;
+            }
+        }
+        return best;
+    }
+
     function refShapeTextBox(spec, kind) {
         if (kind === "header_container") {
             const headerH = Math.max(18, Math.min(36, Math.round(spec.h * 0.22)));
             return { x: spec.x + 8, y: spec.y + 2, width: Math.max(24, spec.w - 16), height: Math.max(14, headerH - 4) };
         }
         if (kind === "component_group") {
-            return { x: spec.x + 8, y: spec.y + 2, width: Math.max(24, spec.w - 16), height: 14 };
+            const titleHeight = Math.max(14, Math.min(28, Math.round(spec.h * 0.24)));
+            return { x: spec.x + 8, y: spec.y + 2, width: Math.max(24, spec.w - 16), height: Math.max(14, titleHeight - 4) };
         }
         if (kind === "circle" || kind === "oval") {
-            return { x: spec.x + 12, y: spec.y + 10, width: Math.max(20, spec.w - 24), height: Math.max(20, spec.h - 20) };
+            return refInsetTextBox(spec, { left: 0.18, right: 0.18, top: 0.14, bottom: 0.14, minX: 7, maxX: 24, minY: 6, maxY: 18 }, { width: 20, height: 20 });
+        }
+        if (kind === "cylinder") {
+            return refInsetTextBox(spec, { left: 0.14, right: 0.14, top: 0.2, bottom: 0.14, minX: 8, maxX: 22, minY: 8, maxY: 22 }, { width: 22, height: 22 });
         }
         if (kind === "triangle") {
-            return { x: spec.x + 12, y: spec.y + 14, width: Math.max(20, spec.w - 24), height: Math.max(20, spec.h - 24) };
+            return refInsetTextBox(spec, { left: 0.16, right: 0.16, top: 0.24, bottom: 0.18, minX: 8, maxX: 24, minY: 7, maxY: 22 }, { width: 20, height: 20 });
         }
-        return { x: spec.x + 10, y: spec.y + 8, width: Math.max(20, spec.w - 20), height: Math.max(20, spec.h - 16) };
+        if (kind === "diamond" || kind === "pentagon" || kind === "hexagon" || kind === "octagon") {
+            return refInsetTextBox(spec, { left: 0.18, right: 0.18, top: 0.16, bottom: 0.16, minX: 8, maxX: 24, minY: 7, maxY: 20 }, { width: 22, height: 22 });
+        }
+        if (kind === "cone") {
+            return refInsetTextBox(spec, { left: 0.18, right: 0.18, top: 0.14, bottom: 0.24, minX: 8, maxX: 24, minY: 8, maxY: 24 }, { width: 22, height: 24 });
+        }
+        if (kind === "cube" || kind === "cuboid" || kind === "hexagonal_prism") {
+            return refInsetTextBox(spec, { left: 0.18, right: 0.08, top: 0.16, bottom: 0.1, minX: 10, maxX: 26, minY: 8, maxY: 20 }, { width: 22, height: 20 });
+        }
+        if (kind === "cloud" || kind === "cloud_callout") {
+            return refInsetTextBox(spec, { left: 0.18, right: 0.18, top: 0.18, bottom: kind === "cloud_callout" ? 0.24 : 0.18, minX: 10, maxX: 28, minY: 9, maxY: 24 }, { width: 26, height: 24 });
+        }
+        if (kind === "actor") {
+            return { x: spec.x + 8, y: spec.y + spec.h * 0.48, width: Math.max(18, spec.w - 16), height: Math.max(20, spec.h * 0.42) };
+        }
+        if (kind === "note") {
+            return { x: spec.x + 10, y: spec.y + 10, width: Math.max(18, spec.w - 24), height: Math.max(18, spec.h - 20) };
+        }
+        return refInsetTextBox(spec, { left: 0.08, right: 0.08, top: 0.08, bottom: 0.08, minX: 6, maxX: 18, minY: 5, maxY: 16 }, { width: 20, height: 20 });
     }
 
     function refRenderRichTextBlock(g, spec, kind) {
@@ -2531,51 +2715,211 @@ def write_html_animation(
         const borderWidth = Math.max(0.5, Math.min(12, Number(spec.borderWidth) || (isContainer ? 1.8 : 1.5)));
         const separatorWidth = Math.max(1, borderWidth * 0.62);
         const minorSeparatorWidth = Math.max(1, borderWidth * 0.56);
-        const rounded = (spec.rounded === false) ? 0 : 7;
+        const rounded = refShapeCornerRadius(spec, shapeKind);
         const borderStyle = String(spec.borderStyle || "solid").toLowerCase() === "dashed" ? "dashed" : "solid";
         const dash = borderStyle === "dashed" ? "7 4" : "";
 
-        if (shapeKind === "triangle") {
-            const points = [
-                `${spec.x + spec.w / 2},${spec.y}`,
-                `${spec.x + spec.w},${spec.y + spec.h}`,
-                `${spec.x},${spec.y + spec.h}`
-            ].join(" ");
-            const polygon = createSvgEl("polygon", { points });
-            polygon.setAttribute("fill", fill);
-            polygon.setAttribute("stroke", stroke);
-            polygon.setAttribute("stroke-width", String(borderWidth));
-            if (dash) polygon.setAttribute("stroke-dasharray", dash);
-            polygon.setAttribute("data-base-stroke", stroke);
-            polygon.setAttribute("data-base-stroke-width", String(borderWidth));
-            g.appendChild(polygon);
+        function appendShapeEl(tag, attrs, fillOverride) {
+            const el = createSvgEl(tag, attrs);
+            el.setAttribute("fill", fillOverride !== undefined ? fillOverride : fill);
+            el.setAttribute("stroke", stroke);
+            el.setAttribute("stroke-width", String(borderWidth));
+            if (dash) el.setAttribute("stroke-dasharray", dash);
+            el.setAttribute("data-base-stroke", stroke);
+            el.setAttribute("data-base-stroke-width", String(borderWidth));
+            g.appendChild(el);
+            return el;
+        }
+
+        function appendPathShape(d, fillOverride) {
+            return appendShapeEl("path", { d }, fillOverride);
+        }
+
+        function appendPolygonShape(points, fillOverride) {
+            if (rounded > 0 && refShapeSupportsRounding(shapeKind)) {
+                return appendPathShape(refRoundedPolygonPath(points, rounded), fillOverride);
+            }
+            return appendShapeEl("polygon", { points: points.map(refPointStr).join(" ") }, fillOverride);
+        }
+
+        if (["triangle", "diamond", "parallelogram", "trapezoid", "pentagon", "hexagon", "octagon", "message", "card", "note"].includes(shapeKind)) {
+            const points = refPolygonVertices(spec, shapeKind);
+            appendPolygonShape(points);
+            if (shapeKind === "note") {
+                const foldW = spec.w * 0.2;
+                const foldH = spec.h * 0.2;
+                const foldV = createSvgEl("line", {
+                    x1: spec.x + spec.w * 0.8,
+                    y1: spec.y,
+                    x2: spec.x + spec.w * 0.8,
+                    y2: spec.y + foldH
+                });
+                foldV.setAttribute("stroke", stroke);
+                foldV.setAttribute("stroke-width", String(minorSeparatorWidth));
+                if (dash) foldV.setAttribute("stroke-dasharray", dash);
+                g.appendChild(foldV);
+                const foldHLine = createSvgEl("line", {
+                    x1: spec.x + spec.w * 0.8,
+                    y1: spec.y + foldH,
+                    x2: spec.x + spec.w,
+                    y2: spec.y + foldH
+                });
+                foldHLine.setAttribute("stroke", stroke);
+                foldHLine.setAttribute("stroke-width", String(minorSeparatorWidth));
+                if (dash) foldHLine.setAttribute("stroke-dasharray", dash);
+                g.appendChild(foldHLine);
+            } else if (shapeKind === "card") {
+                const notch = createSvgEl("line", {
+                    x1: spec.x,
+                    y1: spec.y + spec.h * 0.16,
+                    x2: spec.x + spec.w * 0.16,
+                    y2: spec.y
+                });
+                notch.setAttribute("stroke", stroke);
+                notch.setAttribute("stroke-width", String(minorSeparatorWidth));
+                if (dash) notch.setAttribute("stroke-dasharray", dash);
+                g.appendChild(notch);
+            }
         } else if (shapeKind === "circle" || shapeKind === "oval") {
-            const ellipse = createSvgEl("ellipse", {
+            appendShapeEl("ellipse", {
                 cx: spec.x + spec.w / 2,
                 cy: spec.y + spec.h / 2,
                 rx: spec.w / 2,
                 ry: spec.h / 2
             });
-            ellipse.setAttribute("fill", fill);
-            ellipse.setAttribute("stroke", stroke);
-            ellipse.setAttribute("stroke-width", String(borderWidth));
-            if (dash) ellipse.setAttribute("stroke-dasharray", dash);
-            ellipse.setAttribute("data-base-stroke", stroke);
-            ellipse.setAttribute("data-base-stroke-width", String(borderWidth));
-            g.appendChild(ellipse);
+        } else if (shapeKind === "cylinder") {
+            const rx = spec.w / 2;
+            const ry = Math.max(8, Math.min(16, spec.h * 0.12));
+            const topCy = spec.y + ry + 2;
+            const bottomCy = spec.y + spec.h - ry - 2;
+            g.appendChild(createSvgEl("rect", {
+                x: spec.x,
+                y: topCy,
+                width: spec.w,
+                height: Math.max(8, bottomCy - topCy),
+                fill: fill,
+                stroke: "none"
+            }));
+            appendShapeEl("ellipse", { cx: spec.x + rx, cy: topCy, rx, ry });
+            const bottom = createSvgEl("ellipse", { cx: spec.x + rx, cy: bottomCy, rx, ry });
+            bottom.setAttribute("fill", "none");
+            bottom.setAttribute("stroke", stroke);
+            bottom.setAttribute("stroke-width", String(borderWidth));
+            if (dash) bottom.setAttribute("stroke-dasharray", dash);
+            g.appendChild(bottom);
+            ["left", "right"].forEach((side) => {
+                const x = side === "left" ? spec.x : (spec.x + spec.w);
+                const line = createSvgEl("line", { x1: x, y1: topCy, x2: x, y2: bottomCy });
+                line.setAttribute("stroke", stroke);
+                line.setAttribute("stroke-width", String(borderWidth));
+                if (dash) line.setAttribute("stroke-dasharray", dash);
+                g.appendChild(line);
+            });
+        } else if (shapeKind === "cone") {
+            const rx = spec.w * 0.32;
+            const ry = Math.max(8, Math.min(14, spec.h * 0.11));
+            const cx = spec.x + spec.w / 2;
+            const apexY = spec.y + 4;
+            const baseCy = spec.y + spec.h - ry - 2;
+            appendPathShape([
+                `M ${cx} ${apexY}`,
+                `L ${cx + rx} ${baseCy}`,
+                `A ${rx} ${ry} 0 1 1 ${cx - rx} ${baseCy}`,
+                "Z"
+            ].join(" "));
+            const base = createSvgEl("ellipse", { cx, cy: baseCy, rx, ry });
+            base.setAttribute("fill", "none");
+            base.setAttribute("stroke", stroke);
+            base.setAttribute("stroke-width", String(minorSeparatorWidth));
+            if (dash) base.setAttribute("stroke-dasharray", dash);
+            g.appendChild(base);
+        } else if (shapeKind === "cube" || shapeKind === "cuboid") {
+            const offX = Math.min(spec.w * (shapeKind === "cube" ? 0.22 : 0.26), 26);
+            const offY = Math.min(spec.h * 0.18, 18);
+            appendShapeEl("rect", {
+                x: spec.x,
+                y: spec.y,
+                width: Math.max(10, spec.w - offX),
+                height: Math.max(10, spec.h - offY),
+                rx: 0,
+                ry: 0
+            }, refDarkenHex(fill, -16));
+            [
+                [spec.x, spec.y, spec.x + offX, spec.y + offY],
+                [spec.x + spec.w - offX, spec.y, spec.x + spec.w, spec.y + offY],
+                [spec.x + spec.w - offX, spec.y + spec.h - offY, spec.x + spec.w, spec.y + spec.h]
+            ].forEach(([x1, y1, x2, y2]) => {
+                const line = createSvgEl("line", { x1, y1, x2, y2 });
+                line.setAttribute("stroke", stroke);
+                line.setAttribute("stroke-width", String(minorSeparatorWidth));
+                if (dash) line.setAttribute("stroke-dasharray", dash);
+                g.appendChild(line);
+            });
+            appendShapeEl("rect", {
+                x: spec.x + offX,
+                y: spec.y + offY,
+                width: Math.max(10, spec.w - offX),
+                height: Math.max(10, spec.h - offY),
+                rx: 0,
+                ry: 0
+            });
+        } else if (shapeKind === "hexagonal_prism") {
+            const back = refPolygonVertices({ x: spec.x, y: spec.y, w: spec.w - 18, h: spec.h - 12 }, "hexagon");
+            const front = refPolygonVertices({ x: spec.x + 18, y: spec.y + 12, w: spec.w - 18, h: spec.h - 12 }, "hexagon");
+            appendPolygonShape(back, refDarkenHex(fill, -14));
+            [0, 1, 2, 5].forEach((idx) => {
+                const line = createSvgEl("line", { x1: back[idx].x, y1: back[idx].y, x2: front[idx].x, y2: front[idx].y });
+                line.setAttribute("stroke", stroke);
+                line.setAttribute("stroke-width", String(minorSeparatorWidth));
+                if (dash) line.setAttribute("stroke-dasharray", dash);
+                g.appendChild(line);
+            });
+            appendPolygonShape(front);
+        } else if (shapeKind === "and") {
+            appendPathShape(`M ${spec.x} ${spec.y} L ${spec.x + spec.w * 0.56} ${spec.y} Q ${spec.x + spec.w} ${spec.y + spec.h / 2} ${spec.x + spec.w * 0.56} ${spec.y + spec.h} L ${spec.x} ${spec.y + spec.h} Z`);
+        } else if (shapeKind === "or") {
+            appendPathShape(`M ${spec.x + spec.w * 0.1} ${spec.y} Q ${spec.x + spec.w * 0.62} ${spec.y} ${spec.x + spec.w} ${spec.y + spec.h / 2} Q ${spec.x + spec.w * 0.62} ${spec.y + spec.h} ${spec.x + spec.w * 0.1} ${spec.y + spec.h} Q ${spec.x + spec.w * 0.26} ${spec.y + spec.h / 2} ${spec.x + spec.w * 0.1} ${spec.y} Z`);
+        } else if (shapeKind === "actor") {
+            const headR = Math.min(spec.w * 0.16, spec.h * 0.12);
+            const cx = spec.x + spec.w / 2;
+            const headCy = spec.y + spec.h * 0.16;
+            appendShapeEl("circle", { cx, cy: headCy, r: headR });
+            [
+                [cx, headCy + headR, cx, spec.y + spec.h * 0.62],
+                [spec.x + spec.w * 0.24, spec.y + spec.h * 0.36, spec.x + spec.w * 0.76, spec.y + spec.h * 0.36],
+                [cx, spec.y + spec.h * 0.62, spec.x + spec.w * 0.26, spec.y + spec.h * 0.94],
+                [cx, spec.y + spec.h * 0.62, spec.x + spec.w * 0.74, spec.y + spec.h * 0.94]
+            ].forEach(([x1, y1, x2, y2]) => {
+                const line = createSvgEl("line", { x1, y1, x2, y2 });
+                line.setAttribute("stroke", stroke);
+                line.setAttribute("stroke-width", String(borderWidth));
+                if (dash) line.setAttribute("stroke-dasharray", dash);
+                g.appendChild(line);
+            });
+        } else if (shapeKind === "cloud" || shapeKind === "cloud_callout") {
+            appendPathShape([
+                `M ${spec.x + spec.w * 0.2} ${spec.y + spec.h * 0.68}`,
+                `C ${spec.x + spec.w * 0.04} ${spec.y + spec.h * 0.68} ${spec.x + spec.w * 0.04} ${spec.y + spec.h * 0.46} ${spec.x + spec.w * 0.18} ${spec.y + spec.h * 0.44}`,
+                `C ${spec.x + spec.w * 0.12} ${spec.y + spec.h * 0.2} ${spec.x + spec.w * 0.34} ${spec.y + spec.h * 0.12} ${spec.x + spec.w * 0.46} ${spec.y + spec.h * 0.24}`,
+                `C ${spec.x + spec.w * 0.52} ${spec.y + spec.h * 0.04} ${spec.x + spec.w * 0.8} ${spec.y + spec.h * 0.08} ${spec.x + spec.w * 0.84} ${spec.y + spec.h * 0.28}`,
+                `C ${spec.x + spec.w * 0.98} ${spec.y + spec.h * 0.3} ${spec.x + spec.w} ${spec.y + spec.h * 0.58} ${spec.x + spec.w * 0.82} ${spec.y + spec.h * 0.64}`,
+                `C ${spec.x + spec.w * 0.8} ${spec.y + spec.h * 0.84} ${spec.x + spec.w * 0.56} ${spec.y + spec.h * 0.9} ${spec.x + spec.w * 0.44} ${spec.y + spec.h * 0.78}`,
+                `C ${spec.x + spec.w * 0.3} ${spec.y + spec.h * 0.9} ${spec.x + spec.w * 0.12} ${spec.y + spec.h * 0.84} ${spec.x + spec.w * 0.2} ${spec.y + spec.h * 0.68}`,
+                "Z"
+            ].join(" "));
+            if (shapeKind === "cloud_callout") {
+                appendPolygonShape([
+                    { x: spec.x + spec.w * 0.28, y: spec.y + spec.h * 0.82 },
+                    { x: spec.x + spec.w * 0.18, y: spec.y + spec.h },
+                    { x: spec.x + spec.w * 0.4, y: spec.y + spec.h * 0.86 }
+                ]);
+            }
         } else if (shapeKind === "header_container") {
             const headerH = Math.max(18, Math.min(36, Math.round(spec.h * 0.22)));
-            const rect = createSvgEl("rect", {
+            appendShapeEl("rect", {
                 x: spec.x, y: spec.y, width: spec.w, height: spec.h,
                 rx: rounded, ry: rounded
             });
-            rect.setAttribute("fill", fill);
-            rect.setAttribute("stroke", stroke);
-            rect.setAttribute("stroke-width", String(borderWidth));
-            if (dash) rect.setAttribute("stroke-dasharray", dash);
-            rect.setAttribute("data-base-stroke", stroke);
-            rect.setAttribute("data-base-stroke-width", String(borderWidth));
-            g.appendChild(rect);
             g.appendChild(createSvgEl("rect", {
                 x: spec.x + 1,
                 y: spec.y + 1,
@@ -2710,33 +3054,32 @@ def write_html_animation(
                 }
             }
         } else {
-            const rect = createSvgEl("rect", {
+            appendShapeEl("rect", {
                 x: spec.x, y: spec.y, width: spec.w, height: spec.h,
                 rx: rounded, ry: rounded
             });
-            rect.setAttribute("fill", fill);
-            rect.setAttribute("stroke", stroke);
-            rect.setAttribute("stroke-width", String(borderWidth));
-            if (dash) rect.setAttribute("stroke-dasharray", dash);
-            rect.setAttribute("data-base-stroke", stroke);
-            rect.setAttribute("data-base-stroke-width", String(borderWidth));
-            g.appendChild(rect);
         }
 
         refRenderRichTextBlock(g, spec, shapeKind);
 
         svg.appendChild(g);
-        registerRefInteractiveNode(g, spec.id, spec.x, spec.y, spec.w, spec.h);
+        registerRefInteractiveNode(g, spec.id, spec.x, spec.y, spec.w, spec.h, { kind: shapeKind });
         return g;
     }
 
+    function normalizeRefConnectionType(raw, fallback = "directional_connector") {
+        const value = String(raw || "").toLowerCase();
+        if (value === "arrow") return "directional_connector";
+        if (value === "bi") return "bidirectional_connector";
+        if (value === "directional_connector" || value === "bidirectional_connector" || value === "line") return value;
+        return fallback;
+    }
+
     function addRefArrow(svg, from, to, opts = {}) {
-        const connectionTypeRaw = String(opts.connectionType || "").toLowerCase();
-        const connectionType = (
-            connectionTypeRaw === "arrow" ||
-            connectionTypeRaw === "bi" ||
-            connectionTypeRaw === "line"
-        ) ? connectionTypeRaw : "arrow";
+        const connectionType = normalizeRefConnectionType(
+            opts.connectionType,
+            opts.arrowHead === false ? "line" : "directional_connector"
+        );
 
         const path = createSvgEl("path", {
             d: opts.d || `M ${from.x} ${from.y} L ${to.x} ${to.y}`,
@@ -2744,7 +3087,7 @@ def write_html_animation(
         });
         if (opts.color) path.setAttribute("stroke", opts.color);
         if (opts.width) path.setAttribute("stroke-width", String(opts.width));
-        if (connectionType === "bi") {
+        if (connectionType === "bidirectional_connector") {
             path.setAttribute("marker-start", "url(#ref-arrow-head)");
             path.setAttribute("marker-end", "url(#ref-arrow-head)");
         } else if (connectionType === "line") {
@@ -2930,11 +3273,15 @@ def write_html_animation(
             return { x: b.anchors[side].x + dx, y: b.anchors[side].y + dy };
         }
         const kind = String(b.kind || "");
+        const x0 = b.x;
+        const y0 = b.y;
+        const w = b.w;
+        const h = b.h;
+        const cx = x0 + w / 2;
+        const cy = y0 + h / 2;
         if (kind === "circle" || kind === "oval") {
-            const cx = b.x + b.w / 2;
-            const cy = b.y + b.h / 2;
-            const rx = Math.max(0.01, b.w / 2);
-            const ry = Math.max(0.01, b.h / 2);
+            const rx = Math.max(0.01, w / 2);
+            const ry = Math.max(0.01, h / 2);
             if (side === "left" || side === "right") {
                 const targetY = cy + dy;
                 const ny = (targetY - cy) / ry;
@@ -2948,46 +3295,50 @@ def write_html_animation(
             const y = cy + ((side === "top") ? -ry : ry) * k;
             return { x: targetX, y: y + dy };
         }
-        if (kind === "triangle") {
-            const cx = b.x + b.w / 2;
-            const top = { x: cx, y: b.y };
-            const bl = { x: b.x, y: b.y + b.h };
-            const br = { x: b.x + b.w, y: b.y + b.h };
-            const fracByY = Math.max(0, Math.min(1, (dy / Math.max(0.01, b.h)) + 0.5));
-            const fracByX = Math.max(0, Math.min(1, (dx / Math.max(0.01, b.w)) + 0.5));
-            if (side === "left") {
-                return {
-                    x: top.x + (bl.x - top.x) * fracByY,
-                    y: top.y + (bl.y - top.y) * fracByY
-                };
-            }
-            if (side === "right") {
-                return {
-                    x: top.x + (br.x - top.x) * fracByY,
-                    y: top.y + (br.y - top.y) * fracByY
-                };
-            }
-            if (side === "bottom") return { x: b.x + b.w * fracByX, y: b.y + b.h };
-            if (side === "top") {
-                if (fracByX <= 0.5) {
-                    const u = fracByX / 0.5;
-                    return {
-                        x: bl.x + (top.x - bl.x) * u,
-                        y: bl.y + (top.y - bl.y) * u
-                    };
-                }
-                const u = (fracByX - 0.5) / 0.5;
-                return {
-                    x: top.x + (br.x - top.x) * u,
-                    y: top.y + (br.y - top.y) * u
-                };
-            }
+        const polygon = refPolygonVertices({ x: x0, y: y0, w, h }, kind);
+        if (polygon) {
+            const target = side === "left"
+                ? { x: x0, y: cy + dy }
+                : side === "right"
+                    ? { x: x0 + w, y: cy + dy }
+                    : side === "top"
+                        ? { x: cx + dx, y: y0 }
+                        : { x: cx + dx, y: y0 + h };
+            const projected = refClosestPointOnPolygon(target, polygon);
+            if (projected) return projected;
         }
-        if (side === "left")   return { x: b.x, y: b.y + b.h / 2 + dy };
-        if (side === "right")  return { x: b.x + b.w, y: b.y + b.h / 2 + dy };
-        if (side === "top")    return { x: b.x + b.w / 2 + dx, y: b.y };
-        if (side === "bottom") return { x: b.x + b.w / 2 + dx, y: b.y + b.h };
-        return { x: b.x + b.w / 2 + dx, y: b.y + b.h / 2 + dy };
+        if (kind === "cylinder") {
+            const rx = Math.max(0.01, w / 2);
+            const ry = Math.max(8, Math.min(16, h * 0.12));
+            const topCy = y0 + ry + 2;
+            const bottomCy = y0 + h - ry - 2;
+            if (side === "left") return { x: x0, y: cy + dy };
+            if (side === "right") return { x: x0 + w, y: cy + dy };
+            const targetX = cx + dx;
+            const nx = (targetX - cx) / rx;
+            const k = Math.sqrt(Math.max(0, 1 - nx * nx));
+            const targetCy = side === "top" ? topCy : bottomCy;
+            return { x: targetX, y: targetCy + (side === "top" ? -ry : ry) * k };
+        }
+        if (kind === "cloud" || kind === "cloud_callout") {
+            const rx = Math.max(0.01, w / 2);
+            const ry = Math.max(0.01, h * 0.42);
+            if (side === "left" || side === "right") {
+                const targetY = cy + dy;
+                const ny = (targetY - cy) / ry;
+                const k = Math.sqrt(Math.max(0, 1 - ny * ny));
+                return { x: cx + ((side === "left") ? -rx : rx) * k, y: targetY };
+            }
+            const targetX = cx + dx;
+            const nx = (targetX - cx) / rx;
+            const k = Math.sqrt(Math.max(0, 1 - nx * nx));
+            return { x: targetX, y: cy + ((side === "top") ? -ry : ry) * k };
+        }
+        if (side === "left")   return { x: x0, y: cy + dy };
+        if (side === "right")  return { x: x0 + w, y: cy + dy };
+        if (side === "top")    return { x: cx + dx, y: y0 };
+        if (side === "bottom") return { x: cx + dx, y: y0 + h };
+        return { x: cx + dx, y: cy + dy };
     }
 
     function canonicalRefBorderSide(side) {
@@ -3336,12 +3687,10 @@ def write_html_animation(
         const toSide = canonicalRefBorderSide(toRawSide) || "left";
         const a = refAnchor(fromSpec.id, fromSpec.side || "right", fromSpec.dx || 0, fromSpec.dy || 0);
         const b = refAnchor(toSpec.id, toSpec.side || "left", toSpec.dx || 0, toSpec.dy || 0);
-        const connRaw = String(opts.connectionType || "").toLowerCase();
-        const connectionType = (
-            connRaw === "arrow" ||
-            connRaw === "bi" ||
-            connRaw === "line"
-        ) ? connRaw : ((opts.arrowHead === false) ? "line" : "arrow");
+        const connectionType = normalizeRefConnectionType(
+            opts.connectionType,
+            (opts.arrowHead === false) ? "line" : "directional_connector"
+        );
         try {
             const impliedRouting = (opts.mode === "curve") ? "curved" : opts.mode;
             const routingRaw = String(opts.routing || impliedRouting || "angled").toLowerCase();

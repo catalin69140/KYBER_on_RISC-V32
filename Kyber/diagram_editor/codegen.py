@@ -104,7 +104,7 @@ def _build_codegen_payload(model: Dict[str, Any]) -> Tuple[List[Dict[str, Any]],
         opts: Dict[str, Any] = {
             "routing": arrow.get("routing", "angled"),
             "dashed": arrow.get("lineStyle", "solid") == "dashed",
-            "connectionType": arrow.get("connectionType", "arrow"),
+            "connectionType": arrow.get("connectionType", "directional_connector"),
             "color": arrow.get("stroke", "#e8efff"),
             "width": _fmt_num(arrow.get("width", 1.7)),
         }

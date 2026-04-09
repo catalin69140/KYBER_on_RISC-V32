@@ -49,10 +49,29 @@ ID_MULTI_UNDERSCORE = re.compile(r"_+")
 
 VALID_SHAPE_KINDS = {
     "square",
+    "cube",
     "rectangle",
+    "cuboid",
     "triangle",
+    "cone",
+    "diamond",
+    "parallelogram",
+    "trapezoid",
+    "pentagon",
+    "hexagon",
+    "octagon",
     "circle",
     "oval",
+    "cylinder",
+    "hexagonal_prism",
+    "and",
+    "or",
+    "message",
+    "actor",
+    "cloud",
+    "cloud_callout",
+    "card",
+    "note",
     "container",
     "header_container",
     "component_group",
@@ -64,7 +83,7 @@ VALID_LINE_STYLES = {"solid", "dashed"}
 VALID_BORDER_STYLES = {"solid", "dashed"}
 VALID_TEXT_ALIGN = {"left", "center", "right"}
 VALID_TEXT_V_ALIGN = {"top", "center", "bottom"}
-VALID_CONNECTION_TYPES = {"arrow", "bi", "line"}
+VALID_CONNECTION_TYPES = {"directional_connector", "bidirectional_connector", "line"}
 
 
 def sanitize_id(value: Any) -> str:
@@ -88,14 +107,52 @@ def derive_default_shape_id(text: str, container_text: Optional[str] = None) -> 
 def _default_shape_text(kind: str) -> str:
     if kind == "square":
         return "Square"
+    if kind == "cube":
+        return "Cube"
     if kind == "rectangle":
         return "Rectangle"
+    if kind == "cuboid":
+        return "Cuboid"
     if kind == "triangle":
         return "Triangle"
+    if kind == "cone":
+        return "Cone"
+    if kind == "diamond":
+        return "Diamond"
+    if kind == "parallelogram":
+        return "Parallelogram"
+    if kind == "trapezoid":
+        return "Trapezoid"
+    if kind == "pentagon":
+        return "Pentagon"
+    if kind == "hexagon":
+        return "Hexagon"
+    if kind == "octagon":
+        return "Octagon"
     if kind == "circle":
         return "Circle"
     if kind == "oval":
         return "Oval"
+    if kind == "cylinder":
+        return "Cylinder"
+    if kind == "hexagonal_prism":
+        return "Hexagonal Prism"
+    if kind == "and":
+        return "And"
+    if kind == "or":
+        return "Or"
+    if kind == "message":
+        return "Message"
+    if kind == "actor":
+        return "Actor"
+    if kind == "cloud":
+        return "Cloud"
+    if kind == "cloud_callout":
+        return "Cloud Callout"
+    if kind == "card":
+        return "Card"
+    if kind == "note":
+        return "Note"
     if kind == "container":
         return "Container"
     if kind == "header_container":
@@ -107,15 +164,53 @@ def _default_shape_text(kind: str) -> str:
 
 def _default_shape_size(kind: str) -> Tuple[float, float]:
     if kind == "square":
-        return 48.0, 48.0
+        return 48.0, 50.0
+    if kind == "cube":
+        return 78.0, 66.0
     if kind == "rectangle":
-        return 100.0, 48.0
+        return 100.0, 50.0
+    if kind == "cuboid":
+        return 110.0, 72.0
     if kind == "triangle":
         return 90.0, 60.0
+    if kind == "cone":
+        return 88.0, 92.0
+    if kind == "diamond":
+        return 96.0, 64.0
+    if kind == "parallelogram":
+        return 104.0, 58.0
+    if kind == "trapezoid":
+        return 104.0, 60.0
+    if kind == "pentagon":
+        return 94.0, 76.0
+    if kind == "hexagon":
+        return 108.0, 66.0
+    if kind == "octagon":
+        return 108.0, 70.0
     if kind == "circle":
         return 60.0, 60.0
     if kind == "oval":
         return 100.0, 90.0
+    if kind == "cylinder":
+        return 108.0, 84.0
+    if kind == "hexagonal_prism":
+        return 116.0, 78.0
+    if kind == "and":
+        return 96.0, 62.0
+    if kind == "or":
+        return 102.0, 62.0
+    if kind == "message":
+        return 112.0, 66.0
+    if kind == "actor":
+        return 86.0, 116.0
+    if kind == "cloud":
+        return 124.0, 76.0
+    if kind == "cloud_callout":
+        return 132.0, 88.0
+    if kind == "card":
+        return 108.0, 68.0
+    if kind == "note":
+        return 108.0, 76.0
     if kind in VALID_CONTAINER_KINDS:
         return 240.0, 200.0
     if kind == "component_group":
@@ -212,6 +307,10 @@ def _as_text_v_align(value: Any) -> str:
 
 def _as_connection_type(value: Any, fallback_arrow_head: Any = None) -> str:
     conn = str(value or "").strip().lower()
+    if conn == "arrow":
+        return "directional_connector"
+    if conn == "bi":
+        return "bidirectional_connector"
     if conn in VALID_CONNECTION_TYPES:
         return conn
     # Legacy compatibility:
@@ -219,7 +318,7 @@ def _as_connection_type(value: Any, fallback_arrow_head: Any = None) -> str:
     # - otherwise default to single arrow.
     if fallback_arrow_head is False:
         return "line"
-    return "arrow"
+    return "directional_connector"
 
 
 def _as_component_direction(value: Any) -> str:

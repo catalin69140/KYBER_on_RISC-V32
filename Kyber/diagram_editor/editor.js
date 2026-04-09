@@ -26,11 +26,30 @@
   ];
   const FONT_FAMILY_VALUES = new Set(FONT_FAMILY_OPTIONS.map((option) => option.value));
   const DEFAULT_SHAPE_SIZES = {
-    square: { width: 48, height: 48 },
-    rectangle: { width: 100, height: 48 },
+    square: { width: 48, height: 50 },
+    cube: { width: 78, height: 66 },
+    rectangle: { width: 100, height: 50 },
+    cuboid: { width: 110, height: 72 },
     triangle: { width: 90, height: 60 },
+    cone: { width: 88, height: 92 },
+    diamond: { width: 96, height: 64 },
+    parallelogram: { width: 104, height: 58 },
+    trapezoid: { width: 104, height: 60 },
+    pentagon: { width: 94, height: 76 },
+    hexagon: { width: 108, height: 66 },
+    octagon: { width: 108, height: 70 },
     circle: { width: 60, height: 60 },
     oval: { width: 100, height: 90 },
+    cylinder: { width: 108, height: 84 },
+    hexagonal_prism: { width: 116, height: 78 },
+    and: { width: 96, height: 62 },
+    or: { width: 102, height: 62 },
+    message: { width: 112, height: 66 },
+    actor: { width: 86, height: 116 },
+    cloud: { width: 124, height: 76 },
+    cloud_callout: { width: 132, height: 88 },
+    card: { width: 108, height: 68 },
+    note: { width: 108, height: 76 },
     container: { width: 240, height: 200 },
     header_container: { width: 240, height: 200 },
     component_group: { width: 200, height: 70 },
@@ -52,19 +71,69 @@
   const HTML_NS = "http://www.w3.org/1999/xhtml";
 
   const CONNECT_MODES = {
-    connect_arrow: "arrow",
-    connect_bi: "bi",
+    connect_directional_connector: "directional_connector",
+    connect_bidirectional_connector: "bidirectional_connector",
     connect_line: "line",
   };
   const TEXT_FORMAT_KEYS = ["bold", "italic", "underline", "overline", "subscript", "superscript"];
+  const SHAPE_TOOL_DEFS = [
+    { kind: "square", label: "Square" },
+    { kind: "cube", label: "Cube" },
+    { kind: "rectangle", label: "Rectangle" },
+    { kind: "cuboid", label: "Cuboid" },
+    { kind: "triangle", label: "Triangle" },
+    { kind: "cone", label: "Cone" },
+    { kind: "diamond", label: "Diamond" },
+    { kind: "parallelogram", label: "Parallelogram" },
+    { kind: "trapezoid", label: "Trapezoid" },
+    { kind: "pentagon", label: "Pentagon" },
+    { kind: "hexagon", label: "Hexagon" },
+    { kind: "octagon", label: "Octagon" },
+    { kind: "circle", label: "Circle" },
+    { kind: "oval", label: "Oval" },
+    { kind: "cylinder", label: "Cylinder" },
+    { kind: "hexagonal_prism", label: "Hexagonal Prism" },
+    { kind: "and", label: "And" },
+    { kind: "or", label: "Or" },
+    { kind: "message", label: "Message" },
+    { kind: "actor", label: "Actor" },
+    { kind: "cloud", label: "Cloud" },
+    { kind: "cloud_callout", label: "Cloud Callout" },
+    { kind: "card", label: "Card" },
+    { kind: "note", label: "Note" },
+  ];
+  const CONNECTION_TOOL_DEFS = [
+    { mode: "connect_directional_connector", label: "Directional Connector" },
+    { mode: "connect_bidirectional_connector", label: "Bi-directional Connector" },
+    { mode: "connect_line", label: "Line" },
+  ];
 
   const CONTAINER_KINDS = new Set(["container", "header_container"]);
   const SHAPE_KINDS = new Set([
     "square",
+    "cube",
     "rectangle",
+    "cuboid",
     "triangle",
+    "cone",
+    "diamond",
+    "parallelogram",
+    "trapezoid",
+    "pentagon",
+    "hexagon",
+    "octagon",
     "circle",
     "oval",
+    "cylinder",
+    "hexagonal_prism",
+    "and",
+    "or",
+    "message",
+    "actor",
+    "cloud",
+    "cloud_callout",
+    "card",
+    "note",
     "container",
     "header_container",
     "component_group",
@@ -98,14 +167,8 @@
     saveBtn: document.getElementById("save-btn"),
     generateBtn: document.getElementById("generate-btn"),
     toolSelectBtn: document.getElementById("tool-select"),
-    toolConnectArrowBtn: document.getElementById("tool-connect-arrow"),
-    toolConnectBiBtn: document.getElementById("tool-connect-bi"),
-    toolConnectLineBtn: document.getElementById("tool-connect-line"),
-    addSquareBtn: document.getElementById("add-square-btn"),
-    addRectangleBtn: document.getElementById("add-rectangle-btn"),
-    addTriangleBtn: document.getElementById("add-triangle-btn"),
-    addCircleBtn: document.getElementById("add-circle-btn"),
-    addOvalBtn: document.getElementById("add-oval-btn"),
+    connectionToolsGrid: document.getElementById("connection-tools-grid"),
+    shapeToolsGrid: document.getElementById("shape-tools-grid"),
     addContainerStandardBtn: document.getElementById("add-container-standard-btn"),
     addContainerHeaderBtn: document.getElementById("add-container-header-btn"),
     addComponentGroupBtn: document.getElementById("add-component-group-btn"),
@@ -173,12 +236,31 @@
 
   function defaultShapeText(kind) {
     if (kind === "square") return "Square";
+    if (kind === "cube") return "Cube";
     if (kind === "rectangle") return "Rectangle";
+    if (kind === "cuboid") return "Cuboid";
     if (kind === "container") return "Container";
     if (kind === "header_container") return "Header";
     if (kind === "circle") return "Circle";
     if (kind === "oval") return "Oval";
     if (kind === "triangle") return "Triangle";
+    if (kind === "cone") return "Cone";
+    if (kind === "diamond") return "Diamond";
+    if (kind === "parallelogram") return "Parallelogram";
+    if (kind === "trapezoid") return "Trapezoid";
+    if (kind === "pentagon") return "Pentagon";
+    if (kind === "hexagon") return "Hexagon";
+    if (kind === "octagon") return "Octagon";
+    if (kind === "cylinder") return "Cylinder";
+    if (kind === "hexagonal_prism") return "Hexagonal Prism";
+    if (kind === "and") return "And";
+    if (kind === "or") return "Or";
+    if (kind === "message") return "Message";
+    if (kind === "actor") return "Actor";
+    if (kind === "cloud") return "Cloud";
+    if (kind === "cloud_callout") return "Cloud Callout";
+    if (kind === "card") return "Card";
+    if (kind === "note") return "Note";
     if (kind === "component_group") return "Group";
     return "Node";
   }
@@ -321,8 +403,34 @@
 
   function normalizeConnectionType(raw) {
     const t = String(raw || "").toLowerCase().trim();
-    if (t === "arrow" || t === "bi" || t === "line") return t;
-    return "arrow";
+    if (t === "arrow") return "directional_connector";
+    if (t === "bi") return "bidirectional_connector";
+    if (t === "directional_connector" || t === "bidirectional_connector" || t === "line") return t;
+    return "directional_connector";
+  }
+
+  function connectionTypeLabel(connectionType) {
+    const normalized = normalizeConnectionType(connectionType);
+    if (normalized === "bidirectional_connector") return "bi-directional connector";
+    if (normalized === "line") return "line";
+    return "directional connector";
+  }
+
+  function shapeSupportsRounding(kind) {
+    return (
+      kind === "square" ||
+      kind === "rectangle" ||
+      kind === "container" ||
+      kind === "header_container" ||
+      kind === "component_group" ||
+      kind === "triangle" ||
+      kind === "diamond" ||
+      kind === "parallelogram" ||
+      kind === "trapezoid" ||
+      kind === "pentagon" ||
+      kind === "hexagon" ||
+      kind === "octagon"
+    );
   }
 
   function normalizeBorderStyle(raw) {
@@ -479,7 +587,7 @@
       shape.borderStyle = normalizeBorderStyle(shape.borderStyle);
       shape.borderWidth = normalizeBorderWidth(shape.borderWidth, defaultBorderWidth(shape.kind));
       shape.textColor = normalizeColor(shape.textColor, "#f4f7ff");
-      shape.rounded = shape.rounded !== false;
+      shape.rounded = shapeSupportsRounding(shape.kind) ? shape.rounded !== false : false;
       shape.textAlign = normalizeTextAlign(shape.textAlign || "center");
       shape.textVAlign = normalizeTextVAlign(shape.textVAlign || "center");
       shape.fontSize = normalizeFontSize(shape.fontSize, 12);
@@ -1302,6 +1410,466 @@
     };
   }
 
+  function shapeCornerRadius(shape) {
+    if (!shapeSupportsRounding(shape.kind) || shape.rounded === false) return 0;
+    return Math.max(3, Math.min(14, Math.min(shape.width, shape.height) * 0.12));
+  }
+
+  function pointStr(point) {
+    return point.x + "," + point.y;
+  }
+
+  function lerpPoint(a, b, t) {
+    return {
+      x: a.x + (b.x - a.x) * t,
+      y: a.y + (b.y - a.y) * t,
+    };
+  }
+
+  function distanceBetweenPoints(a, b) {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  function normalizeVector(dx, dy) {
+    const len = Math.sqrt(dx * dx + dy * dy) || 1;
+    return { x: dx / len, y: dy / len };
+  }
+
+  function roundedPolygonPath(points, radius) {
+    if (!Array.isArray(points) || points.length < 3) return "";
+    const r = Math.max(0, Number(radius) || 0);
+    if (r <= 0.01) {
+      return "M " + points.map(pointStr).join(" L ") + " Z";
+    }
+    const d = [];
+    const len = points.length;
+    for (let i = 0; i < len; i += 1) {
+      const prev = points[(i - 1 + len) % len];
+      const curr = points[i];
+      const next = points[(i + 1) % len];
+      const prevDist = distanceBetweenPoints(prev, curr);
+      const nextDist = distanceBetweenPoints(curr, next);
+      const cornerRadius = Math.min(r, prevDist / 2, nextDist / 2);
+      const start = lerpPoint(curr, prev, cornerRadius / Math.max(0.001, prevDist));
+      const end = lerpPoint(curr, next, cornerRadius / Math.max(0.001, nextDist));
+      if (i === 0) {
+        d.push("M " + start.x + " " + start.y);
+      } else {
+        d.push("L " + start.x + " " + start.y);
+      }
+      d.push("Q " + curr.x + " " + curr.y + " " + end.x + " " + end.y);
+    }
+    d.push("Z");
+    return d.join(" ");
+  }
+
+  function polygonVerticesForShape(shape) {
+    const x = shape.x;
+    const y = shape.y;
+    const w = shape.width;
+    const h = shape.height;
+    const cx = x + w / 2;
+    const kind = shape.kind;
+    if (kind === "triangle") {
+      return [
+        { x: cx, y: y },
+        { x: x + w, y: y + h },
+        { x: x, y: y + h },
+      ];
+    }
+    if (kind === "diamond") {
+      return [
+        { x: cx, y: y },
+        { x: x + w, y: y + h / 2 },
+        { x: cx, y: y + h },
+        { x: x, y: y + h / 2 },
+      ];
+    }
+    if (kind === "parallelogram") {
+      return [
+        { x: x + w * 0.18, y: y },
+        { x: x + w, y: y },
+        { x: x + w * 0.82, y: y + h },
+        { x: x, y: y + h },
+      ];
+    }
+    if (kind === "trapezoid") {
+      return [
+        { x: x + w * 0.18, y: y },
+        { x: x + w * 0.82, y: y },
+        { x: x + w, y: y + h },
+        { x: x, y: y + h },
+      ];
+    }
+    if (kind === "pentagon") {
+      return [
+        { x: cx, y: y },
+        { x: x + w, y: y + h * 0.38 },
+        { x: x + w * 0.82, y: y + h },
+        { x: x + w * 0.18, y: y + h },
+        { x: x, y: y + h * 0.38 },
+      ];
+    }
+    if (kind === "hexagon" || kind === "hexagonal_prism") {
+      return [
+        { x: x + w * 0.18, y: y },
+        { x: x + w * 0.82, y: y },
+        { x: x + w, y: y + h / 2 },
+        { x: x + w * 0.82, y: y + h },
+        { x: x + w * 0.18, y: y + h },
+        { x: x, y: y + h / 2 },
+      ];
+    }
+    if (kind === "octagon") {
+      return [
+        { x: x + w * 0.22, y: y },
+        { x: x + w * 0.78, y: y },
+        { x: x + w, y: y + h * 0.22 },
+        { x: x + w, y: y + h * 0.78 },
+        { x: x + w * 0.78, y: y + h },
+        { x: x + w * 0.22, y: y + h },
+        { x: x, y: y + h * 0.78 },
+        { x: x, y: y + h * 0.22 },
+      ];
+    }
+    if (kind === "message") {
+      return [
+        { x: x, y: y },
+        { x: x + w, y: y },
+        { x: x + w, y: y + h * 0.76 },
+        { x: x + w * 0.42, y: y + h * 0.76 },
+        { x: x + w * 0.26, y: y + h },
+        { x: x + w * 0.3, y: y + h * 0.76 },
+        { x: x, y: y + h * 0.76 },
+      ];
+    }
+    if (kind === "card") {
+      return [
+        { x: x + w * 0.16, y: y },
+        { x: x + w, y: y },
+        { x: x + w, y: y + h },
+        { x: x, y: y + h },
+        { x: x, y: y + h * 0.16 },
+      ];
+    }
+    if (kind === "note") {
+      return [
+        { x: x, y: y },
+        { x: x + w * 0.8, y: y },
+        { x: x + w, y: y + h * 0.2 },
+        { x: x + w, y: y + h },
+        { x: x, y: y + h },
+      ];
+    }
+    if (kind === "cube" || kind === "cuboid") {
+      const offX = Math.min(w * 0.22, 24);
+      const offY = Math.min(h * 0.2, 20);
+      return [
+        { x: x + offX, y: y },
+        { x: x + w - offX * 0.2, y: y },
+        { x: x + w, y: y + offY },
+        { x: x + w, y: y + h },
+        { x: x + offX, y: y + h },
+        { x: x, y: y + h - offY },
+        { x: x, y: y + offY },
+      ];
+    }
+    return null;
+  }
+
+  function createToolIconRoot(label) {
+    const svg = createSvg("svg", {
+      viewBox: "0 0 48 48",
+      class: "tool-icon-svg",
+      "aria-hidden": "true",
+    });
+    svg.setAttribute("focusable", "false");
+    if (label) {
+      const title = createSvg("title");
+      title.textContent = label;
+      svg.appendChild(title);
+    }
+    return svg;
+  }
+
+  function appendToolIconEl(svg, tag, attrs) {
+    const el = createSvg(tag, attrs);
+    svg.appendChild(el);
+    return el;
+  }
+
+  function createShapeToolIcon(kind, label) {
+    const svg = createToolIconRoot(label);
+    const stroke = "#d8e6ff";
+    const fill = "rgba(128, 182, 255, 0.16)";
+    const dash = kind === "cloud_callout" ? "4 3" : "";
+    const baseShape = { kind: kind, x: 8, y: 10, width: 32, height: 24 };
+    const polygonKinds = new Set([
+      "triangle",
+      "diamond",
+      "parallelogram",
+      "trapezoid",
+      "pentagon",
+      "hexagon",
+      "octagon",
+      "message",
+      "card",
+      "note",
+    ]);
+
+    function addLine(x1, y1, x2, y2) {
+      const line = appendToolIconEl(svg, "line", { x1, y1, x2, y2, stroke, "stroke-width": 1.8, "stroke-linecap": "round" });
+      if (dash) line.setAttribute("stroke-dasharray", dash);
+      return line;
+    }
+
+    function addPath(d, fillOverride) {
+      const path = appendToolIconEl(svg, "path", { d, fill: fillOverride !== undefined ? fillOverride : fill, stroke, "stroke-width": 1.8, "stroke-linejoin": "round", "stroke-linecap": "round" });
+      if (dash) path.setAttribute("stroke-dasharray", dash);
+      return path;
+    }
+
+    function addPolygon(points, fillOverride) {
+      const polygon = appendToolIconEl(svg, "polygon", {
+        points: points.map(pointStr).join(" "),
+        fill: fillOverride !== undefined ? fillOverride : fill,
+        stroke,
+        "stroke-width": 1.8,
+        "stroke-linejoin": "round",
+      });
+      if (dash) polygon.setAttribute("stroke-dasharray", dash);
+      return polygon;
+    }
+
+    if (polygonKinds.has(kind)) {
+      addPolygon(polygonVerticesForShape(baseShape));
+      if (kind === "note") {
+        addLine(33.6, 10, 33.6, 14.8);
+        addLine(33.6, 14.8, 40, 14.8);
+      } else if (kind === "card") {
+        addLine(8, 13.8, 13.2, 10);
+      }
+      return svg;
+    }
+
+    if (kind === "square" || kind === "rectangle") {
+      const rect = appendToolIconEl(svg, "rect", {
+        x: kind === "square" ? 11 : 8,
+        y: 10,
+        width: kind === "square" ? 26 : 32,
+        height: 24,
+        rx: 4,
+        ry: 4,
+        fill,
+        stroke,
+        "stroke-width": 1.8,
+      });
+      if (dash) rect.setAttribute("stroke-dasharray", dash);
+      return svg;
+    }
+
+    if (kind === "cube" || kind === "cuboid") {
+      const offX = kind === "cube" ? 6 : 8;
+      const offY = 5;
+      const back = appendToolIconEl(svg, "rect", {
+        x: 10,
+        y: 8,
+        width: 22,
+        height: 18,
+        fill: "rgba(128, 182, 255, 0.08)",
+        stroke,
+        "stroke-width": 1.5,
+      });
+      const front = appendToolIconEl(svg, "rect", {
+        x: 10 + offX,
+        y: 8 + offY,
+        width: kind === "cube" ? 22 : 24,
+        height: 18,
+        fill,
+        stroke,
+        "stroke-width": 1.8,
+      });
+      if (dash) {
+        back.setAttribute("stroke-dasharray", dash);
+        front.setAttribute("stroke-dasharray", dash);
+      }
+      addLine(10, 8, 10 + offX, 8 + offY);
+      addLine(32, 8, 32 + offX, 8 + offY);
+      addLine(32, 26, 32 + offX, 26 + offY);
+      return svg;
+    }
+
+    if (kind === "circle" || kind === "oval") {
+      const ellipse = appendToolIconEl(svg, "ellipse", {
+        cx: 24,
+        cy: 22,
+        rx: kind === "circle" ? 13 : 16,
+        ry: kind === "circle" ? 13 : 11,
+        fill,
+        stroke,
+        "stroke-width": 1.8,
+      });
+      if (dash) ellipse.setAttribute("stroke-dasharray", dash);
+      return svg;
+    }
+
+    if (kind === "cylinder") {
+      const topY = 13;
+      const bottomY = 30;
+      appendToolIconEl(svg, "rect", { x: 10, y: topY, width: 28, height: bottomY - topY, fill, stroke: "none" });
+      const top = appendToolIconEl(svg, "ellipse", { cx: 24, cy: topY, rx: 14, ry: 5, fill, stroke, "stroke-width": 1.8 });
+      const bottom = appendToolIconEl(svg, "ellipse", { cx: 24, cy: bottomY, rx: 14, ry: 5, fill: "none", stroke, "stroke-width": 1.8 });
+      if (dash) {
+        top.setAttribute("stroke-dasharray", dash);
+        bottom.setAttribute("stroke-dasharray", dash);
+      }
+      addLine(10, topY, 10, bottomY);
+      addLine(38, topY, 38, bottomY);
+      return svg;
+    }
+
+    if (kind === "cone") {
+      addPath("M 24 9 L 36 30 A 12 4.8 0 1 1 12 30 Z");
+      const base = appendToolIconEl(svg, "ellipse", { cx: 24, cy: 30, rx: 12, ry: 4.8, fill: "none", stroke, "stroke-width": 1.3 });
+      if (dash) base.setAttribute("stroke-dasharray", dash);
+      return svg;
+    }
+
+    if (kind === "hexagonal_prism") {
+      const back = polygonVerticesForShape({ kind: "hexagon", x: 8, y: 9, width: 26, height: 20 });
+      const front = polygonVerticesForShape({ kind: "hexagon", x: 15, y: 15, width: 26, height: 20 });
+      addPolygon(back, "rgba(128, 182, 255, 0.08)");
+      addPolygon(front);
+      [0, 1, 2, 5].forEach((idx) => addLine(back[idx].x, back[idx].y, front[idx].x, front[idx].y));
+      return svg;
+    }
+
+    if (kind === "and") {
+      addPath("M 11 10 L 27 10 Q 39 22 27 34 L 11 34 Z");
+      return svg;
+    }
+
+    if (kind === "or") {
+      addPath("M 13 10 Q 28 10 38 22 Q 28 34 13 34 Q 19 22 13 10 Z");
+      return svg;
+    }
+
+    if (kind === "actor") {
+      const head = appendToolIconEl(svg, "circle", { cx: 24, cy: 11.5, r: 5, fill, stroke, "stroke-width": 1.8 });
+      if (dash) head.setAttribute("stroke-dasharray", dash);
+      addLine(24, 16.5, 24, 30);
+      addLine(15, 20.5, 33, 20.5);
+      addLine(24, 30, 16, 38);
+      addLine(24, 30, 32, 38);
+      return svg;
+    }
+
+    if (kind === "cloud" || kind === "cloud_callout") {
+      addPath("M 13 28 C 8 28 7 20 12 19 C 11 12 18 10 22 13 C 25 8 34 9 35 16 C 40 16 42 24 37 27 C 36 32 29 34 25 30 C 20 34 13 33 13 28 Z");
+      if (kind === "cloud_callout") {
+        addPolygon([{ x: 20, y: 29 }, { x: 16, y: 37 }, { x: 24, y: 31 }], fill);
+      }
+      return svg;
+    }
+
+    if (kind === "container" || kind === "header_container" || kind === "component_group") {
+      const rect = appendToolIconEl(svg, "rect", {
+        x: 7,
+        y: 8,
+        width: 34,
+        height: 28,
+        rx: 4,
+        ry: 4,
+        fill,
+        stroke,
+        "stroke-width": 1.8,
+      });
+      if (dash) rect.setAttribute("stroke-dasharray", dash);
+      if (kind !== "container") {
+        addLine(7, 15, 41, 15);
+      }
+      if (kind === "component_group") {
+        addLine(18.5, 15, 18.5, 36);
+        addLine(29.5, 15, 29.5, 36);
+      }
+      return svg;
+    }
+
+    const fallback = appendToolIconEl(svg, "rect", {
+      x: 8,
+      y: 10,
+      width: 32,
+      height: 24,
+      rx: 4,
+      ry: 4,
+      fill,
+      stroke,
+      "stroke-width": 1.8,
+    });
+    if (dash) fallback.setAttribute("stroke-dasharray", dash);
+    return svg;
+  }
+
+  function createConnectionToolIcon(connectionType, label) {
+    const svg = createToolIconRoot(label);
+    const stroke = "#d8e6ff";
+    const path = appendToolIconEl(svg, "path", {
+      d: "M 8 30 L 24 16 L 40 16",
+      fill: "none",
+      stroke,
+      "stroke-width": 2.1,
+      "stroke-linecap": "round",
+      "stroke-linejoin": "round",
+    });
+    if (connectionType === "line") return svg;
+    const endHead = appendToolIconEl(svg, "polygon", {
+      points: "34,12 40,16 34,20",
+      fill: stroke,
+      stroke: "none",
+    });
+    if (connectionType === "bidirectional_connector") {
+      appendToolIconEl(svg, "polygon", {
+        points: "14,26 8,30 14,34",
+        fill: stroke,
+        stroke: "none",
+      });
+    } else {
+      endHead.setAttribute("fill", stroke);
+    }
+    return svg;
+  }
+
+  function renderToolButtons() {
+    if (els.connectionToolsGrid) {
+      els.connectionToolsGrid.innerHTML = "";
+      CONNECTION_TOOL_DEFS.forEach((tool) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "tool-icon-button";
+        btn.dataset.mode = tool.mode;
+        btn.title = tool.label;
+        btn.setAttribute("aria-label", tool.label);
+        btn.appendChild(createConnectionToolIcon(CONNECT_MODES[tool.mode], tool.label));
+        els.connectionToolsGrid.appendChild(btn);
+      });
+    }
+    if (els.shapeToolsGrid) {
+      els.shapeToolsGrid.innerHTML = "";
+      SHAPE_TOOL_DEFS.forEach((tool) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "tool-icon-button";
+        btn.dataset.kind = tool.kind;
+        btn.title = tool.label;
+        btn.setAttribute("aria-label", tool.label);
+        btn.appendChild(createShapeToolIcon(tool.kind, tool.label));
+        els.shapeToolsGrid.appendChild(btn);
+      });
+    }
+  }
+
   function shapeTextBox(shape) {
     if (shape.kind === "header_container") {
       const headerH = Math.max(18, Math.min(36, Math.round(shape.height * 0.22)));
@@ -1337,6 +1905,18 @@
         maxY: 18,
       }, { width: 20, height: 20 });
     }
+    if (shape.kind === "cylinder") {
+      return insetTextBox(shape, {
+        left: 0.14,
+        right: 0.14,
+        top: 0.2,
+        bottom: 0.14,
+        minX: 8,
+        maxX: 22,
+        minY: 8,
+        maxY: 22,
+      }, { width: 22, height: 22 });
+    }
     if (shape.kind === "triangle") {
       return insetTextBox(shape, {
         left: 0.16,
@@ -1348,6 +1928,70 @@
         minY: 7,
         maxY: 22,
       }, { width: 20, height: 20 });
+    }
+    if (shape.kind === "diamond" || shape.kind === "pentagon" || shape.kind === "hexagon" || shape.kind === "octagon") {
+      return insetTextBox(shape, {
+        left: 0.18,
+        right: 0.18,
+        top: 0.16,
+        bottom: 0.16,
+        minX: 8,
+        maxX: 24,
+        minY: 7,
+        maxY: 20,
+      }, { width: 22, height: 22 });
+    }
+    if (shape.kind === "cone") {
+      return insetTextBox(shape, {
+        left: 0.18,
+        right: 0.18,
+        top: 0.14,
+        bottom: 0.24,
+        minX: 8,
+        maxX: 24,
+        minY: 8,
+        maxY: 24,
+      }, { width: 22, height: 24 });
+    }
+    if (shape.kind === "cube" || shape.kind === "cuboid" || shape.kind === "hexagonal_prism") {
+      return insetTextBox(shape, {
+        left: 0.18,
+        right: 0.08,
+        top: 0.16,
+        bottom: 0.1,
+        minX: 10,
+        maxX: 26,
+        minY: 8,
+        maxY: 20,
+      }, { width: 22, height: 20 });
+    }
+    if (shape.kind === "cloud" || shape.kind === "cloud_callout") {
+      return insetTextBox(shape, {
+        left: 0.18,
+        right: 0.18,
+        top: 0.18,
+        bottom: shape.kind === "cloud_callout" ? 0.24 : 0.18,
+        minX: 10,
+        maxX: 28,
+        minY: 9,
+        maxY: 24,
+      }, { width: 26, height: 24 });
+    }
+    if (shape.kind === "actor") {
+      return {
+        x: shape.x + 8,
+        y: shape.y + shape.height * 0.48,
+        width: Math.max(18, shape.width - 16),
+        height: Math.max(20, shape.height * 0.42),
+      };
+    }
+    if (shape.kind === "note") {
+      return {
+        x: shape.x + 10,
+        y: shape.y + 10,
+        width: Math.max(18, shape.width - 24),
+        height: Math.max(18, shape.height - 20),
+      };
     }
     return insetTextBox(shape, {
       left: 0.08,
@@ -1431,36 +2075,311 @@
     const dash = shape.borderStyle === "dashed" ? "7 4" : "";
     const separatorWidth = Math.max(1, strokeWidth * 0.62);
     const minorSeparatorWidth = Math.max(1, strokeWidth * 0.56);
+    const roundedRadius = shapeCornerRadius(shape);
     const commonStroke = {
       fill: shape.fill,
       stroke: strokeColor,
       "stroke-width": strokeWidth,
       "stroke-dasharray": dash,
     };
+    const kind = shape.kind;
 
-    if (shape.kind === "triangle") {
-      const points = [
-        (shape.x + shape.width / 2) + "," + shape.y,
-        (shape.x + shape.width) + "," + (shape.y + shape.height),
-        shape.x + "," + (shape.y + shape.height),
-      ].join(" ");
-      group.appendChild(createSvg("polygon", Object.assign({ points: points }, commonStroke)));
-    } else if (shape.kind === "circle" || shape.kind === "oval") {
+    function appendShapeEl(tag, attrs, fillOverride) {
+      const el = createSvg(tag, attrs);
+      el.setAttribute("fill", fillOverride !== undefined ? fillOverride : shape.fill);
+      el.setAttribute("stroke", strokeColor);
+      el.setAttribute("stroke-width", String(strokeWidth));
+      if (dash) el.setAttribute("stroke-dasharray", dash);
+      group.appendChild(el);
+      return el;
+    }
+
+    function appendPathShape(d, fillOverride) {
+      return appendShapeEl("path", { d: d }, fillOverride);
+    }
+
+    function appendPolygonShape(points, fillOverride) {
+      if (roundedRadius > 0 && shapeSupportsRounding(kind)) {
+        return appendPathShape(roundedPolygonPath(points, roundedRadius), fillOverride);
+      }
+      return appendShapeEl("polygon", { points: points.map(pointStr).join(" ") }, fillOverride);
+    }
+
+    if (kind === "triangle" || kind === "diamond" || kind === "parallelogram" || kind === "trapezoid" || kind === "pentagon" || kind === "hexagon" || kind === "octagon" || kind === "message" || kind === "card" || kind === "note") {
+      const points = polygonVerticesForShape(shape);
+      appendPolygonShape(points);
+      if (kind === "note") {
+        const foldW = shape.width * 0.2;
+        const foldH = shape.height * 0.2;
+        group.appendChild(createSvg("line", {
+          x1: shape.x + shape.width * 0.8,
+          y1: shape.y,
+          x2: shape.x + shape.width * 0.8,
+          y2: shape.y + foldH,
+          stroke: strokeColor,
+          "stroke-width": minorSeparatorWidth,
+          "stroke-dasharray": dash,
+        }));
+        group.appendChild(createSvg("line", {
+          x1: shape.x + shape.width * 0.8,
+          y1: shape.y + foldH,
+          x2: shape.x + shape.width,
+          y2: shape.y + foldH,
+          stroke: strokeColor,
+          "stroke-width": minorSeparatorWidth,
+          "stroke-dasharray": dash,
+        }));
+      } else if (kind === "card") {
+        group.appendChild(createSvg("line", {
+          x1: shape.x,
+          y1: shape.y + shape.height * 0.16,
+          x2: shape.x + shape.width * 0.16,
+          y2: shape.y,
+          stroke: strokeColor,
+          "stroke-width": minorSeparatorWidth,
+          "stroke-dasharray": dash,
+        }));
+      }
+    } else if (kind === "circle" || kind === "oval") {
       group.appendChild(createSvg("ellipse", Object.assign({
         cx: shape.x + shape.width / 2,
         cy: shape.y + shape.height / 2,
         rx: shape.width / 2,
         ry: shape.height / 2,
       }, commonStroke)));
-    } else if (shape.kind === "header_container") {
+    } else if (kind === "cylinder") {
+      const rx = shape.width / 2;
+      const ry = Math.max(8, Math.min(16, shape.height * 0.12));
+      const topCy = shape.y + ry + 2;
+      const bottomCy = shape.y + shape.height - ry - 2;
+      group.appendChild(createSvg("rect", {
+        x: shape.x,
+        y: topCy,
+        width: shape.width,
+        height: Math.max(8, bottomCy - topCy),
+        fill: shape.fill,
+        stroke: "none",
+      }));
+      appendShapeEl("ellipse", {
+        cx: shape.x + rx,
+        cy: topCy,
+        rx: rx,
+        ry: ry,
+      });
+      group.appendChild(createSvg("ellipse", {
+        cx: shape.x + rx,
+        cy: bottomCy,
+        rx: rx,
+        ry: ry,
+        fill: "none",
+        stroke: strokeColor,
+        "stroke-width": strokeWidth,
+        "stroke-dasharray": dash,
+      }));
+      group.appendChild(createSvg("line", {
+        x1: shape.x,
+        y1: topCy,
+        x2: shape.x,
+        y2: bottomCy,
+        stroke: strokeColor,
+        "stroke-width": strokeWidth,
+        "stroke-dasharray": dash,
+      }));
+      group.appendChild(createSvg("line", {
+        x1: shape.x + shape.width,
+        y1: topCy,
+        x2: shape.x + shape.width,
+        y2: bottomCy,
+        stroke: strokeColor,
+        "stroke-width": strokeWidth,
+        "stroke-dasharray": dash,
+      }));
+    } else if (kind === "cone") {
+      const rx = shape.width * 0.32;
+      const ry = Math.max(8, Math.min(14, shape.height * 0.11));
+      const cx = shape.x + shape.width / 2;
+      const apexY = shape.y + 4;
+      const baseCy = shape.y + shape.height - ry - 2;
+      const bodyPath = [
+        "M " + cx + " " + apexY,
+        "L " + (cx + rx) + " " + baseCy,
+        "A " + rx + " " + ry + " 0 1 1 " + (cx - rx) + " " + baseCy,
+        "Z",
+      ].join(" ");
+      appendPathShape(bodyPath);
+      group.appendChild(createSvg("ellipse", {
+        cx: cx,
+        cy: baseCy,
+        rx: rx,
+        ry: ry,
+        fill: "none",
+        stroke: strokeColor,
+        "stroke-width": minorSeparatorWidth,
+        "stroke-dasharray": dash,
+      }));
+    } else if (kind === "cube" || kind === "cuboid") {
+      const offX = Math.min(shape.width * (kind === "cube" ? 0.22 : 0.26), 26);
+      const offY = Math.min(shape.height * 0.18, 18);
+      appendShapeEl("rect", {
+        x: shape.x,
+        y: shape.y,
+        width: Math.max(10, shape.width - offX),
+        height: Math.max(10, shape.height - offY),
+        rx: 0,
+        ry: 0,
+      }, darken(shape.fill, -16));
+      group.appendChild(createSvg("line", {
+        x1: shape.x,
+        y1: shape.y,
+        x2: shape.x + offX,
+        y2: shape.y + offY,
+        stroke: strokeColor,
+        "stroke-width": minorSeparatorWidth,
+        "stroke-dasharray": dash,
+      }));
+      group.appendChild(createSvg("line", {
+        x1: shape.x + shape.width - offX,
+        y1: shape.y,
+        x2: shape.x + shape.width,
+        y2: shape.y + offY,
+        stroke: strokeColor,
+        "stroke-width": minorSeparatorWidth,
+        "stroke-dasharray": dash,
+      }));
+      group.appendChild(createSvg("line", {
+        x1: shape.x + shape.width - offX,
+        y1: shape.y + shape.height - offY,
+        x2: shape.x + shape.width,
+        y2: shape.y + shape.height,
+        stroke: strokeColor,
+        "stroke-width": minorSeparatorWidth,
+        "stroke-dasharray": dash,
+      }));
+      appendShapeEl("rect", {
+        x: shape.x + offX,
+        y: shape.y + offY,
+        width: Math.max(10, shape.width - offX),
+        height: Math.max(10, shape.height - offY),
+        rx: 0,
+        ry: 0,
+      });
+    } else if (kind === "hexagonal_prism") {
+      const back = polygonVerticesForShape({
+        x: shape.x,
+        y: shape.y,
+        width: shape.width - 18,
+        height: shape.height - 12,
+        kind: "hexagon",
+      });
+      const front = polygonVerticesForShape({
+        x: shape.x + 18,
+        y: shape.y + 12,
+        width: shape.width - 18,
+        height: shape.height - 12,
+        kind: "hexagon",
+      });
+      appendPolygonShape(back, darken(shape.fill, -14));
+      [0, 1, 2, 5].forEach((idx) => {
+        group.appendChild(createSvg("line", {
+          x1: back[idx].x,
+          y1: back[idx].y,
+          x2: front[idx].x,
+          y2: front[idx].y,
+          stroke: strokeColor,
+          "stroke-width": minorSeparatorWidth,
+          "stroke-dasharray": dash,
+        }));
+      });
+      appendPolygonShape(front);
+    } else if (kind === "and") {
+      const x0 = shape.x;
+      const y0 = shape.y;
+      const w = shape.width;
+      const h = shape.height;
+      const d = [
+        "M " + x0 + " " + y0,
+        "L " + (x0 + w * 0.56) + " " + y0,
+        "Q " + (x0 + w) + " " + (y0 + h / 2) + " " + (x0 + w * 0.56) + " " + (y0 + h),
+        "L " + x0 + " " + (y0 + h),
+        "Z",
+      ].join(" ");
+      appendPathShape(d);
+    } else if (kind === "or") {
+      const x0 = shape.x;
+      const y0 = shape.y;
+      const w = shape.width;
+      const h = shape.height;
+      const d = [
+        "M " + (x0 + w * 0.1) + " " + y0,
+        "Q " + (x0 + w * 0.62) + " " + y0 + " " + (x0 + w) + " " + (y0 + h / 2),
+        "Q " + (x0 + w * 0.62) + " " + (y0 + h) + " " + (x0 + w * 0.1) + " " + (y0 + h),
+        "Q " + (x0 + w * 0.26) + " " + (y0 + h / 2) + " " + (x0 + w * 0.1) + " " + y0,
+        "Z",
+      ].join(" ");
+      appendPathShape(d);
+    } else if (kind === "actor") {
+      const headR = Math.min(shape.width * 0.16, shape.height * 0.12);
+      const cx = shape.x + shape.width / 2;
+      const headCy = shape.y + shape.height * 0.16;
+      group.appendChild(createSvg("circle", {
+        cx: cx,
+        cy: headCy,
+        r: headR,
+        fill: shape.fill,
+        stroke: strokeColor,
+        "stroke-width": strokeWidth,
+        "stroke-dasharray": dash,
+      }));
+      const limbs = [
+        { x1: cx, y1: headCy + headR, x2: cx, y2: shape.y + shape.height * 0.62 },
+        { x1: shape.x + shape.width * 0.24, y1: shape.y + shape.height * 0.36, x2: shape.x + shape.width * 0.76, y2: shape.y + shape.height * 0.36 },
+        { x1: cx, y1: shape.y + shape.height * 0.62, x2: shape.x + shape.width * 0.26, y2: shape.y + shape.height * 0.94 },
+        { x1: cx, y1: shape.y + shape.height * 0.62, x2: shape.x + shape.width * 0.74, y2: shape.y + shape.height * 0.94 },
+      ];
+      limbs.forEach((line) => {
+        group.appendChild(createSvg("line", {
+          x1: line.x1,
+          y1: line.y1,
+          x2: line.x2,
+          y2: line.y2,
+          stroke: strokeColor,
+          "stroke-width": strokeWidth,
+          "stroke-dasharray": dash,
+        }));
+      });
+    } else if (kind === "cloud" || kind === "cloud_callout") {
+      const x0 = shape.x;
+      const y0 = shape.y;
+      const w = shape.width;
+      const h = shape.height;
+      const d = [
+        "M " + (x0 + w * 0.2) + " " + (y0 + h * 0.68),
+        "C " + (x0 + w * 0.04) + " " + (y0 + h * 0.68) + " " + (x0 + w * 0.04) + " " + (y0 + h * 0.46) + " " + (x0 + w * 0.18) + " " + (y0 + h * 0.44),
+        "C " + (x0 + w * 0.12) + " " + (y0 + h * 0.2) + " " + (x0 + w * 0.34) + " " + (y0 + h * 0.12) + " " + (x0 + w * 0.46) + " " + (y0 + h * 0.24),
+        "C " + (x0 + w * 0.52) + " " + (y0 + h * 0.04) + " " + (x0 + w * 0.8) + " " + (y0 + h * 0.08) + " " + (x0 + w * 0.84) + " " + (y0 + h * 0.28),
+        "C " + (x0 + w * 0.98) + " " + (y0 + h * 0.3) + " " + (x0 + w) + " " + (y0 + h * 0.58) + " " + (x0 + w * 0.82) + " " + (y0 + h * 0.64),
+        "C " + (x0 + w * 0.8) + " " + (y0 + h * 0.84) + " " + (x0 + w * 0.56) + " " + (y0 + h * 0.9) + " " + (x0 + w * 0.44) + " " + (y0 + h * 0.78),
+        "C " + (x0 + w * 0.3) + " " + (y0 + h * 0.9) + " " + (x0 + w * 0.12) + " " + (y0 + h * 0.84) + " " + (x0 + w * 0.2) + " " + (y0 + h * 0.68),
+        "Z",
+      ].join(" ");
+      appendPathShape(d);
+      if (kind === "cloud_callout") {
+        const tail = [
+          { x: x0 + w * 0.28, y: y0 + h * 0.82 },
+          { x: x0 + w * 0.18, y: y0 + h },
+          { x: x0 + w * 0.4, y: y0 + h * 0.86 },
+        ];
+        appendPolygonShape(tail);
+      }
+    } else if (kind === "header_container") {
       const headerH = Math.max(18, Math.min(36, Math.round(shape.height * 0.22)));
       group.appendChild(createSvg("rect", Object.assign({
         x: shape.x,
         y: shape.y,
         width: shape.width,
         height: shape.height,
-        rx: shape.rounded === false ? 0 : 7,
-        ry: shape.rounded === false ? 0 : 7,
+        rx: roundedRadius,
+        ry: roundedRadius,
       }, commonStroke)));
       group.appendChild(createSvg("rect", {
         x: shape.x + 1,
@@ -1469,8 +2388,8 @@
         height: Math.max(1, headerH - 1),
         fill: darken(shape.fill, -16),
         stroke: "none",
-        rx: shape.rounded === false ? 0 : 6,
-        ry: shape.rounded === false ? 0 : 6,
+        rx: Math.max(0, roundedRadius - 1),
+        ry: Math.max(0, roundedRadius - 1),
       }));
       group.appendChild(createSvg("line", {
         x1: shape.x,
@@ -1481,7 +2400,7 @@
         "stroke-width": separatorWidth,
         "stroke-dasharray": dash,
       }));
-    } else if (shape.kind === "component_group") {
+    } else if (kind === "component_group") {
       const headerH = 18;
       const componentCount = Math.max(1, Math.min(24, Math.round(Number(shape.componentCount) || 4)));
       const componentDirection = normalizeComponentDirection(shape.componentDirection);
@@ -1495,8 +2414,8 @@
         stroke: strokeColor,
         "stroke-width": strokeWidth,
         "stroke-dasharray": dash,
-        rx: shape.rounded === false ? 0 : 6,
-        ry: shape.rounded === false ? 0 : 6,
+        rx: roundedRadius,
+        ry: roundedRadius,
       }));
       group.appendChild(createSvg("rect", {
         x: shape.x + 1,
@@ -1505,8 +2424,8 @@
         height: headerH,
         fill: darken(shape.fill, -14),
         stroke: "none",
-        rx: shape.rounded === false ? 0 : 5,
-        ry: shape.rounded === false ? 0 : 5,
+        rx: Math.max(0, roundedRadius - 1),
+        ry: Math.max(0, roundedRadius - 1),
       }));
       group.appendChild(createSvg("rect", {
         x: shape.x + 1,
@@ -1589,8 +2508,8 @@
         y: shape.y,
         width: shape.width,
         height: shape.height,
-        rx: shape.rounded === false ? 0 : 7,
-        ry: shape.rounded === false ? 0 : 7,
+        rx: roundedRadius,
+        ry: roundedRadius,
       }, commonStroke)));
     }
 
@@ -1682,6 +2601,48 @@
       };
     }
 
+    const polygonVertices = polygonVerticesForShape(shape);
+    if (polygonVertices) {
+      const target = side === "left"
+        ? { x: x0, y: y0 + h * frac }
+        : side === "right"
+          ? { x: x0 + w, y: y0 + h * frac }
+          : side === "top"
+            ? { x: x0 + w * frac, y: y0 }
+            : { x: x0 + w * frac, y: y0 + h };
+      const projected = closestPointOnPolygon(target, polygonVertices);
+      if (projected) return { x: projected.x, y: projected.y };
+    }
+
+    if (shape.kind === "cylinder") {
+      const rx = Math.max(0.01, w / 2);
+      const ry = Math.max(8, Math.min(16, h * 0.12));
+      const topCy = y0 + ry + 2;
+      const bottomCy = y0 + h - ry - 2;
+      if (side === "left") return { x: x0, y: topCy + (bottomCy - topCy) * frac };
+      if (side === "right") return { x: x0 + w, y: topCy + (bottomCy - topCy) * frac };
+      const targetX = x0 + w * frac;
+      const nx = (targetX - cx) / rx;
+      const k = Math.sqrt(Math.max(0, 1 - nx * nx));
+      const targetCy = side === "top" ? topCy : bottomCy;
+      return { x: targetX, y: targetCy + (side === "top" ? -ry : ry) * k };
+    }
+
+    if (shape.kind === "cloud" || shape.kind === "cloud_callout") {
+      const rx = Math.max(0.01, w / 2);
+      const ry = Math.max(0.01, h * 0.42);
+      if (side === "left" || side === "right") {
+        const y = y0 + h * frac;
+        const ny = (y - cy) / ry;
+        const k = Math.sqrt(Math.max(0, 1 - ny * ny));
+        return { x: cx + (side === "left" ? -rx : rx) * k, y: y };
+      }
+      const x = x0 + w * frac;
+      const nx = (x - cx) / rx;
+      const k = Math.sqrt(Math.max(0, 1 - nx * nx));
+      return { x: x, y: cy + (side === "top" ? -ry : ry) * k };
+    }
+
     if (side === "left") return { x: x0, y: y0 + h * frac };
     if (side === "right") return { x: x0 + w, y: y0 + h * frac };
     if (side === "top") return { x: x0 + w * frac, y: y0 };
@@ -1733,6 +2694,20 @@
     return { x: projected.x, y: projected.y, t: t, d2: distance2(point, projected) };
   }
 
+  function closestPointOnPolygon(point, vertices) {
+    if (!Array.isArray(vertices) || vertices.length < 2) return null;
+    let best = null;
+    for (let i = 0; i < vertices.length; i += 1) {
+      const a = vertices[i];
+      const b = vertices[(i + 1) % vertices.length];
+      const projected = projectPointToSegment(point, a, b);
+      if (!best || projected.d2 < best.d2) {
+        best = projected;
+      }
+    }
+    return best;
+  }
+
   function buildAnchorCandidate(shape, side, frac, point) {
     const anchorIndex = anchorIndexForFraction(frac);
     const anchor = getAnchorPoint({ shapeId: shape.id, side: side, anchorIndex: anchorIndex });
@@ -1776,6 +2751,13 @@
         point
       ));
     } else if (shape.kind === "circle" || shape.kind === "oval") {
+      const h = Math.max(0.01, shape.height);
+      const w = Math.max(0.01, shape.width);
+      candidates.push(buildAnchorCandidate(shape, "left", clamp((point.y - y0) / h, 0, 1), point));
+      candidates.push(buildAnchorCandidate(shape, "right", clamp((point.y - y0) / h, 0, 1), point));
+      candidates.push(buildAnchorCandidate(shape, "top", clamp((point.x - x0) / w, 0, 1), point));
+      candidates.push(buildAnchorCandidate(shape, "bottom", clamp((point.x - x0) / w, 0, 1), point));
+    } else if (shape.kind === "cylinder" || shape.kind === "cloud" || shape.kind === "cloud_callout" || polygonVerticesForShape(shape)) {
       const h = Math.max(0.01, shape.height);
       const w = Math.max(0.01, shape.width);
       candidates.push(buildAnchorCandidate(shape, "left", clamp((point.y - y0) / h, 0, 1), point));
@@ -1946,9 +2928,9 @@
     };
 
     const connType = normalizeConnectionType(arrow.connectionType);
-    if (connType === "arrow") {
+    if (connType === "directional_connector") {
       attrs["marker-end"] = "url(#editor-arrow-head)";
-    } else if (connType === "bi") {
+    } else if (connType === "bidirectional_connector") {
       attrs["marker-start"] = "url(#editor-arrow-head)";
       attrs["marker-end"] = "url(#editor-arrow-head)";
     }
@@ -2312,9 +3294,9 @@
           width: tileWidth,
           height: tileHeight,
           fill: "none",
-          stroke: "#0c1422",
-          "stroke-width": 3.4,
-          opacity: 0.7,
+          stroke: "#09111d",
+          "stroke-width": 1.8,
+          opacity: 0.22,
           "vector-effect": "non-scaling-stroke",
           "pointer-events": "none",
         }));
@@ -2324,9 +3306,9 @@
           width: tileWidth,
           height: tileHeight,
           fill: "none",
-          stroke: "#476489",
-          "stroke-width": 1.45,
-          opacity: 0.95,
+          stroke: "#6280a8",
+          "stroke-width": 0.85,
+          opacity: 0.34,
           "vector-effect": "non-scaling-stroke",
           "pointer-events": "none",
         }));
@@ -2406,9 +3388,11 @@
 
   function updateToolButtonStates() {
     els.toolSelectBtn.classList.toggle("active", state.mode === "select");
-    els.toolConnectArrowBtn.classList.toggle("active", state.mode === "connect_arrow");
-    els.toolConnectBiBtn.classList.toggle("active", state.mode === "connect_bi");
-    els.toolConnectLineBtn.classList.toggle("active", state.mode === "connect_line");
+    if (els.connectionToolsGrid) {
+      Array.from(els.connectionToolsGrid.querySelectorAll("[data-mode]")).forEach((btn) => {
+        btn.classList.toggle("active", btn.getAttribute("data-mode") === state.mode);
+      });
+    }
   }
 
   function setSelected(sel) {
@@ -2504,7 +3488,7 @@
         render();
         return;
       }
-      createArrow(state.connectSourceId, shapeId, CONNECT_MODES[state.mode] || "arrow");
+      createArrow(state.connectSourceId, shapeId, CONNECT_MODES[state.mode] || "directional_connector");
       state.connectSourceId = null;
       return;
     }
@@ -2828,7 +3812,7 @@
     };
     state.model.arrows.push(arrow);
     setSelected({ type: "arrow", id: id });
-    setStatus("Created " + arrow.connectionType + " connector " + id + ".", "ok");
+    setStatus("Created " + connectionTypeLabel(arrow.connectionType) + " " + id + ".", "ok");
   }
 
   function addShape(kind) {
@@ -2860,7 +3844,7 @@
       borderStyle: "solid",
       borderWidth: defaultBorderWidth(normalizedKind),
       textColor: "#f4f7ff",
-      rounded: true,
+      rounded: shapeSupportsRounding(normalizedKind),
       textAlign: "center",
       textVAlign: "center",
       fontSize: 12,
@@ -3987,7 +4971,9 @@
         '<select id="ins-shape-border-style"><option value="solid"' + (shape.borderStyle === "solid" ? " selected" : "") + '>solid</option><option value="dashed"' + (shape.borderStyle === "dashed" ? " selected" : "") + '>dashed</option></select>' +
         '<input id="ins-shape-border-width" type="number" min="0.5" max="12" step="0.1" title="Border thickness" value="' + roundNum(shape.borderWidth || defaultBorderWidth(shape.kind)) + '"/>' +
       '</div></div>',
-      '<div class="row"><label style="margin:0;"><input id="ins-shape-rounded" type="checkbox"' + (shape.rounded ? " checked" : "") + '> Rounded corners</label></div>',
+      (shapeSupportsRounding(shape.kind)
+        ? '<div class="row"><label style="margin:0;"><input id="ins-shape-rounded" type="checkbox"' + (shape.rounded ? " checked" : "") + '> Rounded corners</label></div>'
+        : ""),
       isComponentGroup
         ? '<h3>Group Layout</h3>' +
           '<div><label>Direction</label><select id="ins-group-direction"><option value="horizontal"' + (normalizeComponentDirection(shape.componentDirection) === "horizontal" ? " selected" : "") + '>horizontal</option><option value="vertical"' + (normalizeComponentDirection(shape.componentDirection) === "vertical" ? " selected" : "") + '>vertical</option></select></div>' +
@@ -4226,11 +5212,13 @@
       });
     }
 
-    bindChecked("ins-shape-rounded", (checked) => {
-      pushHistory();
-      shape.rounded = checked;
-      render();
-    });
+    if (shapeSupportsRounding(shape.kind)) {
+      bindChecked("ins-shape-rounded", (checked) => {
+        pushHistory();
+        shape.rounded = checked;
+        render();
+      });
+    }
 
     function commitGeometryChange(mutator) {
       pushHistory();
@@ -4346,6 +5334,7 @@
     const toShape = shapeById(arrow.to.shapeId);
     const cp1 = arrow.controlPoints[0] || { x: 0, y: 0 };
     const cp2 = arrow.controlPoints[1] || { x: 0, y: 0 };
+    const connectionType = normalizeConnectionType(arrow.connectionType);
 
     const waypointRows = (arrow.waypoints || []).map((wp, idx) => {
       return '<div class="grid2">' +
@@ -4361,7 +5350,7 @@
       '<div class="hint">From: <strong>' + escapeHtml(fromShape ? fromShape.id : arrow.from.shapeId) + '</strong> (' + arrow.from.side + ':' + arrow.from.anchorIndex + ')</div>',
       '<div class="hint">To: <strong>' + escapeHtml(toShape ? toShape.id : arrow.to.shapeId) + '</strong> (' + arrow.to.side + ':' + arrow.to.anchorIndex + ')</div>',
       "<h3>Style</h3>",
-      '<div><label>Type</label><select id="ins-arrow-type"><option value="arrow"' + (arrow.connectionType === "arrow" ? " selected" : "") + '>Arrow</option><option value="bi"' + (arrow.connectionType === "bi" ? " selected" : "") + '>Bi-directional Arrow</option><option value="line"' + (arrow.connectionType === "line" ? " selected" : "") + '>Line</option></select></div>',
+      '<div><label>Type</label><select id="ins-arrow-type"><option value="directional_connector"' + (connectionType === "directional_connector" ? " selected" : "") + '>Directional Connector</option><option value="bidirectional_connector"' + (connectionType === "bidirectional_connector" ? " selected" : "") + '>Bi-directional Connector</option><option value="line"' + (connectionType === "line" ? " selected" : "") + '>Line</option></select></div>',
       '<div><label>Line style</label><select id="ins-arrow-line"><option value="solid"' + (arrow.lineStyle === "solid" ? " selected" : "") + '>solid</option><option value="dashed"' + (arrow.lineStyle === "dashed" ? " selected" : "") + '>dashed</option></select></div>',
       '<div><label>Routing</label><select id="ins-arrow-routing"><option value="angled"' + (arrow.routing === "angled" ? " selected" : "") + '>angled/orthogonal</option><option value="straight"' + (arrow.routing === "straight" ? " selected" : "") + '>straight</option><option value="curved"' + (arrow.routing === "curved" ? " selected" : "") + '>curved</option></select></div>',
       '<div><label>Color</label><input id="ins-arrow-color" type="color" value="' + normalizeColor(arrow.stroke, "#e8efff") + '"/></div>',
@@ -4584,15 +5573,22 @@
     els.generateBtn.addEventListener("click", generateRenderer);
 
     els.toolSelectBtn.addEventListener("click", () => setMode("select"));
-    els.toolConnectArrowBtn.addEventListener("click", () => setMode("connect_arrow"));
-    els.toolConnectBiBtn.addEventListener("click", () => setMode("connect_bi"));
-    els.toolConnectLineBtn.addEventListener("click", () => setMode("connect_line"));
+    if (els.connectionToolsGrid) {
+      els.connectionToolsGrid.addEventListener("click", (evt) => {
+        const button = evt.target && evt.target.closest("[data-mode]");
+        if (!button) return;
+        setMode(button.getAttribute("data-mode") || "select");
+      });
+    }
 
-    els.addSquareBtn.addEventListener("click", () => addShape("square"));
-    els.addRectangleBtn.addEventListener("click", () => addShape("rectangle"));
-    els.addTriangleBtn.addEventListener("click", () => addShape("triangle"));
-    els.addCircleBtn.addEventListener("click", () => addShape("circle"));
-    els.addOvalBtn.addEventListener("click", () => addShape("oval"));
+    if (els.shapeToolsGrid) {
+      els.shapeToolsGrid.addEventListener("click", (evt) => {
+        const button = evt.target && evt.target.closest("[data-kind]");
+        if (!button) return;
+        addShape(button.getAttribute("data-kind") || "square");
+      });
+    }
+
     els.addContainerStandardBtn.addEventListener("click", () => addShape("container"));
     els.addContainerHeaderBtn.addEventListener("click", () => addShape("header_container"));
     els.addComponentGroupBtn.addEventListener("click", () => addShape("component_group"));
@@ -4767,6 +5763,7 @@
     els.elfInput.value = state.elf;
     state.model = defaultModel(state.elf);
     ensureModelDefaults();
+    renderToolButtons();
     bindEvents();
     render();
     recenterView();
