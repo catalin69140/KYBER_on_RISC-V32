@@ -108,7 +108,7 @@
       left: 10px;
       z-index: 10;
       display: grid;
-      grid-template-columns: repeat(2, max-content);
+      grid-template-columns: repeat(3, max-content);
       gap: 6px;
       background: rgba(4, 10, 20, 0.8);
       border: 1px solid #2c446c;
@@ -116,10 +116,32 @@
       padding: 6px;
     }
 
-    #recenter-btn,
     #zoom-reset-btn,
-    #zoom-label {
+    .zoom-control-row {
       grid-column: 1 / -1;
+    }
+
+    .zoom-control-row {
+      display: grid;
+      grid-template-columns: minmax(72px, 1fr) auto;
+      gap: 6px;
+      align-items: center;
+      min-width: 0;
+    }
+
+    #zoom-input {
+      width: 100%;
+      min-width: 0;
+      text-align: right;
+      padding-right: 10px;
+    }
+
+    .zoom-suffix {
+      min-width: 18px;
+      text-align: center;
+      color: #cfe1ff;
+      font-size: 12px;
+      font-weight: 600;
     }
 
     #canvas-scroll {
@@ -492,17 +514,6 @@
       line-height: 1.35;
     }
 
-    .zoom-label {
-      min-width: 64px;
-      text-align: center;
-      color: #cfe1ff;
-      font-size: 12px;
-      padding: 4px 6px;
-      border: 1px solid #35517d;
-      border-radius: 6px;
-      background: rgba(18, 30, 52, 0.8);
-    }
-
     @media (max-width: 1400px) {
       #main {
         grid-template-columns: 200px minmax(0, 1fr) 270px;
@@ -573,7 +584,24 @@
           <button id="zoom-out-btn">-</button>
           <button id="recenter-btn">Recenter</button>
           <button id="zoom-reset-btn">Reset</button>
-          <div id="zoom-label" class="zoom-label">100%</div>
+          <div class="zoom-control-row">
+            <input id="zoom-input" type="text" inputmode="numeric" list="zoom-presets" value="100" aria-label="Zoom percent" />
+            <span class="zoom-suffix">%</span>
+            <datalist id="zoom-presets">
+              <option value="5"></option>
+              <option value="25"></option>
+              <option value="50"></option>
+              <option value="75"></option>
+              <option value="100"></option>
+              <option value="125"></option>
+              <option value="150"></option>
+              <option value="175"></option>
+              <option value="200"></option>
+              <option value="300"></option>
+              <option value="400"></option>
+              <option value="500"></option>
+            </datalist>
+          </div>
         </div>
         <div id="canvas-scroll">
           <svg id="diagram-canvas" xmlns="http://www.w3.org/2000/svg"></svg>

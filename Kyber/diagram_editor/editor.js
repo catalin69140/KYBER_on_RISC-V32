@@ -40,9 +40,10 @@
   const GRID_MAJOR_STEP = 40;
   const WORKSPACE_EXPAND_CHUNK = 1000;
   const WORKSPACE_SURROUND = 2000;
+  const WORKSPACE_EXPAND_TRIGGER = GRID_MINOR_STEP;
   const KEYBOARD_NUDGE_STEP = 1;
   const ZOOM_STEP = 0.05;
-  const ZOOM_VISIBLE_WIDTH_AT_100 = 320;
+  const ZOOM_VISIBLE_WIDTH_AT_100 = 1280;
   const DEFAULT_ANCHOR_STOPS = Array.from({ length: 11 }, (_, idx) => idx / 10);
   const MAX_SHAPE_TEXT_LENGTH = 500;
   const HANDLE_SIZE = 8;
@@ -86,7 +87,8 @@
     view: {
       zoom: 1,
       minZoom: 0.05,
-      maxZoom: 4,
+      maxZoom: 5,
+      pendingScroll: null,
     },
   };
 
@@ -112,7 +114,7 @@
     zoomOutBtn: document.getElementById("zoom-out-btn"),
     recenterBtn: document.getElementById("recenter-btn"),
     zoomResetBtn: document.getElementById("zoom-reset-btn"),
-    zoomLabel: document.getElementById("zoom-label"),
+    zoomInput: document.getElementById("zoom-input"),
     canvasScroll: document.getElementById("canvas-scroll"),
     svg: document.getElementById("diagram-canvas"),
     inspector: document.getElementById("inspector-content"),
@@ -892,12 +894,54 @@
     return canvasBaseScale() * zoom;
   }
 
-  function canvasOriginScrollPosition(scale) {
+  function worldPointToScrollPosition(point, scale) {
     const world = currentWorldRect();
-    const canvas = currentCanvasRect();
     return {
-      left: Math.max(0, Math.round((canvas.x - world.x) * scale)),
-      top: Math.max(0, Math.round((canvas.y - world.y) * scale)),
+      left: (point.x - world.x) * scale - (els.canvasScroll.clientWidth || 0) / 2,
+      top: (point.y - world.y) * scale - (els.canvasScroll.clientHeight || 0) / 2,
+    };
+  }
+
+  function formatZoomPercentValue(zoom) {
+    return roundNum((Number(zoom) || 0) * 100);
+  }
+
+  function parseZoomPercentValue(raw) {
+    const cleaned = String(raw || "").replace(/%/g, "").trim();
+    if (!cleaned) return null;
+    const value = Number(cleaned);
+    if (!Number.isFinite(value)) return null;
+    return clamp(value / 100, state.view.minZoom, state.view.maxZoom);
+  }
+
+  function syncZoomInput(force) {
+    if (!els.zoomInput) return;
+    if (!force && document.activeElement === els.zoomInput && els.zoomInput.dataset.dirty === "true") return;
+    els.zoomInput.value = formatZoomPercentValue(state.view.zoom || 1);
+    els.zoomInput.dataset.dirty = "false";
+  }
+
+  function applyPendingViewportScroll() {
+    const pending = state.view.pendingScroll;
+    if (!pending) return;
+    state.view.pendingScroll = null;
+    const maxLeft = Math.max(0, els.canvasScroll.scrollWidth - els.canvasScroll.clientWidth);
+    const maxTop = Math.max(0, els.canvasScroll.scrollHeight - els.canvasScroll.clientHeight);
+    els.canvasScroll.scrollLeft = clamp(pending.left, 0, maxLeft);
+    els.canvasScroll.scrollTop = clamp(pending.top, 0, maxTop);
+  }
+
+  function queueViewportCompensation(previousCanvas, nextCanvas) {
+    if (!previousCanvas || !nextCanvas) return;
+    if (previousCanvas.x === nextCanvas.x && previousCanvas.y === nextCanvas.y) return;
+    const scale = effectiveCanvasScale(state.view.zoom || 1);
+    const prevWorldX = previousCanvas.x - WORKSPACE_SURROUND;
+    const prevWorldY = previousCanvas.y - WORKSPACE_SURROUND;
+    const nextWorldX = nextCanvas.x - WORKSPACE_SURROUND;
+    const nextWorldY = nextCanvas.y - WORKSPACE_SURROUND;
+    state.view.pendingScroll = {
+      left: (els.canvasScroll.scrollLeft || 0) + (prevWorldX - nextWorldX) * scale,
+      top: (els.canvasScroll.scrollTop || 0) + (prevWorldY - nextWorldY) * scale,
     };
   }
 
@@ -910,15 +954,16 @@
     els.svg.setAttribute("viewBox", world.x + " " + world.y + " " + world.width + " " + world.height);
     els.svg.setAttribute("width", String(widthPx));
     els.svg.setAttribute("height", String(heightPx));
-    if (els.zoomLabel) {
-      els.zoomLabel.textContent = Math.round(zoom * 100) + "%";
-    }
+    syncZoomInput(false);
   }
 
   function setZoom(nextZoom, focusPoint) {
     const prev = state.view.zoom;
     const next = clamp(nextZoom, state.view.minZoom, state.view.maxZoom);
-    if (Math.abs(next - prev) < 0.0001) return;
+    if (Math.abs(next - prev) < 0.0001) {
+      syncZoomInput(true);
+      return;
+    }
 
     const scroll = els.canvasScroll;
     const rect = scroll.getBoundingClientRect();
@@ -943,15 +988,19 @@
 
   function recenterView() {
     const scale = effectiveCanvasScale(state.view.zoom || 1);
-    const origin = canvasOriginScrollPosition(scale);
-    els.canvasScroll.scrollLeft = origin.left;
-    els.canvasScroll.scrollTop = origin.top;
+    const target = {
+      x: DEFAULT_VIEWBOX.x + DEFAULT_VIEWBOX.width / 2,
+      y: DEFAULT_VIEWBOX.y + DEFAULT_VIEWBOX.height / 2,
+    };
+    const scrollPos = worldPointToScrollPosition(target, scale);
+    const maxLeft = Math.max(0, els.canvasScroll.scrollWidth - els.canvasScroll.clientWidth);
+    const maxTop = Math.max(0, els.canvasScroll.scrollHeight - els.canvasScroll.clientHeight);
+    els.canvasScroll.scrollLeft = clamp(scrollPos.left, 0, maxLeft);
+    els.canvasScroll.scrollTop = clamp(scrollPos.top, 0, maxTop);
   }
 
   function resetView() {
-    state.view.zoom = 1;
-    render();
-    recenterView();
+    setZoom(1);
   }
 
   function eventTargetsCanvas(evt) {
@@ -1907,8 +1956,8 @@
 
   function syncCanvasRectToContent() {
     if (!state.model || !state.model.metadata) return false;
-    const next = normalizedCanvasRectForContent();
     const current = currentCanvasRect();
+    const next = normalizedCanvasRectForContent();
     if (
       current.x === next.x &&
       current.y === next.y &&
@@ -1917,6 +1966,7 @@
     ) {
       return false;
     }
+    queueViewportCompensation(current, next);
     state.model.metadata.viewBox = next;
     return true;
   }
@@ -1931,25 +1981,26 @@
       height: canvas.height,
     };
     let changed = false;
-    if (rect.x < canvas.x) {
+    if (rect.x < canvas.x - WORKSPACE_EXPAND_TRIGGER) {
       next.x -= WORKSPACE_EXPAND_CHUNK;
       next.width += WORKSPACE_EXPAND_CHUNK;
       changed = true;
     }
-    if (rect.x + rect.width > canvas.x + canvas.width) {
+    if (rect.x + rect.width > canvas.x + canvas.width + WORKSPACE_EXPAND_TRIGGER) {
       next.width += WORKSPACE_EXPAND_CHUNK;
       changed = true;
     }
-    if (rect.y < canvas.y) {
+    if (rect.y < canvas.y - WORKSPACE_EXPAND_TRIGGER) {
       next.y -= WORKSPACE_EXPAND_CHUNK;
       next.height += WORKSPACE_EXPAND_CHUNK;
       changed = true;
     }
-    if (rect.y + rect.height > canvas.y + canvas.height) {
+    if (rect.y + rect.height > canvas.y + canvas.height + WORKSPACE_EXPAND_TRIGGER) {
       next.height += WORKSPACE_EXPAND_CHUNK;
       changed = true;
     }
     if (changed) {
+      queueViewportCompensation(canvas, next);
       state.model.metadata.viewBox = next;
     }
     return changed;
@@ -2171,6 +2222,7 @@
     sortedArrows().forEach((arrow) => renderArrow(arrowLayer, arrow));
 
     renderSelectionOverlay(overlayLayer);
+    applyPendingViewportScroll();
     updateToolButtonStates();
     if (!skipInspector) {
       renderInspector();
@@ -4376,6 +4428,34 @@
     els.zoomOutBtn.addEventListener("click", () => setZoom(state.view.zoom - ZOOM_STEP));
     els.recenterBtn.addEventListener("click", recenterView);
     els.zoomResetBtn.addEventListener("click", resetView);
+
+    if (els.zoomInput) {
+      const commitZoomInput = () => {
+        const parsed = parseZoomPercentValue(els.zoomInput.value);
+        if (parsed === null) {
+          syncZoomInput(true);
+          return;
+        }
+        els.zoomInput.dataset.dirty = "false";
+        setZoom(parsed);
+      };
+
+      els.zoomInput.addEventListener("input", () => {
+        els.zoomInput.dataset.dirty = "true";
+      });
+      els.zoomInput.addEventListener("change", commitZoomInput);
+      els.zoomInput.addEventListener("blur", commitZoomInput);
+      els.zoomInput.addEventListener("keydown", (evt) => {
+        if (evt.key === "Enter") {
+          evt.preventDefault();
+          commitZoomInput();
+        } else if (evt.key === "Escape") {
+          evt.preventDefault();
+          syncZoomInput(true);
+          els.zoomInput.blur();
+        }
+      });
+    }
 
     els.svg.addEventListener("pointerdown", onBackgroundPointerDown);
     window.addEventListener("pointermove", handlePointerMove);
