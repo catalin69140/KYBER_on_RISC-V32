@@ -108,7 +108,7 @@
       left: 10px;
       z-index: 10;
       display: grid;
-      grid-template-columns: repeat(3, max-content);
+      grid-template-columns: 40px 40px 96px;
       gap: 6px;
       background: rgba(4, 10, 20, 0.8);
       border: 1px solid #2c446c;
@@ -116,14 +116,8 @@
       padding: 6px;
     }
 
-    #zoom-reset-btn,
-    .zoom-control-row {
-      grid-column: 1 / -1;
-    }
-
     #zoom-in-btn,
-    #zoom-out-btn,
-    #zoom-reset-btn {
+    #zoom-out-btn {
       width: 40px;
       min-width: 40px;
       padding-left: 0;
@@ -131,17 +125,30 @@
       text-align: center;
     }
 
+    #recenter-btn,
+    #zoom-reset-btn {
+      width: 96px;
+      min-width: 96px;
+    }
+
+    #zoom-reset-btn {
+      grid-column: 3;
+      grid-row: 2;
+    }
+
     .zoom-control-row {
       display: block;
-      min-width: 104px;
+      min-width: 0;
+      grid-column: 1 / 3;
+      grid-row: 2;
     }
 
     .zoom-combobox {
       position: relative;
       display: grid;
       grid-template-columns: minmax(0, 1fr) 28px;
-      width: 104px;
-      min-width: 104px;
+      width: 100%;
+      min-width: 0;
       border: 1px solid #2c446c;
       border-radius: 8px;
       overflow: hidden;
@@ -659,7 +666,7 @@
           <div class="zoom-control-row">
             <div id="zoom-combobox" class="zoom-combobox">
               <input id="zoom-input" type="text" inputmode="numeric" value="100" aria-label="Zoom percent" autocomplete="off" />
-              <button id="zoom-menu-btn" type="button" aria-label="Open zoom presets"><span class="zoom-suffix">%</span></button>
+              <button id="zoom-menu-btn" type="button" aria-label="Open zoom presets"><span class="zoom-suffix">▾</span></button>
               <div id="zoom-presets-menu" class="zoom-presets-menu" role="listbox" aria-label="Zoom presets">
                 <button type="button" class="zoom-preset-option" data-zoom-preset="5">5%</button>
                 <button type="button" class="zoom-preset-option" data-zoom-preset="25">25%</button>

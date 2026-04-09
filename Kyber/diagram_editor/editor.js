@@ -952,12 +952,106 @@
     );
   }
 
-  function updateCanvasDuringInteraction(rect) {
-    const trigger = workspaceExpandTriggerWorld();
-    if (rect && isRectOutsideCanvas(rect, trigger)) {
-      return expandCanvasForRect(rect, trigger);
+  function adjustCanvasRectDuringInteraction(bounds, triggerOverride) {
+    if (!state.model || !state.model.metadata) return false;
+    const trigger = Number.isFinite(triggerOverride) ? triggerOverride : workspaceExpandTriggerWorld();
+    const canvas = currentCanvasRect();
+    const next = {
+      x: canvas.x,
+      y: canvas.y,
+      width: canvas.width,
+      height: canvas.height,
+    };
+
+    const safeBounds = bounds || contentBounds();
+    if (!safeBounds) {
+      const fallback = {
+        x: DEFAULT_VIEWBOX.x,
+        y: DEFAULT_VIEWBOX.y,
+        width: DEFAULT_VIEWBOX.width,
+        height: DEFAULT_VIEWBOX.height,
+      };
+      if (
+        canvas.x === fallback.x &&
+        canvas.y === fallback.y &&
+        canvas.width === fallback.width &&
+        canvas.height === fallback.height
+      ) {
+        return false;
+      }
+      queueViewportCompensation(canvas, fallback);
+      state.model.metadata.viewBox = fallback;
+      return true;
     }
-    return syncCanvasRectToContent();
+
+    const boundsRight = safeBounds.x + safeBounds.width;
+    const boundsBottom = safeBounds.y + safeBounds.height;
+    const defaultRight = DEFAULT_VIEWBOX.x + DEFAULT_VIEWBOX.width;
+    const defaultBottom = DEFAULT_VIEWBOX.y + DEFAULT_VIEWBOX.height;
+    let changed = false;
+
+    if (safeBounds.x < canvas.x - trigger) {
+      next.x -= WORKSPACE_EXPAND_CHUNK;
+      next.width += WORKSPACE_EXPAND_CHUNK;
+      changed = true;
+    } else if (
+      canvas.x < DEFAULT_VIEWBOX.x &&
+      safeBounds.x >= canvas.x + WORKSPACE_EXPAND_CHUNK + trigger &&
+      next.width - WORKSPACE_EXPAND_CHUNK >= DEFAULT_VIEWBOX.width &&
+      boundsRight <= canvas.x + canvas.width
+    ) {
+      next.x += WORKSPACE_EXPAND_CHUNK;
+      next.width -= WORKSPACE_EXPAND_CHUNK;
+      changed = true;
+    }
+
+    if (boundsRight > canvas.x + canvas.width + trigger) {
+      next.width += WORKSPACE_EXPAND_CHUNK;
+      changed = true;
+    } else if (
+      canvas.x + canvas.width > defaultRight &&
+      boundsRight <= canvas.x + canvas.width - WORKSPACE_EXPAND_CHUNK - trigger &&
+      next.width - WORKSPACE_EXPAND_CHUNK >= DEFAULT_VIEWBOX.width
+    ) {
+      next.width -= WORKSPACE_EXPAND_CHUNK;
+      changed = true;
+    }
+
+    if (safeBounds.y < canvas.y - trigger) {
+      next.y -= WORKSPACE_EXPAND_CHUNK;
+      next.height += WORKSPACE_EXPAND_CHUNK;
+      changed = true;
+    } else if (
+      canvas.y < DEFAULT_VIEWBOX.y &&
+      safeBounds.y >= canvas.y + WORKSPACE_EXPAND_CHUNK + trigger &&
+      next.height - WORKSPACE_EXPAND_CHUNK >= DEFAULT_VIEWBOX.height &&
+      boundsBottom <= canvas.y + canvas.height
+    ) {
+      next.y += WORKSPACE_EXPAND_CHUNK;
+      next.height -= WORKSPACE_EXPAND_CHUNK;
+      changed = true;
+    }
+
+    if (boundsBottom > canvas.y + canvas.height + trigger) {
+      next.height += WORKSPACE_EXPAND_CHUNK;
+      changed = true;
+    } else if (
+      canvas.y + canvas.height > defaultBottom &&
+      boundsBottom <= canvas.y + canvas.height - WORKSPACE_EXPAND_CHUNK - trigger &&
+      next.height - WORKSPACE_EXPAND_CHUNK >= DEFAULT_VIEWBOX.height
+    ) {
+      next.height -= WORKSPACE_EXPAND_CHUNK;
+      changed = true;
+    }
+
+    if (!changed) return false;
+    queueViewportCompensation(canvas, next);
+    state.model.metadata.viewBox = next;
+    return true;
+  }
+
+  function updateCanvasDuringInteraction(rect) {
+    return adjustCanvasRectDuringInteraction(contentBounds(), workspaceExpandTriggerWorld());
   }
 
   function applyPendingViewportScroll() {
@@ -4483,6 +4577,12 @@
 
       els.zoomInput.addEventListener("input", () => {
         els.zoomInput.dataset.dirty = "true";
+      });
+      els.zoomInput.addEventListener("focus", () => {
+        setZoomMenuOpen(true);
+      });
+      els.zoomInput.addEventListener("click", () => {
+        setZoomMenuOpen(true);
       });
       els.zoomInput.addEventListener("change", commitZoomInput);
       els.zoomInput.addEventListener("blur", commitZoomInput);
