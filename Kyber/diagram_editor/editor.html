@@ -121,27 +121,99 @@
       grid-column: 1 / -1;
     }
 
+    #zoom-in-btn,
+    #zoom-out-btn,
+    #zoom-reset-btn {
+      width: 40px;
+      min-width: 40px;
+      padding-left: 0;
+      padding-right: 0;
+      text-align: center;
+    }
+
     .zoom-control-row {
+      display: block;
+      min-width: 104px;
+    }
+
+    .zoom-combobox {
+      position: relative;
       display: grid;
-      grid-template-columns: minmax(72px, 1fr) auto;
-      gap: 6px;
-      align-items: center;
-      min-width: 0;
+      grid-template-columns: minmax(0, 1fr) 28px;
+      width: 104px;
+      min-width: 104px;
+      border: 1px solid #2c446c;
+      border-radius: 8px;
+      overflow: hidden;
+      background: linear-gradient(180deg, #1a2b47, #11203a);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+    }
+
+    .zoom-combobox.open {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px rgba(128, 182, 255, 0.25);
     }
 
     #zoom-input {
       width: 100%;
       min-width: 0;
       text-align: right;
-      padding-right: 10px;
+      padding: 7px 8px;
+      padding-right: 6px;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+    }
+
+    #zoom-menu-btn {
+      border: 0;
+      border-left: 1px solid #2c446c;
+      border-radius: 0;
+      padding: 0;
+      min-width: 28px;
+      background: rgba(10, 18, 32, 0.18);
     }
 
     .zoom-suffix {
-      min-width: 18px;
       text-align: center;
       color: #cfe1ff;
-      font-size: 12px;
+      font-size: 10px;
       font-weight: 600;
+      line-height: 1;
+      transform: translateY(-1px);
+    }
+
+    .zoom-presets-menu {
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 0;
+      width: 100%;
+      display: none;
+      flex-direction: column;
+      gap: 4px;
+      padding: 6px;
+      border: 1px solid #2c446c;
+      border-radius: 8px;
+      background: rgba(7, 14, 26, 0.96);
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+      z-index: 20;
+    }
+
+    .zoom-combobox.open .zoom-presets-menu {
+      display: flex;
+    }
+
+    .zoom-preset-option {
+      width: 100%;
+      padding: 5px 8px;
+      text-align: right;
+      border-radius: 6px;
+      background: rgba(19, 33, 56, 0.92);
+    }
+
+    .zoom-preset-option:hover,
+    .zoom-preset-option.active {
+      border-color: var(--accent);
     }
 
     #canvas-scroll {
@@ -585,22 +657,24 @@
           <button id="recenter-btn">Recenter</button>
           <button id="zoom-reset-btn">Reset</button>
           <div class="zoom-control-row">
-            <input id="zoom-input" type="text" inputmode="numeric" list="zoom-presets" value="100" aria-label="Zoom percent" />
-            <span class="zoom-suffix">%</span>
-            <datalist id="zoom-presets">
-              <option value="5"></option>
-              <option value="25"></option>
-              <option value="50"></option>
-              <option value="75"></option>
-              <option value="100"></option>
-              <option value="125"></option>
-              <option value="150"></option>
-              <option value="175"></option>
-              <option value="200"></option>
-              <option value="300"></option>
-              <option value="400"></option>
-              <option value="500"></option>
-            </datalist>
+            <div id="zoom-combobox" class="zoom-combobox">
+              <input id="zoom-input" type="text" inputmode="numeric" value="100" aria-label="Zoom percent" autocomplete="off" />
+              <button id="zoom-menu-btn" type="button" aria-label="Open zoom presets"><span class="zoom-suffix">%</span></button>
+              <div id="zoom-presets-menu" class="zoom-presets-menu" role="listbox" aria-label="Zoom presets">
+                <button type="button" class="zoom-preset-option" data-zoom-preset="5">5%</button>
+                <button type="button" class="zoom-preset-option" data-zoom-preset="25">25%</button>
+                <button type="button" class="zoom-preset-option" data-zoom-preset="50">50%</button>
+                <button type="button" class="zoom-preset-option" data-zoom-preset="75">75%</button>
+                <button type="button" class="zoom-preset-option" data-zoom-preset="100">100%</button>
+                <button type="button" class="zoom-preset-option" data-zoom-preset="125">125%</button>
+                <button type="button" class="zoom-preset-option" data-zoom-preset="150">150%</button>
+                <button type="button" class="zoom-preset-option" data-zoom-preset="175">175%</button>
+                <button type="button" class="zoom-preset-option" data-zoom-preset="200">200%</button>
+                <button type="button" class="zoom-preset-option" data-zoom-preset="300">300%</button>
+                <button type="button" class="zoom-preset-option" data-zoom-preset="400">400%</button>
+                <button type="button" class="zoom-preset-option" data-zoom-preset="500">500%</button>
+              </div>
+            </div>
           </div>
         </div>
         <div id="canvas-scroll">
