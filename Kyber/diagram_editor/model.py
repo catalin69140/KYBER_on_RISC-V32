@@ -5,7 +5,7 @@ import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 MODEL_VERSION = 2
-DEFAULT_VIEWBOX = {"width": 2000.0, "height": 1000.0}
+DEFAULT_VIEWBOX = {"x": 0.0, "y": 0.0, "width": 1000.0, "height": 1000.0}
 DEFAULT_BACKGROUND = "#0b1220"
 DEFAULT_ANCHOR_STOPS = [i / 10 for i in range(11)]
 DEFAULT_FONT_FAMILY = 'Georgia, "Times New Roman", serif'
@@ -290,9 +290,16 @@ def normalize_model(raw_model: Any, elf_name: str = "") -> Dict[str, Any]:
         model["metadata"]["elf"] = str(elf_name)
 
     src_viewbox = src_meta.get("viewBox") if isinstance(src_meta.get("viewBox"), dict) else {}
+    vb_x = _to_float(src_viewbox.get("x"), DEFAULT_VIEWBOX["x"])
+    vb_y = _to_float(src_viewbox.get("y"), DEFAULT_VIEWBOX["y"])
     vb_w = _to_float(src_viewbox.get("width"), DEFAULT_VIEWBOX["width"])
     vb_h = _to_float(src_viewbox.get("height"), DEFAULT_VIEWBOX["height"])
-    model["metadata"]["viewBox"] = {"width": max(100.0, vb_w), "height": max(100.0, vb_h)}
+    model["metadata"]["viewBox"] = {
+        "x": vb_x,
+        "y": vb_y,
+        "width": max(DEFAULT_VIEWBOX["width"], vb_w),
+        "height": max(DEFAULT_VIEWBOX["height"], vb_h),
+    }
 
     bg = str(src_meta.get("background") or DEFAULT_BACKGROUND)
     model["metadata"]["background"] = bg

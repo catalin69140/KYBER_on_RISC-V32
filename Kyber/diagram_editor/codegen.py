@@ -137,7 +137,9 @@ def generate_renderer_source(model: Dict[str, Any]) -> str:
     normalized = normalize_model(model)
     metadata = normalized.get("metadata", {})
     view_box = metadata.get("viewBox", {})
-    vb_w = _fmt_num(view_box.get("width", 2000))
+    vb_x = _fmt_num(view_box.get("x", 0))
+    vb_y = _fmt_num(view_box.get("y", 0))
+    vb_w = _fmt_num(view_box.get("width", 1000))
     vb_h = _fmt_num(view_box.get("height", 1000))
     bg = str(metadata.get("background") or "#0b1220")
 
@@ -155,12 +157,14 @@ function generatedRenderPrimaryReferenceDiagram() {{
     primaryRefNodeBoxes = {{}};
     primaryRefDrawnSegments = [];
 
+    const viewBoxX = {vb_x};
+    const viewBoxY = {vb_y};
     const viewBoxWidth = {vb_w};
     const viewBoxHeight = {vb_h};
     const svg = createSvgEl("svg", {{
         id: "primary-ref-svg",
         class: "primary-ref-root",
-        viewBox: `0 0 ${{viewBoxWidth}} ${{viewBoxHeight}}`,
+        viewBox: `${{viewBoxX}} ${{viewBoxY}} ${{viewBoxWidth}} ${{viewBoxHeight}}`,
         preserveAspectRatio: "xMidYMid meet"
     }});
 
@@ -192,8 +196,8 @@ function generatedRenderPrimaryReferenceDiagram() {{
     svg.appendChild(defs);
 
     svg.appendChild(createSvgEl("rect", {{
-        x: 0,
-        y: 0,
+        x: viewBoxX,
+        y: viewBoxY,
         width: viewBoxWidth,
         height: viewBoxHeight,
         fill: "{bg}"

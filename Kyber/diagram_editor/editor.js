@@ -35,12 +35,14 @@
     header_container: { width: 240, height: 200 },
     component_group: { width: 200, height: 70 },
   };
-  const DEFAULT_VIEWBOX = { width: 2000, height: 1000 };
+  const DEFAULT_VIEWBOX = { x: 0, y: 0, width: 1000, height: 1000 };
   const GRID_MINOR_STEP = 10;
   const GRID_MAJOR_STEP = 40;
   const WORKSPACE_EXPAND_CHUNK = 1000;
-  const WORKSPACE_EDGE_BUFFER = 180;
+  const WORKSPACE_SURROUND = 2000;
   const KEYBOARD_NUDGE_STEP = 1;
+  const ZOOM_STEP = 0.05;
+  const ZOOM_VISIBLE_WIDTH_AT_100 = 320;
   const DEFAULT_ANCHOR_STOPS = Array.from({ length: 11 }, (_, idx) => idx / 10);
   const MAX_SHAPE_TEXT_LENGTH = 500;
   const HANDLE_SIZE = 8;
@@ -83,8 +85,8 @@
     richTextPendingFormat: null,
     view: {
       zoom: 1,
-      minZoom: 0.15,
-      maxZoom: 6,
+      minZoom: 0.05,
+      maxZoom: 4,
     },
   };
 
@@ -108,6 +110,7 @@
     deleteBtn: document.getElementById("delete-btn"),
     zoomInBtn: document.getElementById("zoom-in-btn"),
     zoomOutBtn: document.getElementById("zoom-out-btn"),
+    recenterBtn: document.getElementById("recenter-btn"),
     zoomResetBtn: document.getElementById("zoom-reset-btn"),
     zoomLabel: document.getElementById("zoom-label"),
     canvasScroll: document.getElementById("canvas-scroll"),
@@ -239,7 +242,12 @@
       version: 2,
       metadata: {
         elf: elfName || "",
-        viewBox: { width: DEFAULT_VIEWBOX.width, height: DEFAULT_VIEWBOX.height },
+        viewBox: {
+          x: DEFAULT_VIEWBOX.x,
+          y: DEFAULT_VIEWBOX.y,
+          width: DEFAULT_VIEWBOX.width,
+          height: DEFAULT_VIEWBOX.height,
+        },
         background: "#0b1220",
         colorPalette: DEFAULT_COLOR_PALETTE.slice(),
       },
@@ -396,10 +404,21 @@
     if (!state.model) state.model = defaultModel(state.elf);
     if (!state.model.metadata) state.model.metadata = {};
     if (!state.model.metadata.viewBox) {
-      state.model.metadata.viewBox = { width: DEFAULT_VIEWBOX.width, height: DEFAULT_VIEWBOX.height };
+      state.model.metadata.viewBox = {
+        x: DEFAULT_VIEWBOX.x,
+        y: DEFAULT_VIEWBOX.y,
+        width: DEFAULT_VIEWBOX.width,
+        height: DEFAULT_VIEWBOX.height,
+      };
     }
-    state.model.metadata.viewBox.width = Math.max(600, Number(state.model.metadata.viewBox.width) || DEFAULT_VIEWBOX.width);
-    state.model.metadata.viewBox.height = Math.max(400, Number(state.model.metadata.viewBox.height) || DEFAULT_VIEWBOX.height);
+    state.model.metadata.viewBox.x = Number.isFinite(Number(state.model.metadata.viewBox.x))
+      ? Number(state.model.metadata.viewBox.x)
+      : DEFAULT_VIEWBOX.x;
+    state.model.metadata.viewBox.y = Number.isFinite(Number(state.model.metadata.viewBox.y))
+      ? Number(state.model.metadata.viewBox.y)
+      : DEFAULT_VIEWBOX.y;
+    state.model.metadata.viewBox.width = Math.max(DEFAULT_VIEWBOX.width, Number(state.model.metadata.viewBox.width) || DEFAULT_VIEWBOX.width);
+    state.model.metadata.viewBox.height = Math.max(DEFAULT_VIEWBOX.height, Number(state.model.metadata.viewBox.height) || DEFAULT_VIEWBOX.height);
     if (!state.model.metadata.background) state.model.metadata.background = "#0b1220";
     if (!Array.isArray(state.model.metadata.colorPalette) || !state.model.metadata.colorPalette.length) {
       state.model.metadata.colorPalette = DEFAULT_COLOR_PALETTE.slice();
@@ -759,8 +778,7 @@
       shape.y += axisDy;
     });
     finalizeMovedRoots(movePlan.rootIds);
-    const movedBounds = selectionBounds(movePlan.rootIds);
-    if (movedBounds) ensureWorkspaceForRect(movedBounds);
+    syncCanvasRectToContent();
     render();
     return true;
   }
@@ -864,26 +882,32 @@
     return el;
   }
 
-  function canvasFitScale() {
-    const vb = currentViewBox();
-    const minW = Math.max(320, (els.canvasScroll.clientWidth || 0) - 8);
-    const minH = Math.max(260, (els.canvasScroll.clientHeight || 0) - 8);
-    return Math.max(minW / vb.width, minH / vb.height);
+  function canvasBaseScale() {
+    const viewportW = Math.max(320, els.canvasScroll.clientWidth || 0);
+    return viewportW / ZOOM_VISIBLE_WIDTH_AT_100;
   }
 
   function effectiveCanvasScale(requestedZoom) {
-    const fitScale = canvasFitScale();
     const zoom = clamp(Number(requestedZoom) || 1, state.view.minZoom, state.view.maxZoom);
-    return fitScale * zoom;
+    return canvasBaseScale() * zoom;
+  }
+
+  function canvasOriginScrollPosition(scale) {
+    const world = currentWorldRect();
+    const canvas = currentCanvasRect();
+    return {
+      left: Math.max(0, Math.round((canvas.x - world.x) * scale)),
+      top: Math.max(0, Math.round((canvas.y - world.y) * scale)),
+    };
   }
 
   function applyViewBox() {
-    const vb = currentViewBox();
+    const world = currentWorldRect();
     const zoom = state.view.zoom || 1;
     const scale = effectiveCanvasScale(zoom);
-    const widthPx = Math.round(vb.width * scale);
-    const heightPx = Math.round(vb.height * scale);
-    els.svg.setAttribute("viewBox", "0 0 " + vb.width + " " + vb.height);
+    const widthPx = Math.round(world.width * scale);
+    const heightPx = Math.round(world.height * scale);
+    els.svg.setAttribute("viewBox", world.x + " " + world.y + " " + world.width + " " + world.height);
     els.svg.setAttribute("width", String(widthPx));
     els.svg.setAttribute("height", String(heightPx));
     if (els.zoomLabel) {
@@ -917,11 +941,17 @@
     scroll.scrollTop = Math.max(0, cy * ratio - focusY);
   }
 
+  function recenterView() {
+    const scale = effectiveCanvasScale(state.view.zoom || 1);
+    const origin = canvasOriginScrollPosition(scale);
+    els.canvasScroll.scrollLeft = origin.left;
+    els.canvasScroll.scrollTop = origin.top;
+  }
+
   function resetView() {
     state.view.zoom = 1;
     render();
-    els.canvasScroll.scrollLeft = 0;
-    els.canvasScroll.scrollTop = 0;
+    recenterView();
   }
 
   function eventTargetsCanvas(evt) {
@@ -1793,41 +1823,136 @@
     };
   }
 
-  function currentViewBox() {
-    return state.model.metadata.viewBox || { width: DEFAULT_VIEWBOX.width, height: DEFAULT_VIEWBOX.height };
-  }
-
-  function ensureWorkspaceForRect(rect) {
-    if (!rect || !state.model || !state.model.metadata) return false;
-    const vb = currentViewBox();
-    let changed = false;
-    while (rect.x + rect.width > vb.width - WORKSPACE_EDGE_BUFFER) {
-      vb.width += WORKSPACE_EXPAND_CHUNK;
-      changed = true;
-    }
-    while (rect.y + rect.height > vb.height - WORKSPACE_EDGE_BUFFER) {
-      vb.height += WORKSPACE_EXPAND_CHUNK;
-      changed = true;
-    }
-    state.model.metadata.viewBox = vb;
-    return changed;
-  }
-
-  function currentVisibleCanvasRect() {
-    const scale = effectiveCanvasScale(state.view.zoom || 1);
+  function currentCanvasRect() {
+    const vb = state.model && state.model.metadata && state.model.metadata.viewBox
+      ? state.model.metadata.viewBox
+      : DEFAULT_VIEWBOX;
     return {
-      x: els.canvasScroll.scrollLeft / scale,
-      y: els.canvasScroll.scrollTop / scale,
-      width: (els.canvasScroll.clientWidth || 0) / scale,
-      height: (els.canvasScroll.clientHeight || 0) / scale,
+      x: Number(vb.x) || 0,
+      y: Number(vb.y) || 0,
+      width: Number(vb.width) || DEFAULT_VIEWBOX.width,
+      height: Number(vb.height) || DEFAULT_VIEWBOX.height,
     };
   }
 
-  function extendWorkspaceForViewport() {
-    if (!state.model || !state.model.metadata) return;
-    if (ensureWorkspaceForRect(currentVisibleCanvasRect())) {
-      render(true);
+  function currentWorldRect() {
+    const canvas = currentCanvasRect();
+    return {
+      x: canvas.x - WORKSPACE_SURROUND,
+      y: canvas.y - WORKSPACE_SURROUND,
+      width: canvas.width + WORKSPACE_SURROUND * 2,
+      height: canvas.height + WORKSPACE_SURROUND * 2,
+    };
+  }
+
+  function contentBounds() {
+    const points = [];
+    const shapes = state.model && Array.isArray(state.model.shapes) ? state.model.shapes : [];
+    shapes.forEach((shape) => {
+      points.push({ x: shape.x, y: shape.y });
+      points.push({ x: shape.x + shape.width, y: shape.y + shape.height });
+    });
+
+    const arrows = state.model && Array.isArray(state.model.arrows) ? state.model.arrows : [];
+    arrows.forEach((arrow) => {
+      const geom = buildArrowGeometry(arrow);
+      if (geom && geom.from && geom.to) {
+        points.push({ x: geom.from.x, y: geom.from.y });
+        points.push({ x: geom.to.x, y: geom.to.y });
+      }
+      (geom && Array.isArray(geom.waypoints) ? geom.waypoints : []).forEach((point) => {
+        points.push({ x: point.x, y: point.y });
+      });
+      (geom && Array.isArray(geom.controlPoints) ? geom.controlPoints : []).forEach((point) => {
+        points.push({ x: point.x, y: point.y });
+      });
+    });
+
+    if (!points.length) return null;
+    const left = Math.min.apply(null, points.map((point) => point.x));
+    const top = Math.min.apply(null, points.map((point) => point.y));
+    const right = Math.max.apply(null, points.map((point) => point.x));
+    const bottom = Math.max.apply(null, points.map((point) => point.y));
+    return {
+      x: left,
+      y: top,
+      width: right - left,
+      height: bottom - top,
+    };
+  }
+
+  function normalizedCanvasRectForContent() {
+    const bounds = contentBounds();
+    const minX = Math.min(DEFAULT_VIEWBOX.x, bounds ? bounds.x : DEFAULT_VIEWBOX.x);
+    const minY = Math.min(DEFAULT_VIEWBOX.y, bounds ? bounds.y : DEFAULT_VIEWBOX.y);
+    const maxX = Math.max(
+      DEFAULT_VIEWBOX.x + DEFAULT_VIEWBOX.width,
+      bounds ? (bounds.x + bounds.width) : (DEFAULT_VIEWBOX.x + DEFAULT_VIEWBOX.width)
+    );
+    const maxY = Math.max(
+      DEFAULT_VIEWBOX.y + DEFAULT_VIEWBOX.height,
+      bounds ? (bounds.y + bounds.height) : (DEFAULT_VIEWBOX.y + DEFAULT_VIEWBOX.height)
+    );
+    const snappedMinX = Math.floor(minX / WORKSPACE_EXPAND_CHUNK) * WORKSPACE_EXPAND_CHUNK;
+    const snappedMinY = Math.floor(minY / WORKSPACE_EXPAND_CHUNK) * WORKSPACE_EXPAND_CHUNK;
+    const snappedMaxX = Math.ceil(maxX / WORKSPACE_EXPAND_CHUNK) * WORKSPACE_EXPAND_CHUNK;
+    const snappedMaxY = Math.ceil(maxY / WORKSPACE_EXPAND_CHUNK) * WORKSPACE_EXPAND_CHUNK;
+    return {
+      x: snappedMinX,
+      y: snappedMinY,
+      width: Math.max(DEFAULT_VIEWBOX.width, snappedMaxX - snappedMinX),
+      height: Math.max(DEFAULT_VIEWBOX.height, snappedMaxY - snappedMinY),
+    };
+  }
+
+  function syncCanvasRectToContent() {
+    if (!state.model || !state.model.metadata) return false;
+    const next = normalizedCanvasRectForContent();
+    const current = currentCanvasRect();
+    if (
+      current.x === next.x &&
+      current.y === next.y &&
+      current.width === next.width &&
+      current.height === next.height
+    ) {
+      return false;
     }
+    state.model.metadata.viewBox = next;
+    return true;
+  }
+
+  function expandCanvasForRect(rect) {
+    if (!rect || !state.model || !state.model.metadata) return false;
+    const canvas = currentCanvasRect();
+    const next = {
+      x: canvas.x,
+      y: canvas.y,
+      width: canvas.width,
+      height: canvas.height,
+    };
+    let changed = false;
+    if (rect.x < canvas.x) {
+      next.x -= WORKSPACE_EXPAND_CHUNK;
+      next.width += WORKSPACE_EXPAND_CHUNK;
+      changed = true;
+    }
+    if (rect.x + rect.width > canvas.x + canvas.width) {
+      next.width += WORKSPACE_EXPAND_CHUNK;
+      changed = true;
+    }
+    if (rect.y < canvas.y) {
+      next.y -= WORKSPACE_EXPAND_CHUNK;
+      next.height += WORKSPACE_EXPAND_CHUNK;
+      changed = true;
+    }
+    if (rect.y + rect.height > canvas.y + canvas.height) {
+      next.height += WORKSPACE_EXPAND_CHUNK;
+      changed = true;
+    }
+    if (changed) {
+      state.model.metadata.viewBox = next;
+    }
+    return changed;
   }
 
   function shapeIdsInSelectionRect(rect) {
@@ -1994,28 +2119,41 @@
     state.arrowRenderCache = {};
     ensureDefs();
 
-    const vb = currentViewBox();
+    const canvas = currentCanvasRect();
+    const world = currentWorldRect();
     els.svg.appendChild(createSvg("rect", {
-      x: 0,
-      y: 0,
-      width: vb.width,
-      height: vb.height,
-      fill: state.model.metadata.background || "#0b1220",
+      x: world.x,
+      y: world.y,
+      width: world.width,
+      height: world.height,
+      fill: "#060c18",
+      "pointer-events": "none",
     }));
     els.svg.appendChild(createSvg("rect", {
-      x: 0,
-      y: 0,
-      width: vb.width,
-      height: vb.height,
+      x: canvas.x,
+      y: canvas.y,
+      width: canvas.width,
+      height: canvas.height,
+      fill: state.model.metadata.background || "#0b1220",
+      stroke: "#38527c",
+      "stroke-width": 1.6,
+      rx: 8,
+      ry: 8,
+    }));
+    els.svg.appendChild(createSvg("rect", {
+      x: canvas.x,
+      y: canvas.y,
+      width: canvas.width,
+      height: canvas.height,
       fill: "url(#editor-grid-minor)",
       opacity: 0.9,
       "pointer-events": "none",
     }));
     els.svg.appendChild(createSvg("rect", {
-      x: 0,
-      y: 0,
-      width: vb.width,
-      height: vb.height,
+      x: canvas.x,
+      y: canvas.y,
+      width: canvas.width,
+      height: canvas.height,
       fill: "url(#editor-grid-major)",
       opacity: 1,
       "pointer-events": "none",
@@ -2080,8 +2218,8 @@
         clientY: rect.top + rect.height / 2,
       });
     }
-    const vb = currentViewBox();
-    return { x: vb.width / 2, y: vb.height / 2 };
+    const canvas = currentCanvasRect();
+    return { x: canvas.x + canvas.width / 2, y: canvas.y + canvas.height / 2 };
   }
 
   function onBackgroundPointerDown(evt) {
@@ -2272,7 +2410,7 @@
         shape.y = before.y + dy;
       });
       const movedBounds = selectionBounds(state.drag.rootShapeIds || state.drag.movedShapeIds);
-      if (movedBounds) ensureWorkspaceForRect(movedBounds);
+      if (movedBounds) expandCanvasForRect(movedBounds);
       render();
       return;
     }
@@ -2321,7 +2459,7 @@
       shape.y = y;
       shape.width = w;
       shape.height = h;
-      ensureWorkspaceForRect(shapeBounds(shape));
+      expandCanvasForRect(shapeBounds(shape));
       render();
       return;
     }
@@ -2345,6 +2483,7 @@
       const arrow = arrowById(state.drag.arrowId);
       if (!arrow || !arrow.waypoints[state.drag.waypointIndex]) return;
       arrow.waypoints[state.drag.waypointIndex] = { x: point.x, y: point.y };
+      expandCanvasForRect(contentBounds());
       render();
       return;
     }
@@ -2356,6 +2495,7 @@
         arrow.controlPoints.push({ x: point.x, y: point.y });
       }
       arrow.controlPoints[state.drag.cpIndex] = { x: point.x, y: point.y };
+      expandCanvasForRect(contentBounds());
       render();
     }
   }
@@ -2377,6 +2517,17 @@
 
     if (drag.type === "move-shapes") {
       finalizeMovedRoots(drag.rootShapeIds);
+      syncCanvasRectToContent();
+      render();
+    }
+
+    if (drag.type === "resize-shape") {
+      syncCanvasRectToContent();
+      render();
+    }
+
+    if (drag.type === "arrow-waypoint" || drag.type === "arrow-control") {
+      syncCanvasRectToContent();
       render();
     }
 
@@ -2460,8 +2611,8 @@
 
     const size = defaultShapeSize(normalizedKind);
     const center = currentViewportCenter();
-    const x = Math.max(0, snapToStep(center.x - size.width / 2, GRID_MINOR_STEP));
-    const y = Math.max(0, snapToStep(center.y - size.height / 2, GRID_MINOR_STEP));
+    const x = snapToStep(center.x - size.width / 2, GRID_MINOR_STEP);
+    const y = snapToStep(center.y - size.height / 2, GRID_MINOR_STEP);
     const text = defaultShapeText(normalizedKind);
     const id = uniqueShapeId(deriveShapeId(text, ""), null);
 
@@ -2495,7 +2646,7 @@
     };
 
     state.model.shapes.push(shape);
-    ensureWorkspaceForRect(shapeBounds(shape));
+    syncCanvasRectToContent();
     setSelected({ type: "shape", id: shape.id });
   }
 
@@ -2516,6 +2667,7 @@
       state.selected = null;
       state.selectedShapeIds = [];
       state.connectSourceId = null;
+      syncCanvasRectToContent();
       render();
       return;
     }
@@ -2524,6 +2676,7 @@
       state.model.arrows = state.model.arrows.filter((a) => a.id !== state.selected.id);
       state.selected = null;
       state.selectedShapeIds = [];
+      syncCanvasRectToContent();
       render();
     }
   }
@@ -3855,7 +4008,7 @@
     function commitGeometryChange(mutator) {
       pushHistory();
       mutator();
-      ensureWorkspaceForRect(shapeBounds(shape));
+      syncCanvasRectToContent();
       render();
     }
 
@@ -3868,7 +4021,7 @@
         const direction = evt.key === "ArrowUp" ? 1 : -1;
         pushHistory();
         applyValue(nudgeFromCurrent(getter(), direction, 1));
-        ensureWorkspaceForRect(shapeBounds(shape));
+        syncCanvasRectToContent();
         render(true);
         syncShapeGeometryInputs(shape);
       });
@@ -4010,12 +4163,14 @@
     bindInput("ins-arrow-type", "change", (value) => {
       pushHistory();
       arrow.connectionType = normalizeConnectionType(value);
+      syncCanvasRectToContent();
       render();
     });
 
     bindInput("ins-arrow-line", "change", (value) => {
       pushHistory();
       arrow.lineStyle = normalizeLineStyle(value);
+      syncCanvasRectToContent();
       render();
     });
 
@@ -4026,6 +4181,7 @@
         const geom = buildArrowGeometry(arrow);
         arrow.controlPoints = geom.controlPoints;
       }
+      syncCanvasRectToContent();
       render();
     });
 
@@ -4045,21 +4201,25 @@
       bindNumber("ins-cp1x", "input", (num) => {
         pushHistory();
         setControlPoint(arrow, 0, "x", num);
+        syncCanvasRectToContent();
         render();
       });
       bindNumber("ins-cp1y", "input", (num) => {
         pushHistory();
         setControlPoint(arrow, 0, "y", num);
+        syncCanvasRectToContent();
         render();
       });
       bindNumber("ins-cp2x", "input", (num) => {
         pushHistory();
         setControlPoint(arrow, 1, "x", num);
+        syncCanvasRectToContent();
         render();
       });
       bindNumber("ins-cp2y", "input", (num) => {
         pushHistory();
         setControlPoint(arrow, 1, "y", num);
+        syncCanvasRectToContent();
         render();
       });
     }
@@ -4071,6 +4231,7 @@
           pushHistory();
           const geom = buildArrowGeometry(arrow);
           arrow.waypoints.push({ x: (geom.from.x + geom.to.x) / 2, y: (geom.from.y + geom.to.y) / 2 });
+          syncCanvasRectToContent();
           render();
         });
       }
@@ -4079,11 +4240,13 @@
         bindNumberByAttr("data-waypoint-x", idx, (num) => {
           pushHistory();
           arrow.waypoints[idx].x = num;
+          syncCanvasRectToContent();
           render();
         });
         bindNumberByAttr("data-waypoint-y", idx, (num) => {
           pushHistory();
           arrow.waypoints[idx].y = num;
+          syncCanvasRectToContent();
           render();
         });
 
@@ -4092,6 +4255,7 @@
           removeBtn.addEventListener("click", () => {
             pushHistory();
             arrow.waypoints.splice(idx, 1);
+            syncCanvasRectToContent();
             render();
           });
         }
@@ -4144,9 +4308,11 @@
       state.history = [];
       state.future = [];
       ensureModelDefaults();
+      syncCanvasRectToContent();
       state.selected = null;
       state.connectSourceId = null;
       render();
+      recenterView();
       setStatus("Loaded model from " + payload.paths.store, "ok");
     } catch (err) {
       setStatus("Load error: " + (err && err.message ? err.message : String(err)), "error");
@@ -4161,6 +4327,7 @@
       const payload = await apiSaveModel();
       state.model = payload.model || state.model;
       ensureModelDefaults();
+      syncCanvasRectToContent();
       render();
       setStatus("Saved diagram store to " + payload.paths.store, "ok");
     } catch (err) {
@@ -4176,6 +4343,7 @@
       const payload = await apiGenerate();
       state.model = payload.model || state.model;
       ensureModelDefaults();
+      syncCanvasRectToContent();
       render();
       setStatus("Generated " + payload.paths.renderer + " (" + payload.renderer.bytes + " bytes)", "ok");
     } catch (err) {
@@ -4204,8 +4372,9 @@
 
     els.deleteBtn.addEventListener("click", deleteSelected);
 
-    els.zoomInBtn.addEventListener("click", () => setZoom(state.view.zoom * 1.12));
-    els.zoomOutBtn.addEventListener("click", () => setZoom(state.view.zoom / 1.12));
+    els.zoomInBtn.addEventListener("click", () => setZoom(state.view.zoom + ZOOM_STEP));
+    els.zoomOutBtn.addEventListener("click", () => setZoom(state.view.zoom - ZOOM_STEP));
+    els.recenterBtn.addEventListener("click", recenterView);
     els.zoomResetBtn.addEventListener("click", resetView);
 
     els.svg.addEventListener("pointerdown", onBackgroundPointerDown);
@@ -4214,7 +4383,6 @@
     window.addEventListener("pointercancel", cancelActiveDrag);
 
     window.addEventListener("wheel", zoomFromWheelEvent, { passive: false });
-    els.canvasScroll.addEventListener("scroll", extendWorkspaceForViewport, { passive: true });
 
     // Safari/macOS trackpad pinch support.
     let gestureStartZoom = 1;
@@ -4305,6 +4473,7 @@
     ensureModelDefaults();
     bindEvents();
     render();
+    recenterView();
     loadModel();
   }
 

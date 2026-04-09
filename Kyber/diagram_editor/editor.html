@@ -107,12 +107,19 @@
       top: 10px;
       left: 10px;
       z-index: 10;
-      display: flex;
+      display: grid;
+      grid-template-columns: repeat(2, max-content);
       gap: 6px;
       background: rgba(4, 10, 20, 0.8);
       border: 1px solid #2c446c;
       border-radius: 8px;
       padding: 6px;
+    }
+
+    #recenter-btn,
+    #zoom-reset-btn,
+    #zoom-label {
+      grid-column: 1 / -1;
     }
 
     #canvas-scroll {
@@ -121,6 +128,7 @@
       overflow: auto;
       padding: 4px;
       cursor: grab;
+      background: #060c18;
     }
 
     #canvas-scroll.panning {
@@ -129,13 +137,11 @@
 
     #diagram-canvas {
       display: block;
-      background: #0b1220;
-      border: 1px solid #1f3556;
-      border-radius: 10px;
+      background: transparent;
+      border: 0;
+      border-radius: 0;
       touch-action: none;
       user-select: none;
-      min-width: 100%;
-      min-height: 100%;
     }
 
     #inspector {
@@ -487,7 +493,7 @@
     }
 
     .zoom-label {
-      min-width: 58px;
+      min-width: 64px;
       text-align: center;
       color: #cfe1ff;
       font-size: 12px;
@@ -565,6 +571,7 @@
         <div id="canvas-toolbar">
           <button id="zoom-in-btn">+</button>
           <button id="zoom-out-btn">-</button>
+          <button id="recenter-btn">Recenter</button>
           <button id="zoom-reset-btn">Reset</button>
           <div id="zoom-label" class="zoom-label">100%</div>
         </div>
