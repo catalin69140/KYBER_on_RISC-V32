@@ -2296,6 +2296,44 @@
     }
   }
 
+  function renderCanvasTiles(tileLayer, canvas) {
+    if (!tileLayer || !canvas) return;
+    const minX = canvas.x;
+    const minY = canvas.y;
+    const maxX = canvas.x + canvas.width;
+    const maxY = canvas.y + canvas.height;
+    for (let x = minX; x < maxX; x += WORKSPACE_EXPAND_CHUNK) {
+      for (let y = minY; y < maxY; y += WORKSPACE_EXPAND_CHUNK) {
+        const tileWidth = Math.min(WORKSPACE_EXPAND_CHUNK, maxX - x);
+        const tileHeight = Math.min(WORKSPACE_EXPAND_CHUNK, maxY - y);
+        tileLayer.appendChild(createSvg("rect", {
+          x: x,
+          y: y,
+          width: tileWidth,
+          height: tileHeight,
+          fill: "none",
+          stroke: "#0c1422",
+          "stroke-width": 3.4,
+          opacity: 0.7,
+          "vector-effect": "non-scaling-stroke",
+          "pointer-events": "none",
+        }));
+        tileLayer.appendChild(createSvg("rect", {
+          x: x,
+          y: y,
+          width: tileWidth,
+          height: tileHeight,
+          fill: "none",
+          stroke: "#476489",
+          "stroke-width": 1.45,
+          opacity: 0.95,
+          "vector-effect": "non-scaling-stroke",
+          "pointer-events": "none",
+        }));
+      }
+    }
+  }
+
   function render(skipInspector) {
     ensureModelDefaults();
     applyViewBox();
@@ -2344,14 +2382,17 @@
       "pointer-events": "none",
     }));
 
+    const tileLayer = createSvg("g");
     const shapeLayer = createSvg("g");
     const arrowLayer = createSvg("g");
     const overlayLayer = createSvg("g");
 
+    els.svg.appendChild(tileLayer);
     els.svg.appendChild(shapeLayer);
     els.svg.appendChild(arrowLayer);
     els.svg.appendChild(overlayLayer);
 
+    renderCanvasTiles(tileLayer, canvas);
     sortedShapes().forEach((shape) => renderShape(shapeLayer, shape));
     sortedArrows().forEach((arrow) => renderArrow(arrowLayer, arrow));
 
