@@ -108,6 +108,10 @@
       grid-template-columns: repeat(3, minmax(0, 1fr));
     }
 
+    .aux-tool-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
     .tool-icon-button {
       display: inline-flex;
       align-items: center;
@@ -683,13 +687,12 @@
 
         <div class="tool-group">
           <h3>Container Tools</h3>
-          <button id="add-container-standard-btn">Standard Container</button>
-          <button id="add-container-header-btn">Header Container</button>
+          <div id="container-tools-grid" class="tool-icon-grid aux-tool-grid"></div>
         </div>
 
         <div class="tool-group">
           <h3>Group Forms</h3>
-          <button id="add-component-group-btn">Component Group</button>
+          <div id="group-tools-grid" class="tool-icon-grid aux-tool-grid"></div>
         </div>
       </aside>
 

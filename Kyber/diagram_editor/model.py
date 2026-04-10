@@ -208,9 +208,9 @@ def _default_shape_size(kind: str) -> Tuple[float, float]:
     if kind == "cloud_callout":
         return 132.0, 88.0
     if kind == "card":
-        return 108.0, 68.0
+        return 82.0, 102.0
     if kind == "note":
-        return 108.0, 76.0
+        return 86.0, 108.0
     if kind in VALID_CONTAINER_KINDS:
         return 240.0, 200.0
     if kind == "component_group":

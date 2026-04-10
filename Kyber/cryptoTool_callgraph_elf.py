@@ -2742,6 +2742,10 @@ def write_html_animation(
             return appendShapeEl("polygon", { points: points.map(refPointStr).join(" ") }, fillOverride);
         }
 
+        function appendFacePolygon(points, fillOverride) {
+            return appendPolygonShape(points, fillOverride);
+        }
+
         if (["triangle", "diamond", "parallelogram", "trapezoid", "pentagon", "hexagon", "octagon", "message", "card", "note"].includes(shapeKind)) {
             const points = refPolygonVertices(spec, shapeKind);
             appendPolygonShape(points);
@@ -2792,6 +2796,14 @@ def write_html_animation(
             const ry = Math.max(8, Math.min(16, spec.h * 0.12));
             const topCy = spec.y + ry + 2;
             const bottomCy = spec.y + spec.h - ry - 2;
+            g.appendChild(createSvgEl("ellipse", {
+                cx: spec.x + rx,
+                cy: bottomCy,
+                rx: rx,
+                ry: ry,
+                fill: fill,
+                stroke: "none"
+            }));
             g.appendChild(createSvgEl("rect", {
                 x: spec.x,
                 y: topCy,
@@ -2802,7 +2814,7 @@ def write_html_animation(
             }));
             appendShapeEl("ellipse", { cx: spec.x + rx, cy: topCy, rx, ry });
             const bottom = createSvgEl("ellipse", { cx: spec.x + rx, cy: bottomCy, rx, ry });
-            bottom.setAttribute("fill", "none");
+            bottom.setAttribute("fill", fill);
             bottom.setAttribute("stroke", stroke);
             bottom.setAttribute("stroke-width", String(borderWidth));
             if (dash) bottom.setAttribute("stroke-dasharray", dash);
@@ -2836,11 +2848,35 @@ def write_html_animation(
         } else if (shapeKind === "cube" || shapeKind === "cuboid") {
             const offX = Math.min(spec.w * (shapeKind === "cube" ? 0.22 : 0.26), 26);
             const offY = Math.min(spec.h * 0.18, 18);
-            appendShapeEl("rect", {
+            const backRect = {
                 x: spec.x,
                 y: spec.y,
                 width: Math.max(10, spec.w - offX),
-                height: Math.max(10, spec.h - offY),
+                height: Math.max(10, spec.h - offY)
+            };
+            const frontRect = {
+                x: spec.x + offX,
+                y: spec.y + offY,
+                width: Math.max(10, spec.w - offX),
+                height: Math.max(10, spec.h - offY)
+            };
+            appendFacePolygon([
+                { x: backRect.x, y: backRect.y },
+                { x: backRect.x + backRect.width, y: backRect.y },
+                { x: frontRect.x + frontRect.width, y: frontRect.y },
+                { x: frontRect.x, y: frontRect.y }
+            ], refDarkenHex(fill, -18));
+            appendFacePolygon([
+                { x: backRect.x + backRect.width, y: backRect.y },
+                { x: backRect.x + backRect.width, y: backRect.y + backRect.height },
+                { x: frontRect.x + frontRect.width, y: frontRect.y + frontRect.height },
+                { x: frontRect.x + frontRect.width, y: frontRect.y }
+            ], refDarkenHex(fill, -10));
+            appendShapeEl("rect", {
+                x: backRect.x,
+                y: backRect.y,
+                width: backRect.width,
+                height: backRect.height,
                 rx: 0,
                 ry: 0
             }, refDarkenHex(fill, -16));
@@ -2855,26 +2891,41 @@ def write_html_animation(
                 if (dash) line.setAttribute("stroke-dasharray", dash);
                 g.appendChild(line);
             });
+            const bottomLeft = createSvgEl("line", {
+                x1: spec.x,
+                y1: spec.y + spec.h - offY,
+                x2: spec.x + offX,
+                y2: spec.y + spec.h
+            });
+            bottomLeft.setAttribute("stroke", stroke);
+            bottomLeft.setAttribute("stroke-width", String(minorSeparatorWidth));
+            if (dash) bottomLeft.setAttribute("stroke-dasharray", dash);
+            g.appendChild(bottomLeft);
             appendShapeEl("rect", {
-                x: spec.x + offX,
-                y: spec.y + offY,
-                width: Math.max(10, spec.w - offX),
-                height: Math.max(10, spec.h - offY),
+                x: frontRect.x,
+                y: frontRect.y,
+                width: frontRect.width,
+                height: frontRect.height,
                 rx: 0,
                 ry: 0
             });
         } else if (shapeKind === "hexagonal_prism") {
-            const back = refPolygonVertices({ x: spec.x, y: spec.y, w: spec.w - 18, h: spec.h - 12 }, "hexagon");
-            const front = refPolygonVertices({ x: spec.x + 18, y: spec.y + 12, w: spec.w - 18, h: spec.h - 12 }, "hexagon");
-            appendPolygonShape(back, refDarkenHex(fill, -14));
-            [0, 1, 2, 5].forEach((idx) => {
-                const line = createSvgEl("line", { x1: back[idx].x, y1: back[idx].y, x2: front[idx].x, y2: front[idx].y });
+            const capHeight = Math.max(12, Math.min(22, spec.h * 0.18));
+            const prismHeight = Math.max(18, spec.h - capHeight - 10);
+            const top = refPolygonVertices({ x: spec.x + spec.w * 0.12, y: spec.y + 2, w: spec.w * 0.76, h: capHeight }, "hexagon");
+            const bottom = top.map((point) => ({ x: point.x, y: point.y + prismHeight }));
+            appendFacePolygon([top[5], top[0], bottom[0], bottom[5]], refDarkenHex(fill, -12));
+            appendFacePolygon([top[0], top[1], bottom[1], bottom[0]], refDarkenHex(fill, -18));
+            appendFacePolygon([top[1], top[2], bottom[2], bottom[1]], refDarkenHex(fill, -8));
+            appendPolygonShape(top, refDarkenHex(fill, -20));
+            appendPolygonShape(bottom);
+            [0, 1, 2, 3, 4, 5].forEach((idx) => {
+                const line = createSvgEl("line", { x1: top[idx].x, y1: top[idx].y, x2: bottom[idx].x, y2: bottom[idx].y });
                 line.setAttribute("stroke", stroke);
                 line.setAttribute("stroke-width", String(minorSeparatorWidth));
                 if (dash) line.setAttribute("stroke-dasharray", dash);
                 g.appendChild(line);
             });
-            appendPolygonShape(front);
         } else if (shapeKind === "and") {
             appendPathShape(`M ${spec.x} ${spec.y} L ${spec.x + spec.w * 0.56} ${spec.y} Q ${spec.x + spec.w} ${spec.y + spec.h / 2} ${spec.x + spec.w * 0.56} ${spec.y + spec.h} L ${spec.x} ${spec.y + spec.h} Z`);
         } else if (shapeKind === "or") {

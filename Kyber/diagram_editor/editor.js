@@ -48,8 +48,8 @@
     actor: { width: 86, height: 116 },
     cloud: { width: 124, height: 76 },
     cloud_callout: { width: 132, height: 88 },
-    card: { width: 108, height: 68 },
-    note: { width: 108, height: 76 },
+    card: { width: 82, height: 102 },
+    note: { width: 86, height: 108 },
     container: { width: 240, height: 200 },
     header_container: { width: 240, height: 200 },
     component_group: { width: 200, height: 70 },
@@ -106,6 +106,13 @@
     { mode: "connect_directional_connector", label: "Directional Connector" },
     { mode: "connect_bidirectional_connector", label: "Bi-directional Connector" },
     { mode: "connect_line", label: "Line" },
+  ];
+  const CONTAINER_TOOL_DEFS = [
+    { kind: "container", label: "Standard Container" },
+    { kind: "header_container", label: "Header Container" },
+  ];
+  const GROUP_TOOL_DEFS = [
+    { kind: "component_group", label: "Component Group" },
   ];
 
   const CONTAINER_KINDS = new Set(["container", "header_container"]);
@@ -169,9 +176,8 @@
     toolSelectBtn: document.getElementById("tool-select"),
     connectionToolsGrid: document.getElementById("connection-tools-grid"),
     shapeToolsGrid: document.getElementById("shape-tools-grid"),
-    addContainerStandardBtn: document.getElementById("add-container-standard-btn"),
-    addContainerHeaderBtn: document.getElementById("add-container-header-btn"),
-    addComponentGroupBtn: document.getElementById("add-component-group-btn"),
+    containerToolsGrid: document.getElementById("container-tools-grid"),
+    groupToolsGrid: document.getElementById("group-tools-grid"),
     deleteBtn: document.getElementById("delete-btn"),
     zoomInBtn: document.getElementById("zoom-in-btn"),
     zoomOutBtn: document.getElementById("zoom-out-btn"),
@@ -1605,7 +1611,11 @@
     const stroke = "#d8e6ff";
     const fill = "rgba(128, 182, 255, 0.16)";
     const dash = kind === "cloud_callout" ? "4 3" : "";
-    const baseShape = { kind: kind, x: 8, y: 10, width: 32, height: 24 };
+    const baseShape = kind === "card"
+      ? { kind: kind, x: 13, y: 7, width: 21, height: 31 }
+      : kind === "note"
+        ? { kind: kind, x: 12, y: 6, width: 22, height: 32 }
+        : { kind: kind, x: 8, y: 10, width: 32, height: 24 };
     const polygonKinds = new Set([
       "triangle",
       "diamond",
@@ -1643,6 +1653,10 @@
       return polygon;
     }
 
+    function addFilledFace(points, fillColor) {
+      return addPolygon(points, fillColor || "rgba(128, 182, 255, 0.11)");
+    }
+
     if (polygonKinds.has(kind)) {
       addPolygon(polygonVerticesForShape(baseShape));
       if (kind === "note") {
@@ -1673,20 +1687,34 @@
     if (kind === "cube" || kind === "cuboid") {
       const offX = kind === "cube" ? 6 : 8;
       const offY = 5;
+      const backRect = { x: 10, y: 8, width: 22, height: 18 };
+      const frontRect = { x: 10 + offX, y: 8 + offY, width: kind === "cube" ? 22 : 24, height: 18 };
       const back = appendToolIconEl(svg, "rect", {
-        x: 10,
-        y: 8,
-        width: 22,
-        height: 18,
+        x: backRect.x,
+        y: backRect.y,
+        width: backRect.width,
+        height: backRect.height,
         fill: "rgba(128, 182, 255, 0.08)",
         stroke,
         "stroke-width": 1.5,
       });
+      addFilledFace([
+        { x: backRect.x, y: backRect.y },
+        { x: backRect.x + backRect.width, y: backRect.y },
+        { x: frontRect.x + frontRect.width, y: frontRect.y },
+        { x: frontRect.x, y: frontRect.y },
+      ], "rgba(128, 182, 255, 0.18)");
+      addFilledFace([
+        { x: backRect.x + backRect.width, y: backRect.y },
+        { x: backRect.x + backRect.width, y: backRect.y + backRect.height },
+        { x: frontRect.x + frontRect.width, y: frontRect.y + frontRect.height },
+        { x: frontRect.x + frontRect.width, y: frontRect.y },
+      ], "rgba(128, 182, 255, 0.12)");
       const front = appendToolIconEl(svg, "rect", {
-        x: 10 + offX,
-        y: 8 + offY,
-        width: kind === "cube" ? 22 : 24,
-        height: 18,
+        x: frontRect.x,
+        y: frontRect.y,
+        width: frontRect.width,
+        height: frontRect.height,
         fill,
         stroke,
         "stroke-width": 1.8,
@@ -1695,9 +1723,10 @@
         back.setAttribute("stroke-dasharray", dash);
         front.setAttribute("stroke-dasharray", dash);
       }
-      addLine(10, 8, 10 + offX, 8 + offY);
-      addLine(32, 8, 32 + offX, 8 + offY);
-      addLine(32, 26, 32 + offX, 26 + offY);
+      addLine(backRect.x, backRect.y, frontRect.x, frontRect.y);
+      addLine(backRect.x + backRect.width, backRect.y, frontRect.x + frontRect.width, frontRect.y);
+      addLine(backRect.x + backRect.width, backRect.y + backRect.height, frontRect.x + frontRect.width, frontRect.y + frontRect.height);
+      addLine(backRect.x, backRect.y + backRect.height, frontRect.x, frontRect.y + frontRect.height);
       return svg;
     }
 
@@ -1718,9 +1747,10 @@
     if (kind === "cylinder") {
       const topY = 13;
       const bottomY = 30;
+      appendToolIconEl(svg, "ellipse", { cx: 24, cy: bottomY, rx: 14, ry: 5, fill, stroke: "none" });
       appendToolIconEl(svg, "rect", { x: 10, y: topY, width: 28, height: bottomY - topY, fill, stroke: "none" });
       const top = appendToolIconEl(svg, "ellipse", { cx: 24, cy: topY, rx: 14, ry: 5, fill, stroke, "stroke-width": 1.8 });
-      const bottom = appendToolIconEl(svg, "ellipse", { cx: 24, cy: bottomY, rx: 14, ry: 5, fill: "none", stroke, "stroke-width": 1.8 });
+      const bottom = appendToolIconEl(svg, "ellipse", { cx: 24, cy: bottomY, rx: 14, ry: 5, fill, stroke, "stroke-width": 1.8 });
       if (dash) {
         top.setAttribute("stroke-dasharray", dash);
         bottom.setAttribute("stroke-dasharray", dash);
@@ -1738,11 +1768,14 @@
     }
 
     if (kind === "hexagonal_prism") {
-      const back = polygonVerticesForShape({ kind: "hexagon", x: 8, y: 9, width: 26, height: 20 });
-      const front = polygonVerticesForShape({ kind: "hexagon", x: 15, y: 15, width: 26, height: 20 });
-      addPolygon(back, "rgba(128, 182, 255, 0.08)");
-      addPolygon(front);
-      [0, 1, 2, 5].forEach((idx) => addLine(back[idx].x, back[idx].y, front[idx].x, front[idx].y));
+      const top = polygonVerticesForShape({ kind: "hexagon", x: 11, y: 7, width: 26, height: 12 });
+      const bottom = top.map((point) => ({ x: point.x, y: point.y + 17 }));
+      addFilledFace([top[5], top[0], bottom[0], bottom[5]], "rgba(128, 182, 255, 0.1)");
+      addFilledFace([top[0], top[1], bottom[1], bottom[0]], "rgba(128, 182, 255, 0.16)");
+      addFilledFace([top[1], top[2], bottom[2], bottom[1]], "rgba(128, 182, 255, 0.12)");
+      addPolygon(top, "rgba(128, 182, 255, 0.2)");
+      addPolygon(bottom, fill);
+      [0, 1, 2, 3, 4, 5].forEach((idx) => addLine(top[idx].x, top[idx].y, bottom[idx].x, bottom[idx].y));
       return svg;
     }
 
@@ -1815,8 +1848,11 @@
   function createConnectionToolIcon(connectionType, label) {
     const svg = createToolIconRoot(label);
     const stroke = "#d8e6ff";
-    const path = appendToolIconEl(svg, "path", {
-      d: "M 8 30 L 24 16 L 40 16",
+    appendToolIconEl(svg, "line", {
+      x1: 8,
+      y1: 24,
+      x2: 40,
+      y2: 24,
       fill: "none",
       stroke,
       "stroke-width": 2.1,
@@ -1825,13 +1861,13 @@
     });
     if (connectionType === "line") return svg;
     const endHead = appendToolIconEl(svg, "polygon", {
-      points: "34,12 40,16 34,20",
+      points: "34,20 40,24 34,28",
       fill: stroke,
       stroke: "none",
     });
     if (connectionType === "bidirectional_connector") {
       appendToolIconEl(svg, "polygon", {
-        points: "14,26 8,30 14,34",
+        points: "14,20 8,24 14,28",
         fill: stroke,
         stroke: "none",
       });
@@ -1866,6 +1902,32 @@
         btn.setAttribute("aria-label", tool.label);
         btn.appendChild(createShapeToolIcon(tool.kind, tool.label));
         els.shapeToolsGrid.appendChild(btn);
+      });
+    }
+    if (els.containerToolsGrid) {
+      els.containerToolsGrid.innerHTML = "";
+      CONTAINER_TOOL_DEFS.forEach((tool) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "tool-icon-button";
+        btn.dataset.kind = tool.kind;
+        btn.title = tool.label;
+        btn.setAttribute("aria-label", tool.label);
+        btn.appendChild(createShapeToolIcon(tool.kind, tool.label));
+        els.containerToolsGrid.appendChild(btn);
+      });
+    }
+    if (els.groupToolsGrid) {
+      els.groupToolsGrid.innerHTML = "";
+      GROUP_TOOL_DEFS.forEach((tool) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "tool-icon-button";
+        btn.dataset.kind = tool.kind;
+        btn.title = tool.label;
+        btn.setAttribute("aria-label", tool.label);
+        btn.appendChild(createShapeToolIcon(tool.kind, tool.label));
+        els.groupToolsGrid.appendChild(btn);
       });
     }
   }
@@ -2105,6 +2167,10 @@
       return appendShapeEl("polygon", { points: points.map(pointStr).join(" ") }, fillOverride);
     }
 
+    function appendFacePolygon(points, fillOverride) {
+      return appendPolygonShape(points, fillOverride);
+    }
+
     if (kind === "triangle" || kind === "diamond" || kind === "parallelogram" || kind === "trapezoid" || kind === "pentagon" || kind === "hexagon" || kind === "octagon" || kind === "message" || kind === "card" || kind === "note") {
       const points = polygonVerticesForShape(shape);
       appendPolygonShape(points);
@@ -2152,6 +2218,14 @@
       const ry = Math.max(8, Math.min(16, shape.height * 0.12));
       const topCy = shape.y + ry + 2;
       const bottomCy = shape.y + shape.height - ry - 2;
+      group.appendChild(createSvg("ellipse", {
+        cx: shape.x + rx,
+        cy: bottomCy,
+        rx: rx,
+        ry: ry,
+        fill: shape.fill,
+        stroke: "none",
+      }));
       group.appendChild(createSvg("rect", {
         x: shape.x,
         y: topCy,
@@ -2171,7 +2245,7 @@
         cy: bottomCy,
         rx: rx,
         ry: ry,
-        fill: "none",
+        fill: shape.fill,
         stroke: strokeColor,
         "stroke-width": strokeWidth,
         "stroke-dasharray": dash,
@@ -2220,11 +2294,35 @@
     } else if (kind === "cube" || kind === "cuboid") {
       const offX = Math.min(shape.width * (kind === "cube" ? 0.22 : 0.26), 26);
       const offY = Math.min(shape.height * 0.18, 18);
-      appendShapeEl("rect", {
+      const backRect = {
         x: shape.x,
         y: shape.y,
         width: Math.max(10, shape.width - offX),
         height: Math.max(10, shape.height - offY),
+      };
+      const frontRect = {
+        x: shape.x + offX,
+        y: shape.y + offY,
+        width: Math.max(10, shape.width - offX),
+        height: Math.max(10, shape.height - offY),
+      };
+      appendFacePolygon([
+        { x: backRect.x, y: backRect.y },
+        { x: backRect.x + backRect.width, y: backRect.y },
+        { x: frontRect.x + frontRect.width, y: frontRect.y },
+        { x: frontRect.x, y: frontRect.y },
+      ], darken(shape.fill, -18));
+      appendFacePolygon([
+        { x: backRect.x + backRect.width, y: backRect.y },
+        { x: backRect.x + backRect.width, y: backRect.y + backRect.height },
+        { x: frontRect.x + frontRect.width, y: frontRect.y + frontRect.height },
+        { x: frontRect.x + frontRect.width, y: frontRect.y },
+      ], darken(shape.fill, -10));
+      appendShapeEl("rect", {
+        x: backRect.x,
+        y: backRect.y,
+        width: backRect.width,
+        height: backRect.height,
         rx: 0,
         ry: 0,
       }, darken(shape.fill, -16));
@@ -2255,42 +2353,50 @@
         "stroke-width": minorSeparatorWidth,
         "stroke-dasharray": dash,
       }));
+      group.appendChild(createSvg("line", {
+        x1: shape.x,
+        y1: shape.y + shape.height - offY,
+        x2: shape.x + offX,
+        y2: shape.y + shape.height,
+        stroke: strokeColor,
+        "stroke-width": minorSeparatorWidth,
+        "stroke-dasharray": dash,
+      }));
       appendShapeEl("rect", {
-        x: shape.x + offX,
-        y: shape.y + offY,
-        width: Math.max(10, shape.width - offX),
-        height: Math.max(10, shape.height - offY),
+        x: frontRect.x,
+        y: frontRect.y,
+        width: frontRect.width,
+        height: frontRect.height,
         rx: 0,
         ry: 0,
       });
     } else if (kind === "hexagonal_prism") {
-      const back = polygonVerticesForShape({
-        x: shape.x,
-        y: shape.y,
-        width: shape.width - 18,
-        height: shape.height - 12,
+      const capHeight = Math.max(12, Math.min(22, shape.height * 0.18));
+      const prismHeight = Math.max(18, shape.height - capHeight - 10);
+      const top = polygonVerticesForShape({
+        x: shape.x + shape.width * 0.12,
+        y: shape.y + 2,
+        width: shape.width * 0.76,
+        height: capHeight,
         kind: "hexagon",
       });
-      const front = polygonVerticesForShape({
-        x: shape.x + 18,
-        y: shape.y + 12,
-        width: shape.width - 18,
-        height: shape.height - 12,
-        kind: "hexagon",
-      });
-      appendPolygonShape(back, darken(shape.fill, -14));
-      [0, 1, 2, 5].forEach((idx) => {
+      const bottom = top.map((point) => ({ x: point.x, y: point.y + prismHeight }));
+      appendFacePolygon([top[5], top[0], bottom[0], bottom[5]], darken(shape.fill, -12));
+      appendFacePolygon([top[0], top[1], bottom[1], bottom[0]], darken(shape.fill, -18));
+      appendFacePolygon([top[1], top[2], bottom[2], bottom[1]], darken(shape.fill, -8));
+      appendPolygonShape(top, darken(shape.fill, -20));
+      appendPolygonShape(bottom);
+      [0, 1, 2, 3, 4, 5].forEach((idx) => {
         group.appendChild(createSvg("line", {
-          x1: back[idx].x,
-          y1: back[idx].y,
-          x2: front[idx].x,
-          y2: front[idx].y,
+          x1: top[idx].x,
+          y1: top[idx].y,
+          x2: bottom[idx].x,
+          y2: bottom[idx].y,
           stroke: strokeColor,
           "stroke-width": minorSeparatorWidth,
           "stroke-dasharray": dash,
         }));
       });
-      appendPolygonShape(front);
     } else if (kind === "and") {
       const x0 = shape.x;
       const y0 = shape.y;
@@ -5589,9 +5695,21 @@
       });
     }
 
-    els.addContainerStandardBtn.addEventListener("click", () => addShape("container"));
-    els.addContainerHeaderBtn.addEventListener("click", () => addShape("header_container"));
-    els.addComponentGroupBtn.addEventListener("click", () => addShape("component_group"));
+    if (els.containerToolsGrid) {
+      els.containerToolsGrid.addEventListener("click", (evt) => {
+        const button = evt.target && evt.target.closest("[data-kind]");
+        if (!button) return;
+        addShape(button.getAttribute("data-kind") || "container");
+      });
+    }
+
+    if (els.groupToolsGrid) {
+      els.groupToolsGrid.addEventListener("click", (evt) => {
+        const button = evt.target && evt.target.closest("[data-kind]");
+        if (!button) return;
+        addShape(button.getAttribute("data-kind") || "component_group");
+      });
+    }
 
     els.deleteBtn.addEventListener("click", deleteSelected);
 
