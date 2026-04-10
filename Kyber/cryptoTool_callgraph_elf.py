@@ -2463,6 +2463,72 @@ def write_html_animation(
         return Math.max(3, Math.min(14, Math.min(spec.w, spec.h) * 0.12));
     }
 
+    function refRoundedRectPathSelective(x, y, width, height, radii) {
+        const safeW = Math.max(0, Number(width) || 0);
+        const safeH = Math.max(0, Number(height) || 0);
+        const next = {
+            tl: Math.max(0, Number(radii && radii.tl) || 0),
+            tr: Math.max(0, Number(radii && radii.tr) || 0),
+            br: Math.max(0, Number(radii && radii.br) || 0),
+            bl: Math.max(0, Number(radii && radii.bl) || 0)
+        };
+        const maxRadius = Math.min(safeW / 2, safeH / 2);
+        Object.keys(next).forEach((key) => {
+            next[key] = Math.min(next[key], maxRadius);
+        });
+        return [
+            "M", x + next.tl, y,
+            "L", x + safeW - next.tr, y,
+            next.tr ? `Q ${x + safeW} ${y} ${x + safeW} ${y + next.tr}` : `L ${x + safeW} ${y}`,
+            "L", x + safeW, y + safeH - next.br,
+            next.br ? `Q ${x + safeW} ${y + safeH} ${x + safeW - next.br} ${y + safeH}` : `L ${x + safeW} ${y + safeH}`,
+            "L", x + next.bl, y + safeH,
+            next.bl ? `Q ${x} ${y + safeH} ${x} ${y + safeH - next.bl}` : `L ${x} ${y + safeH}`,
+            "L", x, y + next.tl,
+            next.tl ? `Q ${x} ${y} ${x + next.tl} ${y}` : `L ${x} ${y}`,
+            "Z"
+        ].join(" ");
+    }
+
+    function refComponentGroupHeaderHeight(spec) {
+        return Math.max(18, Math.min(36, Math.round(spec.h * 0.22)));
+    }
+
+    function refComponentGroupLayout(spec) {
+        const count = Math.max(1, Math.min(24, Number(spec.componentCount) || 4));
+        const direction = String(spec.componentDirection || "horizontal").toLowerCase() === "vertical" ? "vertical" : "horizontal";
+        const headerH = refComponentGroupHeaderHeight(spec);
+        const bodyX = spec.x + 1;
+        const bodyY = spec.y + headerH + 1;
+        const bodyWidth = Math.max(1, spec.w - 2);
+        const bodyHeight = Math.max(1, spec.h - headerH - 2);
+        const components = [];
+        if (direction === "horizontal") {
+            const cellWidth = bodyWidth / count;
+            for (let idx = 0; idx < count; idx += 1) {
+                const x0 = bodyX + idx * cellWidth;
+                const x1 = idx === count - 1 ? (bodyX + bodyWidth) : (x0 + cellWidth);
+                components.push({ index: idx, x: x0, y: bodyY, w: Math.max(1, x1 - x0), h: bodyHeight });
+            }
+        } else {
+            const cellHeight = bodyHeight / count;
+            for (let idx = 0; idx < count; idx += 1) {
+                const y0 = bodyY + idx * cellHeight;
+                const y1 = idx === count - 1 ? (bodyY + bodyHeight) : (y0 + cellHeight);
+                components.push({ index: idx, x: bodyX, y: y0, w: bodyWidth, h: Math.max(1, y1 - y0) });
+            }
+        }
+        return { headerH, bodyX, bodyY, bodyWidth, bodyHeight, direction, components };
+    }
+
+    function refComponentBoxTextBox(box) {
+        return refInsetTextBox(
+            { x: box.x, y: box.y, w: box.w, h: box.h },
+            { left: 0.08, right: 0.08, top: 0.08, bottom: 0.08, minX: 6, maxX: 16, minY: 5, maxY: 16 },
+            { width: 18, height: 18 }
+        );
+    }
+
     function refPolygonVertices(spec, kind) {
         const x = spec.x;
         const y = spec.y;
@@ -2540,11 +2606,11 @@ def write_html_animation(
 
     function refShapeTextBox(spec, kind) {
         if (kind === "header_container") {
-            const headerH = Math.max(18, Math.min(36, Math.round(spec.h * 0.22)));
+            const headerH = refComponentGroupHeaderHeight(spec);
             return { x: spec.x + 8, y: spec.y + 2, width: Math.max(24, spec.w - 16), height: Math.max(14, headerH - 4) };
         }
         if (kind === "component_group") {
-            const titleHeight = Math.max(14, Math.min(28, Math.round(spec.h * 0.24)));
+            const titleHeight = refComponentGroupHeaderHeight(spec);
             return { x: spec.x + 8, y: spec.y + 2, width: Math.max(24, spec.w - 16), height: Math.max(14, titleHeight - 4) };
         }
         if (kind === "circle" || kind === "oval") {
@@ -2577,8 +2643,7 @@ def write_html_animation(
         return refInsetTextBox(spec, { left: 0.08, right: 0.08, top: 0.08, bottom: 0.08, minX: 6, maxX: 18, minY: 5, maxY: 16 }, { width: 20, height: 20 });
     }
 
-    function refRenderRichTextBlock(g, spec, kind) {
-        const box = refShapeTextBox(spec, kind);
+    function refRenderRichTextBlockInBox(g, spec, box) {
         const foreign = createSvgEl("foreignObject", {
             x: box.x,
             y: box.y,
@@ -2613,6 +2678,10 @@ def write_html_animation(
         return foreign;
     }
 
+    function refRenderRichTextBlock(g, spec, kind) {
+        return refRenderRichTextBlockInBox(g, spec, refShapeTextBox(spec, kind));
+    }
+
     function refRenderMultilineText(g, opts = {}) {
         const fontSize = Math.max(8, Math.min(40, Number(opts.fontSize) || 12));
         const lines = String(opts.text || "").split(/\\r?\\n/);
@@ -2640,11 +2709,61 @@ def write_html_animation(
         return t;
     }
 
-    function normalizeRefComponentLabels(rawLabels, count) {
+    function normalizeRefGroupComponents(rawComponents, count, spec) {
         const safeCount = Math.max(1, Math.min(24, Number(count) || 1));
-        const out = Array.isArray(rawLabels) ? rawLabels.map(v => String(v || "").trim()) : [];
-        while (out.length < safeCount) out.push(`Item ${out.length + 1}`);
-        return out.slice(0, safeCount);
+        const source = Array.isArray(rawComponents) ? rawComponents : [];
+        const out = [];
+        for (let idx = 0; idx < safeCount; idx += 1) {
+            const raw = source[idx];
+            const fallbackText = `Item ${idx + 1}`;
+            if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+                const text = String(raw.text || raw.label || fallbackText).trim() || fallbackText;
+                out.push({
+                    text,
+                    richText: String(raw.richText || refPlainTextToRichHtml(text)),
+                    fill: String(raw.fill || spec.fill || "#0d172a"),
+                    fillOverride: !!(raw.fillOverride || raw.override),
+                    textColor: String(raw.textColor || spec.textColor || "#f4f7ff"),
+                    textAlign: String(raw.textAlign || "center"),
+                    textVAlign: String(raw.textVAlign || "center"),
+                    fontSize: Math.max(8, Math.min(40, Number(raw.fontSize) || Number(spec.fontSize) || 12)),
+                    fontFamily: String(raw.fontFamily || spec.fontFamily || REF_TEXT_FONT_FAMILY)
+                });
+                continue;
+            }
+            if (typeof raw === "string" && raw.trim()) {
+                const text = raw.trim();
+                out.push({
+                    text,
+                    richText: refPlainTextToRichHtml(text),
+                    fill: String(spec.fill || "#0d172a"),
+                    fillOverride: false,
+                    textColor: String(spec.textColor || "#f4f7ff"),
+                    textAlign: "center",
+                    textVAlign: "center",
+                    fontSize: Math.max(8, Math.min(40, Number(spec.fontSize) || 12)),
+                    fontFamily: String(spec.fontFamily || REF_TEXT_FONT_FAMILY)
+                });
+                continue;
+            }
+            out.push({
+                text: fallbackText,
+                richText: refPlainTextToRichHtml(fallbackText),
+                fill: String(spec.fill || "#0d172a"),
+                fillOverride: false,
+                textColor: String(spec.textColor || "#f4f7ff"),
+                textAlign: "center",
+                textVAlign: "center",
+                fontSize: Math.max(8, Math.min(40, Number(spec.fontSize) || 12)),
+                fontFamily: String(spec.fontFamily || REF_TEXT_FONT_FAMILY)
+            });
+        }
+        return out;
+    }
+
+    function refEffectiveGroupComponentFill(spec, component) {
+        if (!component || !component.fillOverride) return String(spec.fill || "#0d172a");
+        return String(component.fill || spec.fill || "#0d172a");
     }
 
     function registerRefInteractiveNode(g, id, x, y, w, h, meta = {}) {
@@ -2992,14 +3111,11 @@ def write_html_animation(
             if (dash) sep.setAttribute("stroke-dasharray", dash);
             g.appendChild(sep);
         } else if (shapeKind === "component_group") {
-            const headerH = 18;
-            const direction = String(spec.componentDirection || "horizontal").toLowerCase() === "vertical" ? "vertical" : "horizontal";
-            const count = Math.max(1, Math.min(24, Number(spec.componentCount) || 4));
-            const labels = normalizeRefComponentLabels(spec.componentLabels, count);
-            const fontSize = Math.max(8, Math.min(40, Number(spec.fontSize) || 12));
-            const fontFamily = String(spec.fontFamily || REF_TEXT_FONT_FAMILY);
+            const headerH = refComponentGroupHeaderHeight(spec);
+            const layout = refComponentGroupLayout(spec);
+            const components = normalizeRefGroupComponents(spec.components || spec.componentLabels, spec.componentCount, spec);
 
-            const outer = createSvgEl("rect", {
+            appendShapeEl("rect", {
                 x: spec.x,
                 y: spec.y,
                 width: spec.w,
@@ -3007,102 +3123,101 @@ def write_html_animation(
                 rx: rounded,
                 ry: rounded
             });
-            outer.setAttribute("fill", "none");
-            outer.setAttribute("stroke", stroke);
-            outer.setAttribute("stroke-width", String(borderWidth));
-            if (dash) outer.setAttribute("stroke-dasharray", dash);
-            outer.setAttribute("data-base-stroke", stroke);
-            outer.setAttribute("data-base-stroke-width", String(borderWidth));
-            g.appendChild(outer);
-
             g.appendChild(createSvgEl("rect", {
                 x: spec.x + 1,
                 y: spec.y + 1,
                 width: Math.max(1, spec.w - 2),
-                height: headerH,
+                height: Math.max(1, headerH - 1),
                 fill: refDarkenHex(fill, -14),
                 stroke: "none",
                 rx: Math.max(0, rounded - 1),
                 ry: Math.max(0, rounded - 1)
             }));
-            g.appendChild(createSvgEl("rect", {
-                x: spec.x + 1,
-                y: spec.y + headerH + 1,
-                width: Math.max(1, spec.w - 2),
-                height: Math.max(1, spec.h - headerH - 2),
-                fill: fill,
-                stroke: "none"
-            }));
 
             const splitTop = createSvgEl("line", {
-                x1: spec.x + 1,
-                y1: spec.y + headerH + 1,
-                x2: spec.x + spec.w - 1,
-                y2: spec.y + headerH + 1
+                x1: spec.x,
+                y1: spec.y + headerH,
+                x2: spec.x + spec.w,
+                y2: spec.y + headerH
             });
             splitTop.setAttribute("stroke", stroke);
             splitTop.setAttribute("stroke-width", String(separatorWidth));
             if (dash) splitTop.setAttribute("stroke-dasharray", dash);
             g.appendChild(splitTop);
 
-            const bodyY = spec.y + headerH + 2;
-            const bodyH = spec.h - headerH - 4;
-            if (direction === "horizontal") {
-                const innerW = spec.w - 16;
-                const cellW = innerW / count;
-                for (let idx = 0; idx < count; idx += 1) {
-                    const x0 = spec.x + 8 + idx * cellW;
-                    const x1 = idx === count - 1 ? (spec.x + spec.w - 8) : (x0 + cellW);
-                    if (idx > 0) {
-                        const sep = createSvgEl("line", {
-                            x1: x0,
-                            y1: bodyY + 2,
-                            x2: x0,
-                            y2: bodyY + bodyH - 2
-                        });
-                        sep.setAttribute("stroke", stroke);
-                        sep.setAttribute("stroke-width", String(minorSeparatorWidth));
-                        if (dash) sep.setAttribute("stroke-dasharray", dash);
-                        g.appendChild(sep);
-                    }
-                    refRenderMultilineText(g, {
-                        x: (x0 + x1) / 2,
-                        y: bodyY + bodyH / 2 + 1,
-                        text: labels[idx],
-                        fontSize: Math.max(9, fontSize - 1),
-                        fontFamily,
-                        fill: spec.textColor || "#f4f7ff",
-                        textAnchor: "middle"
+            layout.components.forEach((box, idx) => {
+                const component = components[idx];
+                const effectiveFill = refEffectiveGroupComponentFill(spec, component);
+                const innerRadius = Math.max(0, rounded - 1);
+                const isFirst = idx === 0;
+                const isLast = idx === layout.components.length - 1;
+                const bottomLeftRadius = layout.direction === "horizontal"
+                    ? (isFirst ? innerRadius : 0)
+                    : (isLast ? innerRadius : 0);
+                const bottomRightRadius = layout.direction === "horizontal"
+                    ? (isLast ? innerRadius : 0)
+                    : (isLast ? innerRadius : 0);
+                if (bottomLeftRadius || bottomRightRadius) {
+                    const componentShape = createSvgEl("path", {
+                        d: refRoundedRectPathSelective(box.x, box.y, box.w, box.h, {
+                            tl: 0,
+                            tr: 0,
+                            br: bottomRightRadius,
+                            bl: bottomLeftRadius
+                        }),
+                        fill: effectiveFill,
+                        stroke: "none"
                     });
+                    g.appendChild(componentShape);
+                } else {
+                    g.appendChild(createSvgEl("rect", {
+                        x: box.x,
+                        y: box.y,
+                        width: box.w,
+                        height: box.h,
+                        fill: effectiveFill,
+                        stroke: "none"
+                    }));
                 }
+                refRenderRichTextBlockInBox(g, {
+                    label: component.text,
+                    richText: component.richText,
+                    textColor: component.textColor,
+                    textAlign: component.textAlign,
+                    textVAlign: component.textVAlign,
+                    fontSize: component.fontSize,
+                    fontFamily: component.fontFamily
+                }, refComponentBoxTextBox(box));
+            });
+
+            if (layout.direction === "horizontal") {
+                layout.components.forEach((box, idx) => {
+                    if (idx === 0) return;
+                    const sep = createSvgEl("line", {
+                        x1: box.x,
+                        y1: layout.bodyY,
+                        x2: box.x,
+                        y2: layout.bodyY + layout.bodyHeight
+                    });
+                    sep.setAttribute("stroke", stroke);
+                    sep.setAttribute("stroke-width", String(minorSeparatorWidth));
+                    if (dash) sep.setAttribute("stroke-dasharray", dash);
+                    g.appendChild(sep);
+                });
             } else {
-                const innerH = bodyH - 4;
-                const cellH = innerH / count;
-                for (let idx = 0; idx < count; idx += 1) {
-                    const y0 = bodyY + 2 + idx * cellH;
-                    const y1 = idx === count - 1 ? (bodyY + bodyH - 2) : (y0 + cellH);
-                    if (idx > 0) {
-                        const sep = createSvgEl("line", {
-                            x1: spec.x + 8,
-                            y1: y0,
-                            x2: spec.x + spec.w - 8,
-                            y2: y0
-                        });
-                        sep.setAttribute("stroke", stroke);
-                        sep.setAttribute("stroke-width", String(minorSeparatorWidth));
-                        if (dash) sep.setAttribute("stroke-dasharray", dash);
-                        g.appendChild(sep);
-                    }
-                    refRenderMultilineText(g, {
-                        x: spec.x + spec.w / 2,
-                        y: (y0 + y1) / 2,
-                        text: labels[idx],
-                        fontSize: Math.max(9, fontSize - 1),
-                        fontFamily,
-                        fill: spec.textColor || "#f4f7ff",
-                        textAnchor: "middle"
+                layout.components.forEach((box, idx) => {
+                    if (idx === 0) return;
+                    const sep = createSvgEl("line", {
+                        x1: layout.bodyX,
+                        y1: box.y,
+                        x2: layout.bodyX + layout.bodyWidth,
+                        y2: box.y
                     });
-                }
+                    sep.setAttribute("stroke", stroke);
+                    sep.setAttribute("stroke-width", String(minorSeparatorWidth));
+                    if (dash) sep.setAttribute("stroke-dasharray", dash);
+                    g.appendChild(sep);
+                });
             }
         } else {
             appendShapeEl("rect", {

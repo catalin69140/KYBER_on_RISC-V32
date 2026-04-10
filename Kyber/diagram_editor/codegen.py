@@ -88,7 +88,21 @@ def _build_codegen_payload(model: Dict[str, Any]) -> Tuple[List[Dict[str, Any]],
                 "fontFamily": shape.get("fontFamily"),
                 "componentDirection": shape.get("componentDirection", "horizontal"),
                 "componentCount": int(shape.get("componentCount", 1)),
-                "componentLabels": shape.get("componentLabels", []),
+                "components": [
+                    {
+                        "text": component.get("text", ""),
+                        "richText": component.get("richText", ""),
+                        "fill": component.get("fill"),
+                        "fillOverride": bool(component.get("fillOverride", False)),
+                        "textColor": component.get("textColor"),
+                        "textAlign": component.get("textAlign", "center"),
+                        "textVAlign": component.get("textVAlign", "center"),
+                        "fontSize": _fmt_num(component.get("fontSize", 12)),
+                        "fontFamily": component.get("fontFamily"),
+                    }
+                    for component in shape.get("components", [])
+                    if isinstance(component, dict)
+                ],
             }
         )
 

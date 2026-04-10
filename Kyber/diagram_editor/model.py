@@ -4,7 +4,7 @@ import copy
 import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-MODEL_VERSION = 2
+MODEL_VERSION = 3
 DEFAULT_VIEWBOX = {"x": 0.0, "y": 0.0, "width": 1000.0, "height": 1000.0}
 DEFAULT_BACKGROUND = "#0b1220"
 DEFAULT_ANCHOR_STOPS = [i / 10 for i in range(11)]
@@ -342,6 +342,80 @@ def _normalize_component_labels(value: Any, count: int) -> List[str]:
     return out[:safe_count]
 
 
+def _default_group_component(
+    index: int,
+    fill: str,
+    text_color: str,
+    font_size: float,
+    font_family: str,
+) -> Dict[str, Any]:
+    text = f"Item {index + 1}"
+    return {
+        "text": text,
+        "richText": "",
+        "fill": str(fill or DEFAULT_CONTAINER_FILL),
+        "fillOverride": False,
+        "textColor": str(text_color or DEFAULT_TEXT_COLOR),
+        "textAlign": "center",
+        "textVAlign": "center",
+        "fontSize": max(8.0, min(40.0, float(font_size or 12.0))),
+        "fontFamily": _as_font_family(font_family),
+    }
+
+
+def _normalize_group_components(
+    value: Any,
+    count: int,
+    fill: str,
+    text_color: str,
+    font_size: float,
+    font_family: str,
+    fallback_labels: Any = None,
+) -> List[Dict[str, Any]]:
+    safe_count = max(1, min(24, int(count)))
+    defaults = [
+        _default_group_component(idx, fill, text_color, font_size, font_family)
+        for idx in range(safe_count)
+    ]
+    labels = _normalize_component_labels(fallback_labels, safe_count) if fallback_labels is not None else []
+    out: List[Dict[str, Any]] = []
+    raw_items = value if isinstance(value, list) else []
+
+    for idx in range(safe_count):
+        default = defaults[idx]
+        raw_item = raw_items[idx] if idx < len(raw_items) else None
+        if isinstance(raw_item, dict):
+            text = str(
+                raw_item.get("text")
+                or raw_item.get("label")
+                or default["text"]
+            ).strip() or default["text"]
+            out.append(
+                {
+                    "text": text,
+                    "richText": str(raw_item.get("richText") or ""),
+                    "fill": str(raw_item.get("fill") or default["fill"]),
+                    "fillOverride": bool(raw_item.get("fillOverride", raw_item.get("override", False))),
+                    "textColor": str(raw_item.get("textColor") or default["textColor"]),
+                    "textAlign": _as_text_align(raw_item.get("textAlign")),
+                    "textVAlign": _as_text_v_align(raw_item.get("textVAlign")),
+                    "fontSize": max(8.0, min(40.0, _to_float(raw_item.get("fontSize"), default["fontSize"]))),
+                    "fontFamily": _as_font_family(raw_item.get("fontFamily")),
+                }
+            )
+            continue
+        if isinstance(raw_item, str) and raw_item.strip():
+            text = raw_item.strip()
+            default["text"] = text
+            default["richText"] = ""
+            out.append(default)
+            continue
+        if idx < len(labels):
+            default["text"] = labels[idx] or default["text"]
+        out.append(default)
+    return out
+
+
 def _shape_defaults(kind: str) -> Tuple[str, str]:
     if kind in VALID_CONTAINER_KINDS or kind == "component_group":
         return DEFAULT_CONTAINER_FILL, DEFAULT_CONTAINER_STROKE
@@ -464,6 +538,7 @@ def normalize_model(raw_model: Any, elf_name: str = "") -> Dict[str, Any]:
             height = side
         component_count_fallback = 4 if kind == "component_group" else 1
         component_count = max(1, min(24, _to_int(raw_shape.get("componentCount"), component_count_fallback)))
+        raw_components = raw_shape.get("components")
         component_labels_raw = raw_shape.get("componentLabels")
 
         shape = {
@@ -491,7 +566,16 @@ def normalize_model(raw_model: Any, elf_name: str = "") -> Dict[str, Any]:
             "z": _to_int(raw_shape.get("z"), idx),
             "parentId": parent_id,
         }
-        shape["componentLabels"] = _normalize_component_labels(component_labels_raw, shape["componentCount"])
+        if kind == "component_group":
+            shape["components"] = _normalize_group_components(
+                raw_components,
+                shape["componentCount"],
+                shape["fill"],
+                shape["textColor"],
+                shape["fontSize"],
+                shape["fontFamily"],
+                component_labels_raw,
+            )
         normalized_shapes.append(shape)
 
     all_shape_ids = {s["id"] for s in normalized_shapes}

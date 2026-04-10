@@ -477,6 +477,72 @@
     return out.slice(0, safeCount);
   }
 
+  function defaultGroupComponent(index, groupShape) {
+    return {
+      text: "Item " + (index + 1),
+      richText: "",
+      fill: normalizeColor(groupShape && groupShape.fill, DEFAULT_CONTAINER_FILL),
+      fillOverride: false,
+      textColor: normalizeColor(groupShape && groupShape.textColor, DEFAULT_TEXT_COLOR),
+      textAlign: "center",
+      textVAlign: "center",
+      fontSize: normalizeFontSize(groupShape && groupShape.fontSize, 12),
+      fontFamily: normalizeFontFamily(groupShape && groupShape.fontFamily),
+    };
+  }
+
+  function normalizeGroupComponents(rawComponents, count, groupShape, fallbackLabels) {
+    const safeCount = Math.max(1, Math.min(24, Number(count) || 1));
+    const labels = normalizeComponentLabels(fallbackLabels, safeCount);
+    const source = Array.isArray(rawComponents) ? rawComponents : [];
+    const out = [];
+    for (let idx = 0; idx < safeCount; idx += 1) {
+      const defaults = defaultGroupComponent(idx, groupShape || {});
+      const raw = source[idx];
+      if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+        const text = String(raw.text || raw.label || labels[idx] || defaults.text).trim() || defaults.text;
+        out.push({
+          text: text,
+          richText: typeof raw.richText === "string" && raw.richText.trim()
+            ? raw.richText
+            : plainTextToRichHtml(text),
+          fill: normalizeColor(raw.fill, defaults.fill),
+          fillOverride: !!(raw.fillOverride || raw.override),
+          textColor: normalizeColor(raw.textColor, defaults.textColor),
+          textAlign: normalizeTextAlign(raw.textAlign || defaults.textAlign),
+          textVAlign: normalizeTextVAlign(raw.textVAlign || defaults.textVAlign),
+          fontSize: normalizeFontSize(raw.fontSize, defaults.fontSize),
+          fontFamily: normalizeFontFamily(raw.fontFamily || defaults.fontFamily),
+        });
+        continue;
+      }
+      if (typeof raw === "string" && raw.trim()) {
+        const text = raw.trim();
+        const next = Object.assign({}, defaults);
+        next.text = text;
+        next.richText = plainTextToRichHtml(text);
+        out.push(next);
+        continue;
+      }
+      const next = Object.assign({}, defaults);
+      next.text = labels[idx] || next.text;
+      next.richText = plainTextToRichHtml(next.text);
+      out.push(next);
+    }
+    return out;
+  }
+
+  function groupComponentSelectionKey(shapeId, componentIndex) {
+    return "component:" + String(shapeId || "") + ":" + String(componentIndex);
+  }
+
+  function effectiveGroupComponentFill(shape, component) {
+    if (!component || !component.fillOverride) {
+      return normalizeColor(shape && shape.fill, DEFAULT_CONTAINER_FILL);
+    }
+    return normalizeColor(component.fill, normalizeColor(shape && shape.fill, DEFAULT_CONTAINER_FILL));
+  }
+
   function normalizeColor(color, fallback) {
     const value = String(color || "").trim();
     if (/^#[0-9a-fA-F]{6}$/.test(value)) return value;
@@ -601,10 +667,15 @@
       shape.componentDirection = normalizeComponentDirection(shape.componentDirection);
       const defaultComponentCount = shape.kind === "component_group" ? 4 : 1;
       shape.componentCount = Math.max(1, Math.min(24, Math.round(Number.isFinite(Number(shape.componentCount)) ? Number(shape.componentCount) : defaultComponentCount)));
-      const rawComponentLabels = Array.isArray(shape.componentLabels) && shape.componentLabels.length
-        ? shape.componentLabels
-        : [];
-      shape.componentLabels = normalizeComponentLabels(rawComponentLabels, shape.componentCount);
+      if (shape.kind === "component_group") {
+        const rawComponentLabels = Array.isArray(shape.componentLabels) && shape.componentLabels.length
+          ? shape.componentLabels
+          : [];
+        shape.components = normalizeGroupComponents(shape.components, shape.componentCount, shape, rawComponentLabels);
+      } else if (shape.components) {
+        delete shape.components;
+      }
+      if (shape.componentLabels) delete shape.componentLabels;
       shape.z = Number(shape.z);
       if (!Number.isFinite(shape.z)) shape.z = idx;
       shape.parentId = shape.parentId ? String(shape.parentId) : null;
@@ -1471,6 +1542,103 @@
     return d.join(" ");
   }
 
+  function roundedRectPathSelective(x, y, width, height, radii) {
+    const safeW = Math.max(0, Number(width) || 0);
+    const safeH = Math.max(0, Number(height) || 0);
+    const next = {
+      tl: Math.max(0, Number(radii && radii.tl) || 0),
+      tr: Math.max(0, Number(radii && radii.tr) || 0),
+      br: Math.max(0, Number(radii && radii.br) || 0),
+      bl: Math.max(0, Number(radii && radii.bl) || 0),
+    };
+    const maxRadius = Math.min(safeW / 2, safeH / 2);
+    Object.keys(next).forEach((key) => {
+      next[key] = Math.min(next[key], maxRadius);
+    });
+    return [
+      "M", x + next.tl, y,
+      "L", x + safeW - next.tr, y,
+      next.tr ? "Q " + (x + safeW) + " " + y + " " + (x + safeW) + " " + (y + next.tr) : "L " + (x + safeW) + " " + y,
+      "L", x + safeW, y + safeH - next.br,
+      next.br ? "Q " + (x + safeW) + " " + (y + safeH) + " " + (x + safeW - next.br) + " " + (y + safeH) : "L " + (x + safeW) + " " + (y + safeH),
+      "L", x + next.bl, y + safeH,
+      next.bl ? "Q " + x + " " + (y + safeH) + " " + x + " " + (y + safeH - next.bl) : "L " + x + " " + (y + safeH),
+      "L", x, y + next.tl,
+      next.tl ? "Q " + x + " " + y + " " + (x + next.tl) + " " + y : "L " + x + " " + y,
+      "Z",
+    ].join(" ");
+  }
+
+  function componentGroupHeaderHeight(shape) {
+    return Math.max(18, Math.min(36, Math.round(shape.height * 0.22)));
+  }
+
+  function componentGroupLayout(shape) {
+    const count = Math.max(1, Math.min(24, Math.round(Number(shape.componentCount) || 4)));
+    const direction = normalizeComponentDirection(shape.componentDirection);
+    const headerH = componentGroupHeaderHeight(shape);
+    const bodyX = shape.x + 1;
+    const bodyY = shape.y + headerH + 1;
+    const bodyWidth = Math.max(1, shape.width - 2);
+    const bodyHeight = Math.max(1, shape.height - headerH - 2);
+    const components = [];
+    if (direction === "horizontal") {
+      const cellWidth = bodyWidth / count;
+      for (let idx = 0; idx < count; idx += 1) {
+        const x0 = bodyX + idx * cellWidth;
+        const x1 = idx === count - 1 ? (bodyX + bodyWidth) : (x0 + cellWidth);
+        components.push({
+          index: idx,
+          x: x0,
+          y: bodyY,
+          width: Math.max(1, x1 - x0),
+          height: bodyHeight,
+        });
+      }
+    } else {
+      const cellHeight = bodyHeight / count;
+      for (let idx = 0; idx < count; idx += 1) {
+        const y0 = bodyY + idx * cellHeight;
+        const y1 = idx === count - 1 ? (bodyY + bodyHeight) : (y0 + cellHeight);
+        components.push({
+          index: idx,
+          x: bodyX,
+          y: y0,
+          width: bodyWidth,
+          height: Math.max(1, y1 - y0),
+        });
+      }
+    }
+    return {
+      headerHeight: headerH,
+      bodyX,
+      bodyY,
+      bodyWidth,
+      bodyHeight,
+      direction,
+      components,
+    };
+  }
+
+  function componentBoxTextBox(box) {
+    const shapeLike = {
+      x: box.x,
+      y: box.y,
+      width: box.width,
+      height: box.height,
+    };
+    return insetTextBox(shapeLike, {
+      left: 0.08,
+      right: 0.08,
+      top: 0.08,
+      bottom: 0.08,
+      minX: 6,
+      maxX: 16,
+      minY: 5,
+      maxY: 16,
+    }, { width: 18, height: 18 });
+  }
+
   function polygonVerticesForShape(shape) {
     const x = shape.x;
     const y = shape.y;
@@ -1934,7 +2102,7 @@
 
   function shapeTextBox(shape) {
     if (shape.kind === "header_container") {
-      const headerH = Math.max(18, Math.min(36, Math.round(shape.height * 0.22)));
+      const headerH = componentGroupHeaderHeight(shape);
       const padX = proportionalInset(shape.width, 0.04, 8, 18, 24);
       const padY = Math.max(2, proportionalInset(headerH, 0.16, 2, 8, 14));
       return {
@@ -1945,7 +2113,7 @@
       };
     }
     if (shape.kind === "component_group") {
-      const titleHeight = Math.max(14, Math.min(28, Math.round(shape.height * 0.24)));
+      const titleHeight = componentGroupHeaderHeight(shape);
       const padX = proportionalInset(shape.width, 0.04, 8, 18, 24);
       const padY = Math.max(2, proportionalInset(titleHeight, 0.16, 2, 8, 14));
       return {
@@ -2067,8 +2235,8 @@
     }, { width: 20, height: 20 });
   }
 
-  function renderRichTextBlock(group, shape, box) {
-    const html = sanitizeRichHtml(shape.richText, shape.text);
+  function renderRichTextBlockSpec(group, spec, box) {
+    const html = sanitizeRichHtml(spec.richText, spec.text);
     const foreign = createSvg("foreignObject", {
       x: box.x,
       y: box.y,
@@ -2082,13 +2250,13 @@
         "width:100%",
         "height:100%",
         "display:flex",
-        "align-items:" + richTextJustifyContent(normalizeTextVAlign(shape.textVAlign || "center")),
+        "align-items:" + richTextJustifyContent(normalizeTextVAlign(spec.textVAlign || "center")),
         "justify-content:stretch",
         "overflow:hidden",
-        "color:" + normalizeColor(shape.textColor, "#f4f7ff"),
-        "font-size:" + normalizeFontSize(shape.fontSize, 12) + "px",
-        "font-family:" + normalizeFontFamily(shape.fontFamily),
-        "text-align:" + normalizeTextAlign(shape.textAlign || "center"),
+        "color:" + normalizeColor(spec.textColor, "#f4f7ff"),
+        "font-size:" + normalizeFontSize(spec.fontSize, 12) + "px",
+        "font-family:" + normalizeFontFamily(spec.fontFamily),
+        "text-align:" + normalizeTextAlign(spec.textAlign || "center"),
         "line-height:1.18",
         "white-space:pre-wrap",
         "overflow-wrap:anywhere",
@@ -2103,6 +2271,10 @@
     foreign.appendChild(wrapper);
     group.appendChild(foreign);
     return foreign;
+  }
+
+  function renderRichTextBlock(group, shape, box) {
+    return renderRichTextBlockSpec(group, shape, box);
   }
 
   function renderMultilineText(group, cfg) {
@@ -2507,16 +2679,16 @@
         "stroke-dasharray": dash,
       }));
     } else if (kind === "component_group") {
-      const headerH = 18;
-      const componentCount = Math.max(1, Math.min(24, Math.round(Number(shape.componentCount) || 4)));
-      const componentDirection = normalizeComponentDirection(shape.componentDirection);
-      const labels = normalizeComponentLabels(shape.componentLabels, componentCount);
+      const headerH = componentGroupHeaderHeight(shape);
+      const layout = componentGroupLayout(shape);
+      const components = normalizeGroupComponents(shape.components, shape.componentCount, shape);
+      shape.components = components;
       group.appendChild(createSvg("rect", {
         x: shape.x,
         y: shape.y,
         width: shape.width,
         height: shape.height,
-        fill: "none",
+        fill: shape.fill,
         stroke: strokeColor,
         "stroke-width": strokeWidth,
         "stroke-dasharray": dash,
@@ -2527,86 +2699,88 @@
         x: shape.x + 1,
         y: shape.y + 1,
         width: Math.max(1, shape.width - 2),
-        height: headerH,
+        height: Math.max(1, headerH - 1),
         fill: darken(shape.fill, -14),
         stroke: "none",
         rx: Math.max(0, roundedRadius - 1),
         ry: Math.max(0, roundedRadius - 1),
       }));
-      group.appendChild(createSvg("rect", {
-        x: shape.x + 1,
-        y: shape.y + headerH + 1,
-        width: Math.max(1, shape.width - 2),
-        height: Math.max(1, shape.height - headerH - 2),
-        fill: shape.fill,
-        stroke: "none",
-      }));
       group.appendChild(createSvg("line", {
-        x1: shape.x + 1,
-        y1: shape.y + headerH + 1,
-        x2: shape.x + shape.width - 1,
-        y2: shape.y + headerH + 1,
+        x1: shape.x,
+        y1: shape.y + headerH,
+        x2: shape.x + shape.width,
+        y2: shape.y + headerH,
         stroke: strokeColor,
         "stroke-width": separatorWidth,
         "stroke-dasharray": dash,
       }));
 
-      const bodyY = shape.y + headerH + 2;
-      const bodyH = shape.height - headerH - 4;
-      if (componentDirection === "horizontal") {
-        const innerW = shape.width - 16;
-        const cellW = innerW / componentCount;
-        for (let idx = 0; idx < componentCount; idx += 1) {
-          const x0 = shape.x + 8 + idx * cellW;
-          const x1 = idx === componentCount - 1 ? (shape.x + shape.width - 8) : (x0 + cellW);
-          if (idx > 0) {
-            group.appendChild(createSvg("line", {
-              x1: x0,
-              y1: bodyY + 2,
-              x2: x0,
-              y2: bodyY + bodyH - 2,
-              stroke: strokeColor,
-              "stroke-width": minorSeparatorWidth,
-              "stroke-dasharray": dash,
-            }));
-          }
-          renderMultilineText(group, {
-            x: (x0 + x1) / 2,
-            y: bodyY + bodyH / 2 + 1,
-            text: labels[idx],
-            fontSize: Math.max(9, normalizeFontSize(shape.fontSize, 12) - 1),
-            fontFamily: shape.fontFamily,
-            fill: shape.textColor || "#f4f7ff",
-            textAnchor: "middle",
+      layout.components.forEach((box, idx) => {
+        const component = components[idx] || defaultGroupComponent(idx, shape);
+        const effectiveFill = effectiveGroupComponentFill(shape, component);
+        const innerRadius = Math.max(0, roundedRadius - 1);
+        const isFirst = idx === 0;
+        const isLast = idx === layout.components.length - 1;
+        const bottomLeftRadius = layout.direction === "horizontal"
+          ? (isFirst ? innerRadius : 0)
+          : (isLast ? innerRadius : 0);
+        const bottomRightRadius = layout.direction === "horizontal"
+          ? (isLast ? innerRadius : 0)
+          : (isLast ? innerRadius : 0);
+        let bodyEl;
+        if (bottomLeftRadius || bottomRightRadius) {
+          bodyEl = createSvg("path", {
+            d: roundedRectPathSelective(box.x, box.y, box.width, box.height, {
+              tl: 0,
+              tr: 0,
+              br: bottomRightRadius,
+              bl: bottomLeftRadius,
+            }),
+            fill: effectiveFill,
+            stroke: "none",
+            "data-group-component-index": idx,
+          });
+        } else {
+          bodyEl = createSvg("rect", {
+            x: box.x,
+            y: box.y,
+            width: box.width,
+            height: box.height,
+            fill: effectiveFill,
+            stroke: "none",
+            "data-group-component-index": idx,
           });
         }
+        group.appendChild(bodyEl);
+        renderRichTextBlockSpec(group, component, componentBoxTextBox(box));
+      });
+
+      if (layout.direction === "horizontal") {
+        layout.components.forEach((box, idx) => {
+          if (idx === 0) return;
+          group.appendChild(createSvg("line", {
+            x1: box.x,
+            y1: layout.bodyY,
+            x2: box.x,
+            y2: layout.bodyY + layout.bodyHeight,
+            stroke: strokeColor,
+            "stroke-width": minorSeparatorWidth,
+            "stroke-dasharray": dash,
+          }));
+        });
       } else {
-        const innerH = bodyH - 4;
-        const cellH = innerH / componentCount;
-        for (let idx = 0; idx < componentCount; idx += 1) {
-          const y0 = bodyY + 2 + idx * cellH;
-          const y1 = idx === componentCount - 1 ? (bodyY + bodyH - 2) : (y0 + cellH);
-          if (idx > 0) {
-            group.appendChild(createSvg("line", {
-              x1: shape.x + 8,
-              y1: y0,
-              x2: shape.x + shape.width - 8,
-              y2: y0,
-              stroke: strokeColor,
-              "stroke-width": minorSeparatorWidth,
-              "stroke-dasharray": dash,
-            }));
-          }
-          renderMultilineText(group, {
-            x: shape.x + shape.width / 2,
-            y: (y0 + y1) / 2,
-            text: labels[idx],
-            fontSize: Math.max(9, normalizeFontSize(shape.fontSize, 12) - 1),
-            fontFamily: shape.fontFamily,
-            fill: shape.textColor || "#f4f7ff",
-            textAnchor: "middle",
-          });
-        }
+        layout.components.forEach((box, idx) => {
+          if (idx === 0) return;
+          group.appendChild(createSvg("line", {
+            x1: layout.bodyX,
+            y1: box.y,
+            x2: layout.bodyX + layout.bodyWidth,
+            y2: box.y,
+            stroke: strokeColor,
+            "stroke-width": minorSeparatorWidth,
+            "stroke-dasharray": dash,
+          }));
+        });
       }
     } else {
       group.appendChild(createSvg("rect", Object.assign({
@@ -2636,6 +2810,16 @@
       style: "cursor:" + (state.mode === "select" ? "move" : "crosshair"),
     });
     renderShapeVisual(group, shape, stroke, strokeWidth);
+    if (shape.kind === "component_group") {
+      Array.from(group.querySelectorAll("[data-group-component-index]")).forEach((node) => {
+        node.addEventListener("dblclick", (evt) => {
+          evt.preventDefault();
+          evt.stopPropagation();
+          const componentIndex = Number(node.getAttribute("data-group-component-index"));
+          setSelected({ type: "group_component", shapeId: shape.id, componentIndex: componentIndex });
+        });
+      });
+    }
     group.addEventListener("pointerdown", (evt) => onShapePointerDown(evt, shape.id));
     shapeLayer.appendChild(group);
   }
@@ -3308,6 +3492,51 @@
       return;
     }
 
+    if (state.selected.type === "group_component") {
+      const selectedComponent = currentSelectedGroupComponent();
+      if (!selectedComponent) return;
+      const layout = componentGroupLayout(selectedComponent.shape);
+      const box = layout.components[selectedComponent.componentIndex];
+      if (!box) return;
+      const shape = selectedComponent.shape;
+      const roundedRadius = shape.rounded ? Math.max(0, shapeCornerRadius(shape) - 1) : 0;
+      const isFirst = selectedComponent.componentIndex === 0;
+      const isLast = selectedComponent.componentIndex === layout.components.length - 1;
+      const bottomLeftRadius = layout.direction === "horizontal"
+        ? (isFirst ? roundedRadius : 0)
+        : (isLast ? roundedRadius : 0);
+      const bottomRightRadius = layout.direction === "horizontal"
+        ? (isLast ? roundedRadius : 0)
+        : (isLast ? roundedRadius : 0);
+      const attrs = {
+        fill: "none",
+        stroke: "#ffd76b",
+        "stroke-width": 1.5,
+        "stroke-dasharray": "8 5",
+        "pointer-events": "none",
+      };
+      if (bottomLeftRadius || bottomRightRadius) {
+        overlayLayer.appendChild(createSvg("path", Object.assign({
+          d: roundedRectPathSelective(box.x - 2, box.y - 2, box.width + 4, box.height + 4, {
+            tl: 0,
+            tr: 0,
+            br: bottomRightRadius,
+            bl: bottomLeftRadius,
+          }),
+        }, attrs)));
+      } else {
+        overlayLayer.appendChild(createSvg("rect", Object.assign({
+          x: box.x - 2,
+          y: box.y - 2,
+          width: box.width + 4,
+          height: box.height + 4,
+          rx: 4,
+          ry: 4,
+        }, attrs)));
+      }
+      return;
+    }
+
     if (state.selected.type === "arrow") {
       const arrow = arrowById(state.selected.id);
       const geom = state.arrowRenderCache[state.selected.id];
@@ -3512,9 +3741,43 @@
       setShapeSelection([sel.id], sel.id);
       return;
     }
+    if (sel.type === "group_component") {
+      const shape = shapeById(sel.shapeId);
+      if (!shape || shape.kind !== "component_group") {
+        state.selected = null;
+        state.selectedShapeIds = [];
+        render();
+        return;
+      }
+      const maxIndex = Math.max(0, Math.min((shape.components || []).length - 1, Number(sel.componentIndex) || 0));
+      state.selected = {
+        type: "group_component",
+        shapeId: shape.id,
+        componentIndex: maxIndex,
+      };
+      state.selectedShapeIds = [];
+      render();
+      return;
+    }
     state.selected = sel;
     state.selectedShapeIds = [];
     render();
+  }
+
+  function currentSelectedGroupComponent() {
+    if (!state.selected || state.selected.type !== "group_component") return null;
+    const shape = shapeById(state.selected.shapeId);
+    if (!shape || shape.kind !== "component_group") return null;
+    shape.components = normalizeGroupComponents(shape.components, shape.componentCount, shape);
+    const index = Math.max(0, Math.min(shape.components.length - 1, Number(state.selected.componentIndex) || 0));
+    const component = shape.components[index];
+    if (!component) return null;
+    return {
+      shape: shape,
+      component: component,
+      componentIndex: index,
+      key: groupComponentSelectionKey(shape.id, index),
+    };
   }
 
   function clientToSvg(evt) {
@@ -3957,7 +4220,14 @@
       fontFamily: DEFAULT_FONT_FAMILY,
       componentDirection: "horizontal",
       componentCount: componentCount,
-      componentLabels: normalizeComponentLabels([], componentCount),
+      components: normalizedKind === "component_group"
+        ? normalizeGroupComponents([], componentCount, {
+          fill: isContainer ? "#0d172a" : "#1c2f4f",
+          textColor: "#f4f7ff",
+          fontSize: 12,
+          fontFamily: DEFAULT_FONT_FAMILY,
+        })
+        : undefined,
       z: (state.model.shapes.length ? Math.max.apply(null, state.model.shapes.map((s) => s.z || 0)) : 0) + 1,
       parentId: null,
     };
@@ -3969,6 +4239,7 @@
 
   function deleteSelected() {
     if (!state.selected) return;
+    if (state.selected.type === "group_component") return;
     pushHistory();
 
     if (state.selected.type === "shape") {
@@ -4014,6 +4285,13 @@
 
     if (state.selected.type === "shape") {
       renderShapeInspector(state.selected.id);
+      return;
+    }
+
+    if (state.selected.type === "group_component") {
+      state.richTextSelection = null;
+      clearPendingRichTextFormat();
+      renderGroupComponentInspector(state.selected.shapeId, state.selected.componentIndex);
       return;
     }
 
@@ -4278,7 +4556,8 @@
   function getSelectionFormatState(editor, range) {
     if (!editor || !range) return emptyTextFormatState();
     if (range.collapsed) {
-      const pending = state.selected && state.selected.type === "shape" ? getPendingRichTextFormat(state.selected.id) : null;
+      const target = currentRichTextTarget();
+      const pending = target ? getPendingRichTextFormat(target.key) : null;
       return pending || getCaretFormatState(editor, range);
     }
     const textNodes = getRangeTextNodes(editor, range);
@@ -4305,15 +4584,55 @@
     return richHtmlToPlainText(editor.innerHTML).length;
   }
 
-  function updateTextInspectorMeta(shape, editor) {
+  function makeShapeTextTarget(shape) {
+    if (!shape) return null;
+    return {
+      type: "shape",
+      key: "shape:" + shape.id,
+      shape: shape,
+      entity: shape,
+    };
+  }
+
+  function makeGroupComponentTextTarget(shape, component, componentIndex) {
+    if (!shape || !component) return null;
+    return {
+      type: "group_component",
+      key: groupComponentSelectionKey(shape.id, componentIndex),
+      shape: shape,
+      component: component,
+      componentIndex: componentIndex,
+      entity: component,
+    };
+  }
+
+  function currentRichTextTarget() {
+    if (!state.selected) return null;
+    if (state.selected.type === "shape") {
+      return makeShapeTextTarget(shapeById(state.selected.id));
+    }
+    if (state.selected.type === "group_component") {
+      const selectedComponent = currentSelectedGroupComponent();
+      if (!selectedComponent) return null;
+      return makeGroupComponentTextTarget(
+        selectedComponent.shape,
+        selectedComponent.component,
+        selectedComponent.componentIndex
+      );
+    }
+    return null;
+  }
+
+  function updateTextInspectorMeta(target, editor) {
+    const entity = target && target.entity ? target.entity : target;
     const label = document.getElementById("ins-shape-text-label");
     const idInput = document.getElementById("ins-shape-id");
     if (label) {
-      const currentLength = editor ? currentEditorTextLength(editor) : String(shape && shape.text || "").length;
+      const currentLength = editor ? currentEditorTextLength(editor) : String(entity && entity.text || "").length;
       label.textContent = "Text - " + currentLength + "/" + MAX_SHAPE_TEXT_LENGTH;
     }
-    if (idInput && shape && !shape.idManual) {
-      idInput.value = shape.id;
+    if (idInput && target && target.type === "shape" && target.shape && !target.shape.idManual) {
+      idInput.value = target.shape.id;
     }
   }
 
@@ -4475,23 +4794,23 @@
     return true;
   }
 
-  function handleRichTextBeforeInput(evt, shape) {
+  function handleRichTextBeforeInput(evt, target) {
     const editor = getRichTextEditorEl();
-    if (!editor || !shape) return;
+    if (!editor || !target) return;
     const inputType = String(evt.inputType || "");
     if (!inputType || inputType.indexOf("delete") === 0 || inputType === "historyUndo" || inputType === "historyRedo") {
       return;
     }
 
     const available = remainingEditorTextCapacity(editor);
-    const pending = getPendingRichTextFormat(shape.id);
+    const pending = getPendingRichTextFormat(target.key);
     const range = inspectRichTextSelection(editor);
     if (pending && range && range.collapsed && (inputType === "insertText" || inputType === "insertCompositionText")) {
       evt.preventDefault();
       const clipped = String(evt.data || "").slice(0, Math.max(0, available));
       if (!clipped) return;
       if (insertCollapsedFormattedText(editor, clipped, pending)) {
-        clearPendingRichTextFormat(shape.id);
+        clearPendingRichTextFormat(target.key);
         normalizeRichTextEditor(editor);
         editor.dispatchEvent(new Event("input", { bubbles: true }));
       }
@@ -4502,7 +4821,7 @@
       evt.preventDefault();
       if (available < 1) return;
       if (insertCollapsedFormattedText(editor, "\n", pending)) {
-        clearPendingRichTextFormat(shape.id);
+        clearPendingRichTextFormat(target.key);
         normalizeRichTextEditor(editor);
         editor.dispatchEvent(new Event("input", { bubbles: true }));
       }
@@ -4527,19 +4846,19 @@
     }
   }
 
-  function handleRichTextPaste(evt, shape) {
+  function handleRichTextPaste(evt, target) {
     const editor = getRichTextEditorEl();
-    if (!editor || !shape) return;
+    if (!editor || !target) return;
     const pasted = String(evt.clipboardData && evt.clipboardData.getData("text/plain") || "");
     const available = remainingEditorTextCapacity(editor);
     const clipped = pasted.slice(0, Math.max(0, available));
-    const pending = getPendingRichTextFormat(shape.id);
+    const pending = getPendingRichTextFormat(target.key);
     const range = inspectRichTextSelection(editor);
     if (pending && range && range.collapsed) {
       evt.preventDefault();
       if (!clipped) return;
       if (insertCollapsedFormattedText(editor, clipped, pending)) {
-        clearPendingRichTextFormat(shape.id);
+        clearPendingRichTextFormat(target.key);
         normalizeRichTextEditor(editor);
         editor.dispatchEvent(new Event("input", { bubbles: true }));
       }
@@ -4563,20 +4882,21 @@
 
   function captureRichTextSelection() {
     const editor = getRichTextEditorEl();
-    if (!editor || !state.selected || state.selected.type !== "shape") return;
+    const target = currentRichTextTarget();
+    if (!editor || !target) return;
     const selection = window.getSelection();
     if (!selectionInsideNode(editor, selection) || !selection.rangeCount) {
-      clearPendingRichTextFormat(state.selected.id);
+      clearPendingRichTextFormat(target.key);
       updateRichTextToolbarState();
       return;
     }
     const range = selection.getRangeAt(0).cloneRange();
     state.richTextSelection = {
-      shapeId: state.selected.id,
+      targetKey: target.key,
       range: range,
     };
     if (!range.collapsed) {
-      clearPendingRichTextFormat(state.selected.id);
+      clearPendingRichTextFormat(target.key);
     }
     updateRichTextToolbarState();
   }
@@ -4587,7 +4907,8 @@
     if (selectionInsideNode(editor, live) && live.rangeCount) {
       return live.getRangeAt(0);
     }
-    if (state.richTextSelection && state.selected && state.selected.type === "shape" && state.richTextSelection.shapeId === state.selected.id) {
+    const target = currentRichTextTarget();
+    if (state.richTextSelection && target && state.richTextSelection.targetKey === target.key) {
       const selection = window.getSelection();
       selection.removeAllRanges();
       selection.addRange(state.richTextSelection.range.cloneRange());
@@ -4608,7 +4929,8 @@
     if (selectionInsideNode(editor, live) && live.rangeCount) {
       return live.getRangeAt(0);
     }
-    if (state.richTextSelection && state.selected && state.selected.type === "shape" && state.richTextSelection.shapeId === state.selected.id) {
+    const target = currentRichTextTarget();
+    if (state.richTextSelection && target && state.richTextSelection.targetKey === target.key) {
       return state.richTextSelection.range.cloneRange();
     }
     return null;
@@ -4846,7 +5168,7 @@
     return nextRange;
   }
 
-  function toggleRangeFormat(shape, formatKey) {
+  function toggleRangeFormat(target, formatKey) {
     const editor = getRichTextEditorEl();
     if (!editor) return false;
     const range = restoreRichTextSelection(editor, false);
@@ -4907,21 +5229,22 @@
     cleanupEmptyAncestors(startCleanupRoot, editor);
     cleanupEmptyAncestors(endCleanupRoot, editor);
     setEditorSelection(nextRange);
-    clearPendingRichTextFormat(shape.id);
+    clearPendingRichTextFormat(target.key);
     captureRichTextSelection();
-    syncShapeRichText(shape, editor, false);
+    syncTextTargetRichText(target, editor, false);
     return true;
   }
 
-  function syncShapeRichText(shape, editor, finalize) {
-    if (!shape || !editor) return;
-    const html = finalize ? sanitizeRichHtml(editor.innerHTML, shape.text) : String(editor.innerHTML || "");
-    shape.richText = html;
-    shape.text = richHtmlToPlainText(html);
+  function syncTextTargetRichText(target, editor, finalize) {
+    if (!target || !target.entity || !editor) return;
+    const entity = target.entity;
+    const html = finalize ? sanitizeRichHtml(editor.innerHTML, entity.text) : String(editor.innerHTML || "");
+    entity.richText = html;
+    entity.text = richHtmlToPlainText(html);
     if (finalize) {
-      editor.innerHTML = shape.richText;
-      if (!shape.idManual) {
-        updateAutoId(shape, shape.parentId);
+      editor.innerHTML = entity.richText;
+      if (target.type === "shape" && target.shape && !target.shape.idManual) {
+        updateAutoId(target.shape, target.shape.parentId);
       }
       render();
       captureRichTextSelection();
@@ -4931,14 +5254,14 @@
     }
   }
 
-  function executeTextCommand(shape, formatKey) {
+  function executeTextCommand(target, formatKey) {
     const editor = getRichTextEditorEl();
     if (!editor) return;
     const range = restoreRichTextSelection(editor, false);
     if (!range) return;
     pushHistory();
     if (!range.collapsed) {
-      toggleRangeFormat(shape, formatKey);
+      toggleRangeFormat(target, formatKey);
       return;
     }
 
@@ -4947,12 +5270,12 @@
     nextState[formatKey] = !currentState[formatKey];
     if (formatKey === "subscript" && nextState.subscript) nextState.superscript = false;
     if (formatKey === "superscript" && nextState.superscript) nextState.subscript = false;
-    setPendingRichTextFormat(shape.id, nextState);
+    setPendingRichTextFormat(target.key, nextState);
     captureRichTextSelection();
     updateRichTextToolbarState();
   }
 
-  function executeOverlineCommand(shape) {
+  function executeOverlineCommand(target) {
     const editor = getRichTextEditorEl();
     if (!editor) return;
     const range = restoreRichTextSelection(editor, false);
@@ -4960,18 +5283,18 @@
 
     pushHistory();
     if (!range.collapsed) {
-      toggleRangeFormat(shape, "overline");
+      toggleRangeFormat(target, "overline");
       return;
     }
     const currentState = getSelectionFormatState(editor, range);
     const nextState = cloneTextFormatState(currentState);
     nextState.overline = !currentState.overline;
-    setPendingRichTextFormat(shape.id, nextState);
+    setPendingRichTextFormat(target.key, nextState);
     captureRichTextSelection();
     updateRichTextToolbarState();
   }
 
-  function applyInlineStyleCommand(shape, styles, blockWhenAll) {
+  function applyInlineStyleCommand(target, styles, blockWhenAll) {
     const editor = getRichTextEditorEl();
     if (!editor) return;
     pushHistory();
@@ -4982,7 +5305,7 @@
       selection.removeAllRanges();
       if (nextRange) selection.addRange(nextRange);
       captureRichTextSelection();
-      syncShapeRichText(shape, editor, false);
+      syncTextTargetRichText(target, editor, false);
       return;
     }
     const fullRange = restoreRichTextSelection(editor, true);
@@ -4991,7 +5314,7 @@
     selection.removeAllRanges();
     if (nextRange) selection.addRange(nextRange);
     captureRichTextSelection();
-    syncShapeRichText(shape, editor, false);
+    syncTextTargetRichText(target, editor, false);
   }
 
   function hasActiveRichTextSelection() {
@@ -5033,7 +5356,10 @@
 
     const colorSwatches = TYPE_COLOR_SWATCHES;
     const isComponentGroup = shape.kind === "component_group";
-    const componentLabelsText = normalizeComponentLabels(shape.componentLabels, shape.componentCount).join("\n");
+    if (isComponentGroup) {
+      shape.components = normalizeGroupComponents(shape.components, shape.componentCount, shape);
+    }
+    const textTarget = makeShapeTextTarget(shape);
     const richText = sanitizeRichHtml(shape.richText, shape.text);
     const selectedFontFamily = normalizeFontFamily(shape.fontFamily);
     const fontFamilyOptions = FONT_FAMILY_OPTIONS
@@ -5083,8 +5409,7 @@
       isComponentGroup
         ? '<h3>Group Layout</h3>' +
           '<div><label>Direction</label><select id="ins-group-direction"><option value="horizontal"' + (normalizeComponentDirection(shape.componentDirection) === "horizontal" ? " selected" : "") + '>horizontal</option><option value="vertical"' + (normalizeComponentDirection(shape.componentDirection) === "vertical" ? " selected" : "") + '>vertical</option></select></div>' +
-          '<div><label>Components</label><input id="ins-group-count" type="number" min="1" max="24" step="1" value="' + Math.max(1, Math.min(24, Math.round(Number(shape.componentCount) || 4)) ) + '"/></div>' +
-          '<div><label>Component labels (one line per component)</label><textarea id="ins-group-labels">' + escapeHtml(componentLabelsText) + '</textarea></div>'
+          '<div><label>Components</label><input id="ins-group-count" type="number" min="1" max="24" step="1" value="' + Math.max(1, Math.min(24, Math.round(Number(shape.componentCount) || 4)) ) + '"/></div>'
         : "",
       "<h3>Color</h3>",
       '<div class="palette-block"><label>Fill palette</label><div class="palette" id="ins-shape-fill-palette"></div></div>',
@@ -5105,7 +5430,7 @@
     const textEditor = document.getElementById("ins-shape-text-editor");
     if (textEditor) {
       textEditor.innerHTML = richText;
-      updateTextInspectorMeta(shape, textEditor);
+      updateTextInspectorMeta(textTarget, textEditor);
     }
 
     const fillPaletteEl = document.getElementById("ins-shape-fill-palette");
@@ -5153,10 +5478,10 @@
 
     let pushedTextHistory = false;
     if (textEditor) {
-      textEditor.addEventListener("beforeinput", (evt) => handleRichTextBeforeInput(evt, shape));
-      textEditor.addEventListener("paste", (evt) => handleRichTextPaste(evt, shape));
+      textEditor.addEventListener("beforeinput", (evt) => handleRichTextBeforeInput(evt, textTarget));
+      textEditor.addEventListener("paste", (evt) => handleRichTextPaste(evt, textTarget));
       textEditor.addEventListener("input", () => {
-        clearPendingRichTextFormat(shape.id);
+        clearPendingRichTextFormat(textTarget.key);
         normalizeRichTextEditor(textEditor);
         if (!pushedTextHistory) {
           pushHistory();
@@ -5172,35 +5497,35 @@
         if (!shape.idManual) {
           updateAutoId(shape, shape.parentId);
         }
-        updateTextInspectorMeta(shape, textEditor);
+        updateTextInspectorMeta(textTarget, textEditor);
         captureRichTextSelection();
         render(true);
       });
       textEditor.addEventListener("keyup", () => {
-        clearPendingRichTextFormat(shape.id);
+        clearPendingRichTextFormat(textTarget.key);
         captureRichTextSelection();
       });
       textEditor.addEventListener("mouseup", () => {
-        clearPendingRichTextFormat(shape.id);
+        clearPendingRichTextFormat(textTarget.key);
         captureRichTextSelection();
       });
       textEditor.addEventListener("focus", () => {
-        updateTextInspectorMeta(shape, textEditor);
+        updateTextInspectorMeta(textTarget, textEditor);
         updateRichTextToolbarState();
       });
       textEditor.addEventListener("blur", () => {
-        clearPendingRichTextFormat(shape.id);
+        clearPendingRichTextFormat(textTarget.key);
         normalizeRichTextEditor(textEditor);
-        syncShapeRichText(shape, textEditor, true);
+        syncTextTargetRichText(textTarget, textEditor, true);
       });
     }
 
-    bindIconButton("fmt-bold", () => executeTextCommand(shape, "bold"));
-    bindIconButton("fmt-italic", () => executeTextCommand(shape, "italic"));
-    bindIconButton("fmt-underline", () => executeTextCommand(shape, "underline"));
-    bindIconButton("fmt-overline", () => executeOverlineCommand(shape));
-    bindIconButton("fmt-subscript", () => executeTextCommand(shape, "subscript"));
-    bindIconButton("fmt-superscript", () => executeTextCommand(shape, "superscript"));
+    bindIconButton("fmt-bold", () => executeTextCommand(textTarget, "bold"));
+    bindIconButton("fmt-italic", () => executeTextCommand(textTarget, "italic"));
+    bindIconButton("fmt-underline", () => executeTextCommand(textTarget, "underline"));
+    bindIconButton("fmt-overline", () => executeOverlineCommand(textTarget));
+    bindIconButton("fmt-subscript", () => executeTextCommand(textTarget, "subscript"));
+    bindIconButton("fmt-superscript", () => executeTextCommand(textTarget, "superscript"));
     bindIconButton("fmt-align-left", () => {
       pushHistory();
       shape.textAlign = "left";
@@ -5259,7 +5584,7 @@
     bindInput("ins-shape-font-color", "input", (value) => {
       const nextColor = normalizeColor(value, shape.textColor);
       if (hasActiveRichTextSelection()) {
-        applyInlineStyleCommand(shape, { color: nextColor }, false);
+        applyInlineStyleCommand(textTarget, { color: nextColor }, false);
         return;
       }
       pushHistory();
@@ -5307,13 +5632,7 @@
       bindNumber("ins-group-count", "change", (num) => {
         pushHistory();
         shape.componentCount = Math.max(1, Math.min(24, Math.round(num || 1)));
-        shape.componentLabels = normalizeComponentLabels(shape.componentLabels, shape.componentCount);
-        render();
-      });
-      bindInput("ins-group-labels", "change", (value) => {
-        pushHistory();
-        const lines = String(value || "").split(/\r?\n/).map((v) => v.trim());
-        shape.componentLabels = normalizeComponentLabels(lines, shape.componentCount);
+        shape.components = normalizeGroupComponents(shape.components, shape.componentCount, shape);
         render();
       });
     }
@@ -5420,6 +5739,209 @@
         render();
       });
     }
+  }
+
+  function renderGroupComponentInspector(shapeId, componentIndex) {
+    const shape = shapeById(shapeId);
+    if (!shape || shape.kind !== "component_group") {
+      els.inspector.innerHTML = '<div class="empty-state">Component not found.</div>';
+      return;
+    }
+    shape.components = normalizeGroupComponents(shape.components, shape.componentCount, shape);
+    const safeIndex = Math.max(0, Math.min(shape.components.length - 1, Number(componentIndex) || 0));
+    const component = shape.components[safeIndex];
+    if (!component) {
+      els.inspector.innerHTML = '<div class="empty-state">Component not found.</div>';
+      return;
+    }
+    const target = makeGroupComponentTextTarget(shape, component, safeIndex);
+    const richText = sanitizeRichHtml(component.richText, component.text);
+    const selectedFontFamily = normalizeFontFamily(component.fontFamily);
+    const fontFamilyOptions = FONT_FAMILY_OPTIONS
+      .map((option) => '<option value="' + escapeHtml(option.value) + '"' + (selectedFontFamily === option.value ? " selected" : "") + '>' + escapeHtml(option.label) + '</option>')
+      .join("");
+    const fillValue = effectiveGroupComponentFill(shape, component);
+
+    state.richTextSelection = null;
+    clearPendingRichTextFormat();
+
+    els.inspector.innerHTML = [
+      "<div>",
+      '<div class="hint">Component <strong>' + (safeIndex + 1) + '</strong> in <strong>' + escapeHtml(shape.text) + "</strong></div>",
+      '<div><label id="ins-shape-text-label">Text - ' + component.text.length + '/' + MAX_SHAPE_TEXT_LENGTH + '</label><div id="ins-shape-text-editor" class="rich-text-editor" contenteditable="true" spellcheck="false">' + richText + "</div></div>",
+      '<div class="format-row">' +
+        '<button id="fmt-bold" type="button" title="Bold"><span class="format-icon"><strong>B</strong></span></button>' +
+        '<button id="fmt-italic" type="button" title="Italic"><span class="format-icon"><em>I</em></span></button>' +
+        '<button id="fmt-underline" type="button" title="Underline"><span class="format-icon"><span style="text-decoration:underline;">U</span></span></button>' +
+        '<button id="fmt-overline" type="button" title="Overline"><span class="format-icon"><span style="text-decoration:overline;">O</span></span></button>' +
+        '<button id="fmt-subscript" type="button" title="Subscript"><span class="format-icon">x₂</span></button>' +
+        '<button id="fmt-superscript" type="button" title="Superscript"><span class="format-icon">x²</span></button>' +
+      "</div>",
+      '<div class="format-row">' +
+        '<button id="fmt-align-left" type="button" title="Align left"' + (component.textAlign === "left" ? ' class="active"' : "") + '><span class="format-icon align-icon left">≡</span></button>' +
+        '<button id="fmt-align-center" type="button" title="Align center"' + (component.textAlign === "center" ? ' class="active"' : "") + '><span class="format-icon align-icon center">≡</span></button>' +
+        '<button id="fmt-align-right" type="button" title="Align right"' + (component.textAlign === "right" ? ' class="active"' : "") + '><span class="format-icon align-icon right">≡</span></button>' +
+        '<button id="fmt-v-top" type="button" title="Text top"' + (component.textVAlign === "top" ? ' class="active"' : "") + '><span class="format-icon">⇡</span></button>' +
+        '<button id="fmt-v-center" type="button" title="Text center"' + (component.textVAlign === "center" ? ' class="active"' : "") + '><span class="format-icon">⇕</span></button>' +
+        '<button id="fmt-v-bottom" type="button" title="Text bottom"' + (component.textVAlign === "bottom" ? ' class="active"' : "") + '><span class="format-icon">⇣</span></button>' +
+      "</div>",
+      '<div class="text-style-row">' +
+        '<select id="ins-shape-font-family" title="Font family">' + fontFamilyOptions + '</select>' +
+        '<input id="ins-shape-font-color" class="compact-color" type="color" title="Font color" value="' + normalizeColor(component.textColor, "#f4f7ff") + '"/>' +
+        '<input id="ins-shape-font-size" class="font-size-input" type="number" min="8" max="1000" step="0.5" title="Font size" value="' + roundNum(component.fontSize || 12) + '"/>' +
+      "</div>",
+      '<div class="section-heading-row"><h3>Color</h3><label class="inline-toggle"><input id="ins-comp-fill-override" type="checkbox"' + (component.fillOverride ? " checked" : "") + '> Override</label></div>',
+      '<div class="palette-block"><label>Fill palette</label><div class="palette" id="ins-comp-fill-palette"></div></div>',
+      '<div class="color-inline-row"><label for="ins-comp-fill">Fill:</label><input id="ins-comp-fill" type="color" value="' + normalizeColor(fillValue, "#0d172a") + '"' + (component.fillOverride ? "" : " disabled") + '/></div>',
+      "</div>",
+    ].join("");
+
+    const textEditor = document.getElementById("ins-shape-text-editor");
+    if (textEditor) {
+      textEditor.innerHTML = richText;
+      updateTextInspectorMeta(target, textEditor);
+    }
+
+    const fillPaletteEl = document.getElementById("ins-comp-fill-palette");
+    TYPE_COLOR_SWATCHES.forEach((entry) => {
+      if (!fillPaletteEl) return;
+      const sw = document.createElement("button");
+      sw.type = "button";
+      sw.className = "swatch" + (normalizeColor(fillValue, "#0d172a") === normalizeColor(entry.fill, "#0d172a") ? " active" : "");
+      sw.style.background = entry.fill;
+      sw.style.color = swatchTextColor(entry.fill);
+      sw.style.textShadow = swatchTextColor(entry.fill) === "#122033"
+        ? "0 1px 0 rgba(255,255,255,0.28)"
+        : "0 1px 0 rgba(0,0,0,0.22)";
+      sw.textContent = entry.letter;
+      sw.title = entry.label + " fill";
+      sw.disabled = !component.fillOverride;
+      sw.addEventListener("click", () => {
+        if (!component.fillOverride) return;
+        pushHistory();
+        component.fill = normalizeColor(entry.fill, component.fill || fillValue);
+        render();
+      });
+      fillPaletteEl.appendChild(sw);
+    });
+
+    let pushedTextHistory = false;
+    if (textEditor) {
+      textEditor.addEventListener("beforeinput", (evt) => handleRichTextBeforeInput(evt, target));
+      textEditor.addEventListener("paste", (evt) => handleRichTextPaste(evt, target));
+      textEditor.addEventListener("input", () => {
+        clearPendingRichTextFormat(target.key);
+        normalizeRichTextEditor(textEditor);
+        if (!pushedTextHistory) {
+          pushHistory();
+          pushedTextHistory = true;
+        }
+        component.richText = String(textEditor.innerHTML || "");
+        component.text = richHtmlToPlainText(component.richText);
+        if (component.text.length > MAX_SHAPE_TEXT_LENGTH) {
+          component.text = component.text.slice(0, MAX_SHAPE_TEXT_LENGTH);
+          component.richText = plainTextToRichHtml(component.text);
+          textEditor.innerHTML = component.richText;
+        }
+        updateTextInspectorMeta(target, textEditor);
+        captureRichTextSelection();
+        render(true);
+      });
+      textEditor.addEventListener("keyup", () => {
+        clearPendingRichTextFormat(target.key);
+        captureRichTextSelection();
+      });
+      textEditor.addEventListener("mouseup", () => {
+        clearPendingRichTextFormat(target.key);
+        captureRichTextSelection();
+      });
+      textEditor.addEventListener("focus", () => {
+        updateTextInspectorMeta(target, textEditor);
+        updateRichTextToolbarState();
+      });
+      textEditor.addEventListener("blur", () => {
+        clearPendingRichTextFormat(target.key);
+        normalizeRichTextEditor(textEditor);
+        syncTextTargetRichText(target, textEditor, true);
+      });
+    }
+
+    bindIconButton("fmt-bold", () => executeTextCommand(target, "bold"));
+    bindIconButton("fmt-italic", () => executeTextCommand(target, "italic"));
+    bindIconButton("fmt-underline", () => executeTextCommand(target, "underline"));
+    bindIconButton("fmt-overline", () => executeOverlineCommand(target));
+    bindIconButton("fmt-subscript", () => executeTextCommand(target, "subscript"));
+    bindIconButton("fmt-superscript", () => executeTextCommand(target, "superscript"));
+    bindIconButton("fmt-align-left", () => {
+      pushHistory();
+      component.textAlign = "left";
+      render();
+    });
+    bindIconButton("fmt-align-center", () => {
+      pushHistory();
+      component.textAlign = "center";
+      render();
+    });
+    bindIconButton("fmt-align-right", () => {
+      pushHistory();
+      component.textAlign = "right";
+      render();
+    });
+    bindIconButton("fmt-v-top", () => {
+      pushHistory();
+      component.textVAlign = "top";
+      render();
+    });
+    bindIconButton("fmt-v-center", () => {
+      pushHistory();
+      component.textVAlign = "center";
+      render();
+    });
+    bindIconButton("fmt-v-bottom", () => {
+      pushHistory();
+      component.textVAlign = "bottom";
+      render();
+    });
+    updateRichTextToolbarState();
+
+    bindInput("ins-shape-font-family", "change", (value) => {
+      pushHistory();
+      component.fontFamily = normalizeFontFamily(value);
+      render();
+    });
+
+    bindInput("ins-shape-font-color", "input", (value) => {
+      const nextColor = normalizeColor(value, component.textColor);
+      if (hasActiveRichTextSelection()) {
+        applyInlineStyleCommand(target, { color: nextColor }, false);
+        return;
+      }
+      pushHistory();
+      component.textColor = nextColor;
+      render();
+    });
+
+    bindCommittedNumber("ins-shape-font-size", (num) => {
+      pushHistory();
+      component.fontSize = normalizeFontSize(num, component.fontSize || 12);
+      render();
+    });
+
+    bindChecked("ins-comp-fill-override", (checked) => {
+      pushHistory();
+      if (checked && !component.fillOverride) {
+        component.fill = effectiveGroupComponentFill(shape, component);
+      }
+      component.fillOverride = checked;
+      render();
+    });
+
+    bindInput("ins-comp-fill", "input", (value) => {
+      if (!component.fillOverride) return;
+      pushHistory();
+      component.fill = normalizeColor(value, component.fill || fillValue);
+      render();
+    });
   }
 
   function setControlPoint(arrow, index, axis, value) {
