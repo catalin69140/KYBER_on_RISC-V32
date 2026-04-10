@@ -4968,6 +4968,10 @@
     if (!editor || !target) return;
     const selection = window.getSelection();
     if (!selectionInsideNode(editor, selection) || !selection.rangeCount) {
+      if (state.richTextToolbarInteraction && storedRichTextRangeForTarget(target)) {
+        updateRichTextToolbarState();
+        return;
+      }
       clearPendingRichTextFormat(target.key);
       updateRichTextToolbarState();
       return;
@@ -5708,6 +5712,7 @@
         updateRichTextToolbarState();
       });
       textEditor.addEventListener("blur", () => {
+        if (state.richTextToolbarInteraction) return;
         clearPendingRichTextFormat(textTarget.key);
         normalizeRichTextEditor(textEditor);
         syncTextTargetRichText(textTarget, textEditor, true);
@@ -6058,6 +6063,7 @@
         updateRichTextToolbarState();
       });
       textEditor.addEventListener("blur", () => {
+        if (state.richTextToolbarInteraction) return;
         clearPendingRichTextFormat(target.key);
         normalizeRichTextEditor(textEditor);
         syncTextTargetRichText(target, textEditor, true);
