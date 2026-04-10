@@ -2815,16 +2815,6 @@
       style: "cursor:" + (state.mode === "select" ? "move" : "crosshair"),
     });
     renderShapeVisual(group, shape, stroke, strokeWidth);
-    if (shape.kind === "component_group") {
-      Array.from(group.querySelectorAll("[data-group-component-index]")).forEach((node) => {
-        node.addEventListener("dblclick", (evt) => {
-          evt.preventDefault();
-          evt.stopPropagation();
-          const componentIndex = Number(node.getAttribute("data-group-component-index"));
-          setSelected({ type: "group_component", shapeId: shape.id, componentIndex: componentIndex });
-        });
-      });
-    }
     group.addEventListener("pointerdown", (evt) => onShapePointerDown(evt, shape.id));
     shapeLayer.appendChild(group);
   }
@@ -3867,8 +3857,45 @@
       return;
     }
 
-    const modifier = !!(evt.metaKey || evt.ctrlKey);
     const selectedIds = currentSelectedShapeIds();
+    const modifier = !!(evt.metaKey || evt.ctrlKey);
+    if (!modifier && shape.kind === "component_group") {
+      const point = clientToSvg(evt);
+      const layout = componentGroupLayout(shape);
+      const rawIndex = layout.components.findIndex((box) => (
+        point.x >= box.x
+        && point.x <= box.x + box.width
+        && point.y >= box.y
+        && point.y <= box.y + box.height
+      ));
+      const componentIndex = rawIndex >= 0 ? rawIndex : null;
+      const groupComponentSelected = !!(
+        state.selected
+        && state.selected.type === "group_component"
+        && state.selected.shapeId === shapeId
+      );
+      const wholeGroupSelected = !!(
+        state.selected
+        && state.selected.type === "shape"
+        && state.selected.id === shapeId
+        && selectedIds.length === 1
+      );
+
+      if (groupComponentSelected) {
+        if (componentIndex != null) {
+          setSelected({ type: "group_component", shapeId: shape.id, componentIndex: componentIndex });
+          return;
+        }
+        setSelected({ type: "shape", id: shape.id });
+        return;
+      }
+
+      if (componentIndex != null && (wholeGroupSelected || evt.detail >= 2)) {
+        setSelected({ type: "group_component", shapeId: shape.id, componentIndex: componentIndex });
+        return;
+      }
+    }
+
     if (modifier) {
       const nextIds = selectedIds.slice();
       const existingIdx = nextIds.indexOf(shapeId);
