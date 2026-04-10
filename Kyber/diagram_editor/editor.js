@@ -165,6 +165,7 @@
     selectedShapeIds: [],
     richTextSelection: null,
     richTextPendingFormat: null,
+    richTextPendingSticky: false,
     richTextToolbarInteraction: false,
     view: {
       zoom: 1,
@@ -4489,17 +4490,19 @@
     return normalizeTextFormatState(format);
   }
 
-  function setPendingRichTextFormat(shapeId, format) {
+  function setPendingRichTextFormat(shapeId, format, sticky) {
     state.richTextPendingFormat = {
       shapeId: shapeId,
       format: normalizeTextFormatState(format),
     };
+    state.richTextPendingSticky = !!sticky;
   }
 
   function clearPendingRichTextFormat(shapeId) {
     if (!state.richTextPendingFormat) return;
     if (shapeId && state.richTextPendingFormat.shapeId !== shapeId) return;
     state.richTextPendingFormat = null;
+    state.richTextPendingSticky = false;
   }
 
   function getPendingRichTextFormat(shapeId) {
@@ -4985,7 +4988,7 @@
     const selection = window.getSelection();
     if (!selectionInsideNode(editor, selection) || !selection.rangeCount) {
       if (storedRichTextRangeForTarget(target) && (
-        state.richTextToolbarInteraction || getPendingRichTextFormat(target.key)
+        state.richTextToolbarInteraction || state.richTextPendingSticky
       )) {
         updateRichTextToolbarState();
         return;
@@ -5006,6 +5009,8 @@
     };
     if (!range.collapsed) {
       clearPendingRichTextFormat(target.key);
+    } else if (!state.richTextToolbarInteraction && !state.richTextPendingSticky) {
+      setPendingRichTextFormat(target.key, getCaretFormatState(editor, range), false);
     }
     updateRichTextToolbarState();
   }
@@ -5438,7 +5443,7 @@
       nextState[formatKey] = !currentState[formatKey];
       if (formatKey === "subscript" && nextState.subscript) nextState.superscript = false;
       if (formatKey === "superscript" && nextState.superscript) nextState.subscript = false;
-      setPendingRichTextFormat(target.key, nextState);
+      setPendingRichTextFormat(target.key, nextState, true);
       updateRichTextToolbarState();
       return;
     }
@@ -5453,7 +5458,7 @@
     nextState[formatKey] = !currentState[formatKey];
     if (formatKey === "subscript" && nextState.subscript) nextState.superscript = false;
     if (formatKey === "superscript" && nextState.superscript) nextState.subscript = false;
-    setPendingRichTextFormat(target.key, nextState);
+    setPendingRichTextFormat(target.key, nextState, true);
     updateRichTextToolbarState();
   }
 
@@ -5480,7 +5485,7 @@
         : (getPendingRichTextFormat(target.key) || emptyTextFormatState());
       const nextState = cloneTextFormatState(currentState);
       nextState.overline = !currentState.overline;
-      setPendingRichTextFormat(target.key, nextState);
+      setPendingRichTextFormat(target.key, nextState, true);
       updateRichTextToolbarState();
       return;
     }
@@ -5492,7 +5497,7 @@
     const currentState = getPendingRichTextFormat(target.key) || emptyTextFormatState();
     const nextState = cloneTextFormatState(currentState);
     nextState.overline = !currentState.overline;
-    setPendingRichTextFormat(target.key, nextState);
+    setPendingRichTextFormat(target.key, nextState, true);
     updateRichTextToolbarState();
   }
 
@@ -5697,6 +5702,7 @@
       textEditor.addEventListener("beforeinput", (evt) => handleRichTextBeforeInput(evt, textTarget));
       textEditor.addEventListener("paste", (evt) => handleRichTextPaste(evt, textTarget));
       textEditor.addEventListener("input", () => {
+        state.richTextPendingSticky = false;
         normalizeRichTextEditor(textEditor);
         if (!pushedTextHistory) {
           pushHistory();
@@ -5717,9 +5723,11 @@
         render(true);
       });
       textEditor.addEventListener("keyup", () => {
+        if (!state.richTextToolbarInteraction) state.richTextPendingSticky = false;
         captureRichTextSelection();
       });
       textEditor.addEventListener("mouseup", () => {
+        if (!state.richTextToolbarInteraction) state.richTextPendingSticky = false;
         captureRichTextSelection();
       });
       textEditor.addEventListener("focus", () => {
@@ -5728,7 +5736,7 @@
       });
       textEditor.addEventListener("blur", () => {
         if (state.richTextToolbarInteraction || (
-          storedRichTextRangeForTarget(textTarget) && getPendingRichTextFormat(textTarget.key)
+          storedRichTextRangeForTarget(textTarget) && state.richTextPendingSticky
         )) return;
         clearPendingRichTextFormat(textTarget.key);
         normalizeRichTextEditor(textEditor);
@@ -6048,6 +6056,7 @@
       textEditor.addEventListener("beforeinput", (evt) => handleRichTextBeforeInput(evt, target));
       textEditor.addEventListener("paste", (evt) => handleRichTextPaste(evt, target));
       textEditor.addEventListener("input", () => {
+        state.richTextPendingSticky = false;
         normalizeRichTextEditor(textEditor);
         if (!pushedTextHistory) {
           pushHistory();
@@ -6067,9 +6076,11 @@
         render(true);
       });
       textEditor.addEventListener("keyup", () => {
+        if (!state.richTextToolbarInteraction) state.richTextPendingSticky = false;
         captureRichTextSelection();
       });
       textEditor.addEventListener("mouseup", () => {
+        if (!state.richTextToolbarInteraction) state.richTextPendingSticky = false;
         captureRichTextSelection();
       });
       textEditor.addEventListener("focus", () => {
@@ -6078,7 +6089,7 @@
       });
       textEditor.addEventListener("blur", () => {
         if (state.richTextToolbarInteraction || (
-          storedRichTextRangeForTarget(target) && getPendingRichTextFormat(target.key)
+          storedRichTextRangeForTarget(target) && state.richTextPendingSticky
         )) return;
         clearPendingRichTextFormat(target.key);
         normalizeRichTextEditor(textEditor);
