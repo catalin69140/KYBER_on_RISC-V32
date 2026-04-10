@@ -10,6 +10,11 @@
     { key: "usage_hints", label: "Usage hints", letter: "U", fill: "#4e5a69", stroke: "#b6cadf" },
   ];
   const DEFAULT_COLOR_PALETTE = TYPE_COLOR_SWATCHES.map((entry) => entry.fill);
+  const DEFAULT_SHAPE_FILL = "#1c2f4f";
+  const DEFAULT_SHAPE_STROKE = "#80b6ff";
+  const DEFAULT_TEXT_COLOR = "#f4f7ff";
+  const DEFAULT_CONTAINER_FILL = "#0d172a";
+  const DEFAULT_CONTAINER_STROKE = "#eef3ff";
   const DEFAULT_FONT_FAMILY = 'Georgia, "Times New Roman", serif';
   const FONT_FAMILY_OPTIONS = [
     { label: "Arial", value: "Arial, Helvetica, sans-serif" },
