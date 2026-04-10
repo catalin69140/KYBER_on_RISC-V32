@@ -4511,6 +4511,18 @@
     return cloneTextFormatState(state.richTextPendingFormat.format);
   }
 
+  function shouldReleaseStickyTypingStateOnKeyup(evt) {
+    const key = String(evt && evt.key || "");
+    return key === "ArrowLeft" ||
+      key === "ArrowRight" ||
+      key === "ArrowUp" ||
+      key === "ArrowDown" ||
+      key === "Home" ||
+      key === "End" ||
+      key === "PageUp" ||
+      key === "PageDown";
+  }
+
   function parseTextDecoration(styleText) {
     return String(styleText || "")
       .toLowerCase()
@@ -5702,7 +5714,6 @@
       textEditor.addEventListener("beforeinput", (evt) => handleRichTextBeforeInput(evt, textTarget));
       textEditor.addEventListener("paste", (evt) => handleRichTextPaste(evt, textTarget));
       textEditor.addEventListener("input", () => {
-        state.richTextPendingSticky = false;
         normalizeRichTextEditor(textEditor);
         if (!pushedTextHistory) {
           pushHistory();
@@ -5722,8 +5733,10 @@
         captureRichTextSelection();
         render(true);
       });
-      textEditor.addEventListener("keyup", () => {
-        if (!state.richTextToolbarInteraction) state.richTextPendingSticky = false;
+      textEditor.addEventListener("keyup", (evt) => {
+        if (!state.richTextToolbarInteraction && shouldReleaseStickyTypingStateOnKeyup(evt)) {
+          state.richTextPendingSticky = false;
+        }
         captureRichTextSelection();
       });
       textEditor.addEventListener("mouseup", () => {
@@ -6056,7 +6069,6 @@
       textEditor.addEventListener("beforeinput", (evt) => handleRichTextBeforeInput(evt, target));
       textEditor.addEventListener("paste", (evt) => handleRichTextPaste(evt, target));
       textEditor.addEventListener("input", () => {
-        state.richTextPendingSticky = false;
         normalizeRichTextEditor(textEditor);
         if (!pushedTextHistory) {
           pushHistory();
@@ -6075,8 +6087,10 @@
         captureRichTextSelection();
         render(true);
       });
-      textEditor.addEventListener("keyup", () => {
-        if (!state.richTextToolbarInteraction) state.richTextPendingSticky = false;
+      textEditor.addEventListener("keyup", (evt) => {
+        if (!state.richTextToolbarInteraction && shouldReleaseStickyTypingStateOnKeyup(evt)) {
+          state.richTextPendingSticky = false;
+        }
         captureRichTextSelection();
       });
       textEditor.addEventListener("mouseup", () => {
