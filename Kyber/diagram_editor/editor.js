@@ -4942,6 +4942,12 @@
     return (!!anchor && node.contains(anchor)) || (!!focus && node.contains(focus));
   }
 
+  function isRichTextEditorActive(editor) {
+    if (!editor) return false;
+    const selection = window.getSelection();
+    return document.activeElement === editor || selectionInsideNode(editor, selection);
+  }
+
   function captureRichTextSelection() {
     const editor = getRichTextEditorEl();
     const target = currentRichTextTarget();
@@ -5353,10 +5359,25 @@
   function executeTextCommand(target, formatKey) {
     const editor = getRichTextEditorEl();
     if (!editor) return;
-    const range = restoreRichTextSelection(editor, false);
+    const activeEditor = isRichTextEditorActive(editor);
+    const range = activeEditor ? restoreRichTextSelection(editor, false) : null;
     pushHistory();
     if (range && !range.collapsed) {
       toggleRangeFormat(target, formatKey);
+      return;
+    }
+
+    if (activeEditor) {
+      const basisRange = range || setEditorCaretToEnd(editor);
+      const currentState = basisRange
+        ? getSelectionFormatState(editor, basisRange)
+        : (getPendingRichTextFormat(target.key) || emptyTextFormatState());
+      const nextState = cloneTextFormatState(currentState);
+      nextState[formatKey] = !currentState[formatKey];
+      if (formatKey === "subscript" && nextState.subscript) nextState.superscript = false;
+      if (formatKey === "superscript" && nextState.superscript) nextState.subscript = false;
+      setPendingRichTextFormat(target.key, nextState);
+      updateRichTextToolbarState();
       return;
     }
 
@@ -5365,9 +5386,7 @@
       return;
     }
 
-    const currentState = range
-      ? getSelectionFormatState(editor, range)
-      : (getPendingRichTextFormat(target.key) || emptyTextFormatState());
+    const currentState = getPendingRichTextFormat(target.key) || emptyTextFormatState();
     const nextState = cloneTextFormatState(currentState);
     nextState[formatKey] = !currentState[formatKey];
     if (formatKey === "subscript" && nextState.subscript) nextState.superscript = false;
@@ -5379,20 +5398,32 @@
   function executeOverlineCommand(target) {
     const editor = getRichTextEditorEl();
     if (!editor) return;
-    const range = restoreRichTextSelection(editor, false);
+    const activeEditor = isRichTextEditorActive(editor);
+    const range = activeEditor ? restoreRichTextSelection(editor, false) : null;
 
     pushHistory();
     if (range && !range.collapsed) {
       toggleRangeFormat(target, "overline");
       return;
     }
+
+    if (activeEditor) {
+      const basisRange = range || setEditorCaretToEnd(editor);
+      const currentState = basisRange
+        ? getSelectionFormatState(editor, basisRange)
+        : (getPendingRichTextFormat(target.key) || emptyTextFormatState());
+      const nextState = cloneTextFormatState(currentState);
+      nextState.overline = !currentState.overline;
+      setPendingRichTextFormat(target.key, nextState);
+      updateRichTextToolbarState();
+      return;
+    }
+
     if (currentEditorTextLength(editor) > 0) {
       toggleWholeEditorFormat(target, "overline", range);
       return;
     }
-    const currentState = range
-      ? getSelectionFormatState(editor, range)
-      : (getPendingRichTextFormat(target.key) || emptyTextFormatState());
+    const currentState = getPendingRichTextFormat(target.key) || emptyTextFormatState();
     const nextState = cloneTextFormatState(currentState);
     nextState.overline = !currentState.overline;
     setPendingRichTextFormat(target.key, nextState);
@@ -5425,6 +5456,7 @@
   function hasActiveRichTextSelection() {
     const editor = getRichTextEditorEl();
     if (!editor) return false;
+    if (!isRichTextEditorActive(editor)) return false;
     const range = inspectRichTextSelection(editor);
     return !!(range && !range.collapsed);
   }
@@ -5438,19 +5470,20 @@
   function updateRichTextToolbarState() {
     const editor = getRichTextEditorEl();
     if (!editor) return;
-    const range = inspectRichTextSelection(editor);
+    const activeEditor = isRichTextEditorActive(editor);
+    const range = activeEditor ? inspectRichTextSelection(editor) : null;
     const target = currentRichTextTarget();
     let formatState;
     if (range) {
       formatState = getSelectionFormatState(editor, range);
     } else {
       const pending = target ? getPendingRichTextFormat(target.key) : null;
-      if (pending) {
+      if (activeEditor && pending) {
         formatState = pending;
       } else if (currentEditorTextLength(editor) > 0) {
         formatState = getSelectionFormatState(editor, editorContentRange(editor));
       } else {
-        formatState = emptyTextFormatState();
+        formatState = pending || emptyTextFormatState();
       }
     }
     setButtonActive("fmt-bold", formatState.bold);
