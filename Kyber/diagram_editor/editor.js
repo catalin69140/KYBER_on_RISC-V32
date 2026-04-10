@@ -4431,18 +4431,14 @@
   function bindIconButton(id, handler) {
     const el = document.getElementById(id);
     if (!el) return;
-    el.addEventListener("pointerdown", (evt) => {
+    let handledPointerDown = false;
+    const invoke = (evt) => {
       state.richTextToolbarInteraction = true;
       evt.preventDefault();
-    });
-    el.addEventListener("mousedown", (evt) => evt.preventDefault());
-    el.addEventListener("click", (evt) => {
-      evt.preventDefault();
-      state.richTextToolbarInteraction = true;
       const editor = getRichTextEditorEl();
       const target = currentRichTextTarget();
       const storedRange = storedRichTextRangeForTarget(target);
-      if (editor && target && storedRange) {
+      if (editor && target && storedRange && !selectionInsideNode(editor, window.getSelection())) {
         editor.focus({ preventScroll: true });
         setEditorSelection(storedRange.cloneRange());
       }
@@ -4450,6 +4446,20 @@
       window.setTimeout(() => {
         state.richTextToolbarInteraction = false;
       }, 0);
+    };
+    el.addEventListener("pointerdown", (evt) => {
+      if (evt.button !== undefined && evt.button !== 0) return;
+      handledPointerDown = true;
+      invoke(evt);
+    });
+    el.addEventListener("mousedown", (evt) => evt.preventDefault());
+    el.addEventListener("click", (evt) => {
+      if (handledPointerDown) {
+        handledPointerDown = false;
+        evt.preventDefault();
+        return;
+      }
+      invoke(evt);
     });
   }
 
