@@ -505,20 +505,24 @@
       const defaults = defaultGroupComponent(idx, groupShape || {});
       const raw = source[idx];
       if (raw && typeof raw === "object" && !Array.isArray(raw)) {
-        const text = String(raw.text || raw.label || labels[idx] || defaults.text).trim() || defaults.text;
-        out.push({
-          text: text,
-          richText: typeof raw.richText === "string" && raw.richText.trim()
-            ? raw.richText
-            : plainTextToRichHtml(text),
-          fill: normalizeColor(raw.fill, defaults.fill),
-          fillOverride: !!(raw.fillOverride || raw.override),
-          textColor: normalizeColor(raw.textColor, defaults.textColor),
-          textAlign: normalizeTextAlign(raw.textAlign || defaults.textAlign),
-          textVAlign: normalizeTextVAlign(raw.textVAlign || defaults.textVAlign),
-          fontSize: normalizeFontSize(raw.fontSize, defaults.fontSize),
-          fontFamily: normalizeFontFamily(raw.fontFamily || defaults.fontFamily),
-        });
+        const hasText = Object.prototype.hasOwnProperty.call(raw, "text");
+        const hasLabel = Object.prototype.hasOwnProperty.call(raw, "label");
+        const textSource = hasText
+          ? raw.text
+          : (hasLabel ? raw.label : (labels[idx] != null ? labels[idx] : defaults.text));
+        const text = String(textSource == null ? "" : textSource);
+        raw.text = text;
+        raw.richText = typeof raw.richText === "string"
+          ? raw.richText
+          : plainTextToRichHtml(text);
+        raw.fill = normalizeColor(raw.fill, defaults.fill);
+        raw.fillOverride = !!(raw.fillOverride || raw.override);
+        raw.textColor = normalizeColor(raw.textColor, defaults.textColor);
+        raw.textAlign = normalizeTextAlign(raw.textAlign || defaults.textAlign);
+        raw.textVAlign = normalizeTextVAlign(raw.textVAlign || defaults.textVAlign);
+        raw.fontSize = normalizeFontSize(raw.fontSize, defaults.fontSize);
+        raw.fontFamily = normalizeFontFamily(raw.fontFamily || defaults.fontFamily);
+        out.push(raw);
         continue;
       }
       if (typeof raw === "string" && raw.trim()) {
@@ -3775,6 +3779,13 @@
     };
   }
 
+  function getGroupComponentAt(shape, componentIndex) {
+    if (!shape || shape.kind !== "component_group") return null;
+    shape.components = normalizeGroupComponents(shape.components, shape.componentCount, shape);
+    const safeIndex = Math.max(0, Math.min(shape.components.length - 1, Number(componentIndex) || 0));
+    return shape.components[safeIndex] || null;
+  }
+
   function clientToSvg(evt) {
     const pt = els.svg.createSVGPoint();
     pt.x = evt.clientX;
@@ -4604,6 +4615,21 @@
     return normalizeTextFormatState(coverage.all);
   }
 
+  function editorContentRange(editor) {
+    if (!editor) return null;
+    const range = document.createRange();
+    range.selectNodeContents(editor);
+    return range;
+  }
+
+  function setEditorCaretToEnd(editor) {
+    const range = editorContentRange(editor);
+    if (!range) return null;
+    range.collapse(false);
+    setEditorSelection(range);
+    return range;
+  }
+
   function rangePlainText(range) {
     if (!range) return "";
     const wrapper = document.createElement("div");
@@ -4627,14 +4653,18 @@
   }
 
   function makeGroupComponentTextTarget(shape, component, componentIndex) {
-    if (!shape || !component) return null;
+    if (!shape) return null;
     return {
       type: "group_component",
       key: groupComponentSelectionKey(shape.id, componentIndex),
       shape: shape,
-      component: component,
       componentIndex: componentIndex,
-      entity: component,
+      get component() {
+        return getGroupComponentAt(shape, componentIndex);
+      },
+      get entity() {
+        return getGroupComponentAt(shape, componentIndex);
+      },
     };
   }
 
@@ -4989,6 +5019,7 @@
 
   function cleanupFormatElement(node) {
     if (!node || node.nodeType !== Node.ELEMENT_NODE) return;
+    if (isBoundaryMarker(node)) return;
     const tag = String(node.tagName || "").toLowerCase();
     if (tag === "span" && !String(node.getAttribute("style") || "").trim()) {
       unwrapElement(node);
@@ -5286,24 +5317,62 @@
     }
   }
 
+  function toggleWholeEditorFormat(target, formatKey, preservedRange) {
+    const editor = getRichTextEditorEl();
+    if (!editor) return false;
+    const fullRange = editorContentRange(editor);
+    if (!fullRange) return false;
+    const currentState = getSelectionFormatState(editor, fullRange);
+    const shouldEnable = !currentState[formatKey];
+    const collapsedRange = preservedRange && preservedRange.collapsed ? preservedRange.cloneRange() : null;
+    const markers = collapsedRange ? insertRangeBoundaryMarkers(collapsedRange) : null;
+
+    stripFormatFromContainer(editor, formatKey);
+    if (formatKey === "subscript") {
+      stripFormatFromContainer(editor, "superscript");
+    } else if (formatKey === "superscript") {
+      stripFormatFromContainer(editor, "subscript");
+    }
+    if (shouldEnable && hasRenderableChildren(editor)) {
+      wrapContainerWithFormat(editor, formatKey);
+    }
+
+    window.getSelection().removeAllRanges();
+    normalizeRichTextEditor(editor);
+    if (markers) {
+      restoreSelectionFromMarkers(editor, markers);
+    } else {
+      setEditorCaretToEnd(editor);
+    }
+    clearPendingRichTextFormat(target.key);
+    captureRichTextSelection();
+    syncTextTargetRichText(target, editor, false);
+    return true;
+  }
+
   function executeTextCommand(target, formatKey) {
     const editor = getRichTextEditorEl();
     if (!editor) return;
     const range = restoreRichTextSelection(editor, false);
-    if (!range) return;
     pushHistory();
-    if (!range.collapsed) {
+    if (range && !range.collapsed) {
       toggleRangeFormat(target, formatKey);
       return;
     }
 
-    const currentState = getSelectionFormatState(editor, range);
+    if (currentEditorTextLength(editor) > 0) {
+      toggleWholeEditorFormat(target, formatKey, range);
+      return;
+    }
+
+    const currentState = range
+      ? getSelectionFormatState(editor, range)
+      : (getPendingRichTextFormat(target.key) || emptyTextFormatState());
     const nextState = cloneTextFormatState(currentState);
     nextState[formatKey] = !currentState[formatKey];
     if (formatKey === "subscript" && nextState.subscript) nextState.superscript = false;
     if (formatKey === "superscript" && nextState.superscript) nextState.subscript = false;
     setPendingRichTextFormat(target.key, nextState);
-    captureRichTextSelection();
     updateRichTextToolbarState();
   }
 
@@ -5311,18 +5380,22 @@
     const editor = getRichTextEditorEl();
     if (!editor) return;
     const range = restoreRichTextSelection(editor, false);
-    if (!range) return;
 
     pushHistory();
-    if (!range.collapsed) {
+    if (range && !range.collapsed) {
       toggleRangeFormat(target, "overline");
       return;
     }
-    const currentState = getSelectionFormatState(editor, range);
+    if (currentEditorTextLength(editor) > 0) {
+      toggleWholeEditorFormat(target, "overline", range);
+      return;
+    }
+    const currentState = range
+      ? getSelectionFormatState(editor, range)
+      : (getPendingRichTextFormat(target.key) || emptyTextFormatState());
     const nextState = cloneTextFormatState(currentState);
     nextState.overline = !currentState.overline;
     setPendingRichTextFormat(target.key, nextState);
-    captureRichTextSelection();
     updateRichTextToolbarState();
   }
 
@@ -5366,7 +5439,20 @@
     const editor = getRichTextEditorEl();
     if (!editor) return;
     const range = inspectRichTextSelection(editor);
-    const formatState = getSelectionFormatState(editor, range);
+    const target = currentRichTextTarget();
+    let formatState;
+    if (range) {
+      formatState = getSelectionFormatState(editor, range);
+    } else {
+      const pending = target ? getPendingRichTextFormat(target.key) : null;
+      if (pending) {
+        formatState = pending;
+      } else if (currentEditorTextLength(editor) > 0) {
+        formatState = getSelectionFormatState(editor, editorContentRange(editor));
+      } else {
+        formatState = emptyTextFormatState();
+      }
+    }
     setButtonActive("fmt-bold", formatState.bold);
     setButtonActive("fmt-italic", formatState.italic);
     setButtonActive("fmt-underline", formatState.underline);
@@ -5781,7 +5867,8 @@
     }
     shape.components = normalizeGroupComponents(shape.components, shape.componentCount, shape);
     const safeIndex = Math.max(0, Math.min(shape.components.length - 1, Number(componentIndex) || 0));
-    const component = shape.components[safeIndex];
+    const currentComponent = () => getGroupComponentAt(shape, safeIndex);
+    const component = currentComponent();
     if (!component) {
       els.inspector.innerHTML = '<div class="empty-state">Component not found.</div>';
       return;
@@ -5823,7 +5910,7 @@
         '<input id="ins-shape-font-size" class="font-size-input" type="number" min="8" max="1000" step="0.5" title="Font size" value="' + roundNum(component.fontSize || 12) + '"/>' +
       "</div>",
       '<div class="section-heading-row"><h3>Color</h3><label class="inline-toggle"><input id="ins-comp-fill-override" type="checkbox"' + (component.fillOverride ? " checked" : "") + '> Override</label></div>',
-      '<div class="palette-block"><label>Fill palette</label><div class="palette" id="ins-comp-fill-palette"></div></div>',
+      '<div class="palette-block section-offset"><label>Fill palette</label><div class="palette" id="ins-comp-fill-palette"></div></div>',
       '<div class="color-inline-row"><label for="ins-comp-fill">Fill:</label><input id="ins-comp-fill" type="color" value="' + normalizeColor(fillValue, "#0d172a") + '"' + (component.fillOverride ? "" : " disabled") + '/></div>',
       "</div>",
     ].join("");
@@ -5849,9 +5936,10 @@
       sw.title = entry.label + " fill";
       sw.disabled = !component.fillOverride;
       sw.addEventListener("click", () => {
-        if (!component.fillOverride) return;
+        const nextComponent = currentComponent();
+        if (!nextComponent || !nextComponent.fillOverride) return;
         pushHistory();
-        component.fill = normalizeColor(entry.fill, component.fill || fillValue);
+        nextComponent.fill = normalizeColor(entry.fill, nextComponent.fill || fillValue);
         render();
       });
       fillPaletteEl.appendChild(sw);
@@ -5868,12 +5956,14 @@
           pushHistory();
           pushedTextHistory = true;
         }
-        component.richText = String(textEditor.innerHTML || "");
-        component.text = richHtmlToPlainText(component.richText);
-        if (component.text.length > MAX_SHAPE_TEXT_LENGTH) {
-          component.text = component.text.slice(0, MAX_SHAPE_TEXT_LENGTH);
-          component.richText = plainTextToRichHtml(component.text);
-          textEditor.innerHTML = component.richText;
+        const nextComponent = currentComponent();
+        if (!nextComponent) return;
+        nextComponent.richText = String(textEditor.innerHTML || "");
+        nextComponent.text = richHtmlToPlainText(nextComponent.richText);
+        if (nextComponent.text.length > MAX_SHAPE_TEXT_LENGTH) {
+          nextComponent.text = nextComponent.text.slice(0, MAX_SHAPE_TEXT_LENGTH);
+          nextComponent.richText = plainTextToRichHtml(nextComponent.text);
+          textEditor.innerHTML = nextComponent.richText;
         }
         updateTextInspectorMeta(target, textEditor);
         captureRichTextSelection();
@@ -5906,72 +5996,93 @@
     bindIconButton("fmt-superscript", () => executeTextCommand(target, "superscript"));
     bindIconButton("fmt-align-left", () => {
       pushHistory();
-      component.textAlign = "left";
+      const nextComponent = currentComponent();
+      if (!nextComponent) return;
+      nextComponent.textAlign = "left";
       render();
     });
     bindIconButton("fmt-align-center", () => {
       pushHistory();
-      component.textAlign = "center";
+      const nextComponent = currentComponent();
+      if (!nextComponent) return;
+      nextComponent.textAlign = "center";
       render();
     });
     bindIconButton("fmt-align-right", () => {
       pushHistory();
-      component.textAlign = "right";
+      const nextComponent = currentComponent();
+      if (!nextComponent) return;
+      nextComponent.textAlign = "right";
       render();
     });
     bindIconButton("fmt-v-top", () => {
       pushHistory();
-      component.textVAlign = "top";
+      const nextComponent = currentComponent();
+      if (!nextComponent) return;
+      nextComponent.textVAlign = "top";
       render();
     });
     bindIconButton("fmt-v-center", () => {
       pushHistory();
-      component.textVAlign = "center";
+      const nextComponent = currentComponent();
+      if (!nextComponent) return;
+      nextComponent.textVAlign = "center";
       render();
     });
     bindIconButton("fmt-v-bottom", () => {
       pushHistory();
-      component.textVAlign = "bottom";
+      const nextComponent = currentComponent();
+      if (!nextComponent) return;
+      nextComponent.textVAlign = "bottom";
       render();
     });
     updateRichTextToolbarState();
 
     bindInput("ins-shape-font-family", "change", (value) => {
       pushHistory();
-      component.fontFamily = normalizeFontFamily(value);
+      const nextComponent = currentComponent();
+      if (!nextComponent) return;
+      nextComponent.fontFamily = normalizeFontFamily(value);
       render();
     });
 
     bindInput("ins-shape-font-color", "input", (value) => {
-      const nextColor = normalizeColor(value, component.textColor);
+      const nextComponent = currentComponent();
+      if (!nextComponent) return;
+      const nextColor = normalizeColor(value, nextComponent.textColor);
       if (hasActiveRichTextSelection()) {
         applyInlineStyleCommand(target, { color: nextColor }, false);
         return;
       }
       pushHistory();
-      component.textColor = nextColor;
+      nextComponent.textColor = nextColor;
       render();
     });
 
     bindCommittedNumber("ins-shape-font-size", (num) => {
       pushHistory();
-      component.fontSize = normalizeFontSize(num, component.fontSize || 12);
+      const nextComponent = currentComponent();
+      if (!nextComponent) return;
+      nextComponent.fontSize = normalizeFontSize(num, nextComponent.fontSize || 12);
       render();
     });
 
     bindChecked("ins-comp-fill-override", (checked) => {
       pushHistory();
-      if (checked && !component.fillOverride) {
-        component.fill = effectiveGroupComponentFill(shape, component);
+      const nextComponent = currentComponent();
+      if (!nextComponent) return;
+      if (checked && !nextComponent.fillOverride) {
+        nextComponent.fill = effectiveGroupComponentFill(shape, nextComponent);
       }
-      component.fillOverride = checked;
+      nextComponent.fillOverride = checked;
       render();
     });
 
     bindInput("ins-comp-fill", "input", (value) => {
-      if (!component.fillOverride) return;
+      const nextComponent = currentComponent();
+      if (!nextComponent || !nextComponent.fillOverride) return;
       pushHistory();
-      component.fill = normalizeColor(value, component.fill || fillValue);
+      nextComponent.fill = normalizeColor(value, nextComponent.fill || fillValue);
       render();
     });
   }

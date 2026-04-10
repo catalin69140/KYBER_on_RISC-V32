@@ -385,15 +385,21 @@ def _normalize_group_components(
         default = defaults[idx]
         raw_item = raw_items[idx] if idx < len(raw_items) else None
         if isinstance(raw_item, dict):
-            text = str(
-                raw_item.get("text")
-                or raw_item.get("label")
-                or default["text"]
-            ).strip() or default["text"]
+            has_text = "text" in raw_item
+            has_label = "label" in raw_item
+            if has_text:
+                text_source = raw_item.get("text")
+            elif has_label:
+                text_source = raw_item.get("label")
+            elif idx < len(labels):
+                text_source = labels[idx]
+            else:
+                text_source = default["text"]
+            text = str("" if text_source is None else text_source)
             out.append(
                 {
                     "text": text,
-                    "richText": str(raw_item.get("richText") or ""),
+                    "richText": str(raw_item.get("richText") if "richText" in raw_item else ""),
                     "fill": str(raw_item.get("fill") or default["fill"]),
                     "fillOverride": bool(raw_item.get("fillOverride", raw_item.get("override", False))),
                     "textColor": str(raw_item.get("textColor") or default["textColor"]),
