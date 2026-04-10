@@ -4439,6 +4439,13 @@
     el.addEventListener("click", (evt) => {
       evt.preventDefault();
       state.richTextToolbarInteraction = true;
+      const editor = getRichTextEditorEl();
+      const target = currentRichTextTarget();
+      const storedRange = storedRichTextRangeForTarget(target);
+      if (editor && target && storedRange) {
+        editor.focus({ preventScroll: true });
+        setEditorSelection(storedRange.cloneRange());
+      }
       handler();
       window.setTimeout(() => {
         state.richTextToolbarInteraction = false;
@@ -4989,8 +4996,6 @@
     };
     if (!range.collapsed) {
       clearPendingRichTextFormat(target.key);
-    } else if (!state.richTextToolbarInteraction) {
-      setPendingRichTextFormat(target.key, getCaretFormatState(editor, range));
     }
     updateRichTextToolbarState();
   }
