@@ -4430,6 +4430,7 @@
   function bindIconButton(id, handler) {
     const el = document.getElementById(id);
     if (!el) return;
+    el.addEventListener("pointerdown", (evt) => evt.preventDefault());
     el.addEventListener("mousedown", (evt) => evt.preventDefault());
     el.addEventListener("click", (evt) => {
       evt.preventDefault();
@@ -5343,15 +5344,16 @@
       wrapContainerWithFormat(editor, formatKey);
     }
 
-    window.getSelection().removeAllRanges();
     normalizeRichTextEditor(editor);
     if (markers) {
+      window.getSelection().removeAllRanges();
       restoreSelectionFromMarkers(editor, markers);
-    } else {
-      setEditorCaretToEnd(editor);
+      clearPendingRichTextFormat(target.key);
+      captureRichTextSelection();
+      syncTextTargetRichText(target, editor, false);
+      return true;
     }
     clearPendingRichTextFormat(target.key);
-    captureRichTextSelection();
     syncTextTargetRichText(target, editor, false);
     return true;
   }
