@@ -165,6 +165,7 @@
     selectedShapeIds: [],
     richTextSelection: null,
     richTextPendingFormat: null,
+    richTextToolbarInteraction: false,
     view: {
       zoom: 1,
       minZoom: 0.05,
@@ -4430,11 +4431,18 @@
   function bindIconButton(id, handler) {
     const el = document.getElementById(id);
     if (!el) return;
-    el.addEventListener("pointerdown", (evt) => evt.preventDefault());
+    el.addEventListener("pointerdown", (evt) => {
+      state.richTextToolbarInteraction = true;
+      evt.preventDefault();
+    });
     el.addEventListener("mousedown", (evt) => evt.preventDefault());
     el.addEventListener("click", (evt) => {
       evt.preventDefault();
+      state.richTextToolbarInteraction = true;
       handler();
+      window.setTimeout(() => {
+        state.richTextToolbarInteraction = false;
+      }, 0);
     });
   }
 
@@ -4949,6 +4957,11 @@
     return document.activeElement === editor || selectionInsideNode(editor, selection);
   }
 
+  function storedRichTextRangeForTarget(target) {
+    if (!target || !state.richTextSelection || state.richTextSelection.targetKey !== target.key) return null;
+    return state.richTextSelection.range.cloneRange();
+  }
+
   function captureRichTextSelection() {
     const editor = getRichTextEditorEl();
     const target = currentRichTextTarget();
@@ -4960,6 +4973,11 @@
       return;
     }
     const range = selection.getRangeAt(0).cloneRange();
+    const existing = storedRichTextRangeForTarget(target);
+    if (state.richTextToolbarInteraction && range.collapsed && existing && !existing.collapsed) {
+      updateRichTextToolbarState();
+      return;
+    }
     state.richTextSelection = {
       targetKey: target.key,
       range: range,
@@ -4995,14 +5013,16 @@
   function inspectRichTextSelection(editor) {
     if (!editor) return null;
     const live = window.getSelection();
-    if (selectionInsideNode(editor, live) && live.rangeCount) {
-      return live.getRangeAt(0);
-    }
     const target = currentRichTextTarget();
-    if (state.richTextSelection && target && state.richTextSelection.targetKey === target.key) {
-      return state.richTextSelection.range.cloneRange();
+    const stored = storedRichTextRangeForTarget(target);
+    if (selectionInsideNode(editor, live) && live.rangeCount) {
+      const liveRange = live.getRangeAt(0).cloneRange();
+      if (stored && !stored.collapsed && liveRange.collapsed) {
+        return stored;
+      }
+      return liveRange;
     }
-    return null;
+    return stored;
   }
 
   function setEditorSelection(range) {
