@@ -4610,7 +4610,9 @@
     if (range.collapsed) {
       const target = currentRichTextTarget();
       const pending = target ? getPendingRichTextFormat(target.key) : null;
-      return pending || getCaretFormatState(editor, range);
+      const caretState = getCaretFormatState(editor, range);
+      if (!pending) return caretState;
+      return normalizeTextFormatState(Object.assign({}, caretState, pending));
     }
     const textNodes = getRangeTextNodes(editor, range);
     const coverage = {
@@ -4881,7 +4883,6 @@
       const clipped = String(evt.data || "").slice(0, Math.max(0, available));
       if (!clipped) return;
       if (insertCollapsedFormattedText(editor, clipped, pending)) {
-        clearPendingRichTextFormat(target.key);
         normalizeRichTextEditor(editor);
         editor.dispatchEvent(new Event("input", { bubbles: true }));
       }
@@ -4892,7 +4893,6 @@
       evt.preventDefault();
       if (available < 1) return;
       if (insertCollapsedFormattedText(editor, "\n", pending)) {
-        clearPendingRichTextFormat(target.key);
         normalizeRichTextEditor(editor);
         editor.dispatchEvent(new Event("input", { bubbles: true }));
       }
@@ -4929,7 +4929,6 @@
       evt.preventDefault();
       if (!clipped) return;
       if (insertCollapsedFormattedText(editor, clipped, pending)) {
-        clearPendingRichTextFormat(target.key);
         normalizeRichTextEditor(editor);
         editor.dispatchEvent(new Event("input", { bubbles: true }));
       }
@@ -4968,7 +4967,9 @@
     if (!editor || !target) return;
     const selection = window.getSelection();
     if (!selectionInsideNode(editor, selection) || !selection.rangeCount) {
-      if (state.richTextToolbarInteraction && storedRichTextRangeForTarget(target)) {
+      if (storedRichTextRangeForTarget(target) && (
+        state.richTextToolbarInteraction || getPendingRichTextFormat(target.key)
+      )) {
         updateRichTextToolbarState();
         return;
       }
@@ -4988,6 +4989,8 @@
     };
     if (!range.collapsed) {
       clearPendingRichTextFormat(target.key);
+    } else if (!state.richTextToolbarInteraction) {
+      setPendingRichTextFormat(target.key, getCaretFormatState(editor, range));
     }
     updateRichTextToolbarState();
   }
@@ -5679,7 +5682,6 @@
       textEditor.addEventListener("beforeinput", (evt) => handleRichTextBeforeInput(evt, textTarget));
       textEditor.addEventListener("paste", (evt) => handleRichTextPaste(evt, textTarget));
       textEditor.addEventListener("input", () => {
-        clearPendingRichTextFormat(textTarget.key);
         normalizeRichTextEditor(textEditor);
         if (!pushedTextHistory) {
           pushHistory();
@@ -5700,11 +5702,9 @@
         render(true);
       });
       textEditor.addEventListener("keyup", () => {
-        clearPendingRichTextFormat(textTarget.key);
         captureRichTextSelection();
       });
       textEditor.addEventListener("mouseup", () => {
-        clearPendingRichTextFormat(textTarget.key);
         captureRichTextSelection();
       });
       textEditor.addEventListener("focus", () => {
@@ -5712,7 +5712,9 @@
         updateRichTextToolbarState();
       });
       textEditor.addEventListener("blur", () => {
-        if (state.richTextToolbarInteraction) return;
+        if (state.richTextToolbarInteraction || (
+          storedRichTextRangeForTarget(textTarget) && getPendingRichTextFormat(textTarget.key)
+        )) return;
         clearPendingRichTextFormat(textTarget.key);
         normalizeRichTextEditor(textEditor);
         syncTextTargetRichText(textTarget, textEditor, true);
@@ -6031,7 +6033,6 @@
       textEditor.addEventListener("beforeinput", (evt) => handleRichTextBeforeInput(evt, target));
       textEditor.addEventListener("paste", (evt) => handleRichTextPaste(evt, target));
       textEditor.addEventListener("input", () => {
-        clearPendingRichTextFormat(target.key);
         normalizeRichTextEditor(textEditor);
         if (!pushedTextHistory) {
           pushHistory();
@@ -6051,11 +6052,9 @@
         render(true);
       });
       textEditor.addEventListener("keyup", () => {
-        clearPendingRichTextFormat(target.key);
         captureRichTextSelection();
       });
       textEditor.addEventListener("mouseup", () => {
-        clearPendingRichTextFormat(target.key);
         captureRichTextSelection();
       });
       textEditor.addEventListener("focus", () => {
@@ -6063,7 +6062,9 @@
         updateRichTextToolbarState();
       });
       textEditor.addEventListener("blur", () => {
-        if (state.richTextToolbarInteraction) return;
+        if (state.richTextToolbarInteraction || (
+          storedRichTextRangeForTarget(target) && getPendingRichTextFormat(target.key)
+        )) return;
         clearPendingRichTextFormat(target.key);
         normalizeRichTextEditor(textEditor);
         syncTextTargetRichText(target, textEditor, true);
