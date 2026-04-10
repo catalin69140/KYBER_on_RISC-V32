@@ -5238,10 +5238,13 @@
     return nextRange;
   }
 
-  function toggleRangeFormat(target, formatKey) {
+  function toggleRangeFormat(target, formatKey, options) {
     const editor = getRichTextEditorEl();
     if (!editor) return false;
-    const range = restoreRichTextSelection(editor, false);
+    const range = options && options.range
+      ? options.range.cloneRange()
+      : restoreRichTextSelection(editor, false);
+    const applyLiveSelection = !!(options && options.applyLiveSelection);
     if (!range || range.collapsed) return false;
 
     const currentState = getSelectionFormatState(editor, range);
@@ -5298,9 +5301,20 @@
     markers.endMarker.remove();
     cleanupEmptyAncestors(startCleanupRoot, editor);
     cleanupEmptyAncestors(endCleanupRoot, editor);
-    setEditorSelection(nextRange);
+    if (applyLiveSelection) {
+      setEditorSelection(nextRange);
+    } else {
+      state.richTextSelection = {
+        targetKey: target.key,
+        range: nextRange.cloneRange(),
+      };
+    }
     clearPendingRichTextFormat(target.key);
-    captureRichTextSelection();
+    if (applyLiveSelection) {
+      captureRichTextSelection();
+    } else {
+      updateRichTextToolbarState();
+    }
     syncTextTargetRichText(target, editor, false);
     return true;
   }
@@ -5361,16 +5375,20 @@
   function executeTextCommand(target, formatKey) {
     const editor = getRichTextEditorEl();
     if (!editor) return;
-    const activeEditor = isRichTextEditorActive(editor);
-    const range = activeEditor ? restoreRichTextSelection(editor, false) : null;
+    const selection = window.getSelection();
+    const hasLiveSelection = selectionInsideNode(editor, selection) && selection.rangeCount;
+    const range = inspectRichTextSelection(editor);
     pushHistory();
     if (range && !range.collapsed) {
-      toggleRangeFormat(target, formatKey);
+      toggleRangeFormat(target, formatKey, {
+        range: range,
+        applyLiveSelection: !!hasLiveSelection,
+      });
       return;
     }
 
-    if (activeEditor) {
-      const basisRange = range || setEditorCaretToEnd(editor);
+    if (range) {
+      const basisRange = range.cloneRange();
       const currentState = basisRange
         ? getSelectionFormatState(editor, basisRange)
         : (getPendingRichTextFormat(target.key) || emptyTextFormatState());
@@ -5400,17 +5418,21 @@
   function executeOverlineCommand(target) {
     const editor = getRichTextEditorEl();
     if (!editor) return;
-    const activeEditor = isRichTextEditorActive(editor);
-    const range = activeEditor ? restoreRichTextSelection(editor, false) : null;
+    const selection = window.getSelection();
+    const hasLiveSelection = selectionInsideNode(editor, selection) && selection.rangeCount;
+    const range = inspectRichTextSelection(editor);
 
     pushHistory();
     if (range && !range.collapsed) {
-      toggleRangeFormat(target, "overline");
+      toggleRangeFormat(target, "overline", {
+        range: range,
+        applyLiveSelection: !!hasLiveSelection,
+      });
       return;
     }
 
-    if (activeEditor) {
-      const basisRange = range || setEditorCaretToEnd(editor);
+    if (range) {
+      const basisRange = range.cloneRange();
       const currentState = basisRange
         ? getSelectionFormatState(editor, basisRange)
         : (getPendingRichTextFormat(target.key) || emptyTextFormatState());
@@ -5472,15 +5494,14 @@
   function updateRichTextToolbarState() {
     const editor = getRichTextEditorEl();
     if (!editor) return;
-    const activeEditor = isRichTextEditorActive(editor);
-    const range = activeEditor ? inspectRichTextSelection(editor) : null;
+    const range = inspectRichTextSelection(editor);
     const target = currentRichTextTarget();
     let formatState;
     if (range) {
       formatState = getSelectionFormatState(editor, range);
     } else {
       const pending = target ? getPendingRichTextFormat(target.key) : null;
-      if (activeEditor && pending) {
+      if (pending) {
         formatState = pending;
       } else if (currentEditorTextLength(editor) > 0) {
         formatState = getSelectionFormatState(editor, editorContentRange(editor));
