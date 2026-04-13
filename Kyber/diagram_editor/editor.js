@@ -1696,39 +1696,41 @@
     }, { width: 18, height: 18 });
   }
 
-  function applyTextBoxAdjustments(baseBox, spec) {
+  function applyTextBoxAdjustments(baseBox, spec, frameBox) {
     if (!baseBox || !spec) return baseBox;
+    const outer = frameBox || {
+      x: Number.isFinite(Number(spec.x)) ? Number(spec.x) : baseBox.x,
+      y: Number.isFinite(Number(spec.y)) ? Number(spec.y) : baseBox.y,
+      width: Number.isFinite(Number(spec.width)) ? Number(spec.width) : baseBox.width,
+      height: Number.isFinite(Number(spec.height)) ? Number(spec.height) : baseBox.height,
+    };
     const pad = normalizeTextInset(spec.textPadding, 0);
-    const maxPadX = Math.max(0, Math.floor((baseBox.width - 8) / 2));
-    const maxPadY = Math.max(0, Math.floor((baseBox.height - 8) / 2));
+    const maxPadX = Math.max(0, Math.floor((outer.width - 8) / 2));
+    const maxPadY = Math.max(0, Math.floor((outer.height - 8) / 2));
     const effectivePad = Math.min(pad, maxPadX, maxPadY);
     let moveLeft = normalizeTextInset(spec.textOffsetLeft, 0);
     let moveRight = normalizeTextInset(spec.textOffsetRight, 0);
     let moveUp = normalizeTextInset(spec.textOffsetUp, 0);
     let moveDown = normalizeTextInset(spec.textOffsetDown, 0);
-    const maxHorizontal = Math.max(0, baseBox.width - 8 - effectivePad * 2);
-    const maxVertical = Math.max(0, baseBox.height - 8 - effectivePad * 2);
-    const totalHorizontal = moveLeft + moveRight;
-    if (totalHorizontal > maxHorizontal && totalHorizontal > 0) {
-      const scale = maxHorizontal / totalHorizontal;
-      moveLeft *= scale;
-      moveRight *= scale;
-    }
-    const totalVertical = moveUp + moveDown;
-    if (totalVertical > maxVertical && totalVertical > 0) {
-      const scale = maxVertical / totalVertical;
-      moveUp *= scale;
-      moveDown *= scale;
-    }
-    const leftInset = effectivePad + moveRight;
-    const rightInset = effectivePad + moveLeft;
-    const topInset = effectivePad + moveDown;
-    const bottomInset = effectivePad + moveUp;
+    const paddedFrame = {
+      x: outer.x + effectivePad,
+      y: outer.y + effectivePad,
+      width: Math.max(8, outer.width - effectivePad * 2),
+      height: Math.max(8, outer.height - effectivePad * 2),
+    };
+    const boxWidth = Math.max(8, Math.min(baseBox.width, paddedFrame.width));
+    const boxHeight = Math.max(8, Math.min(baseBox.height, paddedFrame.height));
+    const shiftX = moveRight - moveLeft;
+    const shiftY = moveDown - moveUp;
+    const minX = paddedFrame.x;
+    const maxX = paddedFrame.x + paddedFrame.width - boxWidth;
+    const minY = paddedFrame.y;
+    const maxY = paddedFrame.y + paddedFrame.height - boxHeight;
     return {
-      x: baseBox.x + leftInset,
-      y: baseBox.y + topInset,
-      width: Math.max(8, baseBox.width - leftInset - rightInset),
-      height: Math.max(8, baseBox.height - topInset - bottomInset),
+      x: clamp(baseBox.x + shiftX, minX, maxX),
+      y: clamp(baseBox.y + shiftY, minY, maxY),
+      width: boxWidth,
+      height: boxHeight,
     };
   }
 
@@ -2240,7 +2242,12 @@
         y: shape.y + padY,
         width: Math.max(8, shape.width - padX * 2),
         height: Math.max(8, headerH - padY * 2),
-      }, shape);
+      }, shape, {
+        x: shape.x,
+        y: shape.y,
+        width: shape.width,
+        height: headerH,
+      });
     }
     if (shape.kind === "component_group") {
       const titleHeight = componentGroupHeaderHeight(shape);
@@ -2251,7 +2258,12 @@
         y: shape.y + padY,
         width: Math.max(8, shape.width - padX * 2),
         height: Math.max(8, titleHeight - padY * 2),
-      }, shape);
+      }, shape, {
+        x: shape.x,
+        y: shape.y,
+        width: shape.width,
+        height: titleHeight,
+      });
     }
     if (shape.kind === "circle" || shape.kind === "oval") {
       return applyTextBoxAdjustments(insetTextBox(shape, {
@@ -2263,7 +2275,7 @@
         maxX: 24,
         minY: 6,
         maxY: 18,
-      }, { width: 20, height: 20 }), shape);
+      }, { width: 20, height: 20 }), shape, shape);
     }
     if (shape.kind === "cylinder") {
       return applyTextBoxAdjustments(insetTextBox(shape, {
@@ -2275,7 +2287,7 @@
         maxX: 22,
         minY: 8,
         maxY: 22,
-      }, { width: 22, height: 22 }), shape);
+      }, { width: 22, height: 22 }), shape, shape);
     }
     if (shape.kind === "triangle") {
       return applyTextBoxAdjustments(insetTextBox(shape, {
@@ -2287,7 +2299,7 @@
         maxX: 24,
         minY: 7,
         maxY: 22,
-      }, { width: 20, height: 20 }), shape);
+      }, { width: 20, height: 20 }), shape, shape);
     }
     if (shape.kind === "diamond" || shape.kind === "pentagon" || shape.kind === "hexagon" || shape.kind === "octagon") {
       return applyTextBoxAdjustments(insetTextBox(shape, {
@@ -2299,7 +2311,7 @@
         maxX: 24,
         minY: 7,
         maxY: 20,
-      }, { width: 22, height: 22 }), shape);
+      }, { width: 22, height: 22 }), shape, shape);
     }
     if (shape.kind === "cone") {
       return applyTextBoxAdjustments(insetTextBox(shape, {
@@ -2311,7 +2323,7 @@
         maxX: 24,
         minY: 8,
         maxY: 24,
-      }, { width: 22, height: 24 }), shape);
+      }, { width: 22, height: 24 }), shape, shape);
     }
     if (shape.kind === "cube" || shape.kind === "cuboid" || shape.kind === "hexagonal_prism") {
       return applyTextBoxAdjustments(insetTextBox(shape, {
@@ -2323,7 +2335,7 @@
         maxX: 26,
         minY: 8,
         maxY: 20,
-      }, { width: 22, height: 20 }), shape);
+      }, { width: 22, height: 20 }), shape, shape);
     }
     if (shape.kind === "cloud" || shape.kind === "cloud_callout") {
       return applyTextBoxAdjustments(insetTextBox(shape, {
@@ -2335,7 +2347,7 @@
         maxX: 28,
         minY: 9,
         maxY: 24,
-      }, { width: 26, height: 24 }), shape);
+      }, { width: 26, height: 24 }), shape, shape);
     }
     if (shape.kind === "mail") {
       return applyTextBoxAdjustments(insetTextBox(shape, {
@@ -2347,7 +2359,7 @@
         maxX: 20,
         minY: 8,
         maxY: 22,
-      }, { width: 22, height: 20 }), shape);
+      }, { width: 22, height: 20 }), shape, shape);
     }
     if (shape.kind === "actor") {
       return applyTextBoxAdjustments({
@@ -2355,7 +2367,7 @@
         y: shape.y + shape.height * 0.48,
         width: Math.max(18, shape.width - 16),
         height: Math.max(20, shape.height * 0.42),
-      }, shape);
+      }, shape, shape);
     }
     if (shape.kind === "note") {
       return applyTextBoxAdjustments({
@@ -2363,7 +2375,7 @@
         y: shape.y + 10,
         width: Math.max(18, shape.width - 24),
         height: Math.max(18, shape.height - 20),
-      }, shape);
+      }, shape, shape);
     }
     return applyTextBoxAdjustments(insetTextBox(shape, {
       left: 0.08,
@@ -2374,7 +2386,7 @@
       maxX: 18,
       minY: 5,
       maxY: 16,
-    }, { width: 20, height: 20 }), shape);
+    }, { width: 20, height: 20 }), shape, shape);
   }
 
   function renderRichTextBlockSpec(group, spec, box) {
@@ -2909,7 +2921,12 @@
           });
         }
         group.appendChild(bodyEl);
-        renderRichTextBlockSpec(group, component, applyTextBoxAdjustments(componentBoxTextBox(box), component));
+        renderRichTextBlockSpec(group, component, applyTextBoxAdjustments(componentBoxTextBox(box), component, {
+          x: box.x,
+          y: box.y,
+          width: box.width,
+          height: box.height,
+        }));
       });
 
       if (layout.direction === "horizontal") {

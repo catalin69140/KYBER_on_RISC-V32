@@ -2559,39 +2559,37 @@ def write_html_animation(
         );
     }
 
-    function refApplyTextBoxAdjustments(baseBox, spec) {
+    function refApplyTextBoxAdjustments(baseBox, spec, frameBox) {
         if (!baseBox || !spec) return baseBox;
+        const outer = frameBox || {
+            x: Number.isFinite(Number(spec.x)) ? Number(spec.x) : baseBox.x,
+            y: Number.isFinite(Number(spec.y)) ? Number(spec.y) : baseBox.y,
+            width: Number.isFinite(Number(spec.w ?? spec.width)) ? Number(spec.w ?? spec.width) : baseBox.width,
+            height: Number.isFinite(Number(spec.h ?? spec.height)) ? Number(spec.h ?? spec.height) : baseBox.height
+        };
         const pad = refTextInset(spec.textPadding, 0);
-        const maxPadX = Math.max(0, Math.floor((baseBox.width - 8) / 2));
-        const maxPadY = Math.max(0, Math.floor((baseBox.height - 8) / 2));
+        const maxPadX = Math.max(0, Math.floor((outer.width - 8) / 2));
+        const maxPadY = Math.max(0, Math.floor((outer.height - 8) / 2));
         const effectivePad = Math.min(pad, maxPadX, maxPadY);
-        let moveLeft = refTextInset(spec.textOffsetLeft, 0);
-        let moveRight = refTextInset(spec.textOffsetRight, 0);
-        let moveUp = refTextInset(spec.textOffsetUp, 0);
-        let moveDown = refTextInset(spec.textOffsetDown, 0);
-        const maxHorizontal = Math.max(0, baseBox.width - 8 - effectivePad * 2);
-        const maxVertical = Math.max(0, baseBox.height - 8 - effectivePad * 2);
-        const totalHorizontal = moveLeft + moveRight;
-        if (totalHorizontal > maxHorizontal && totalHorizontal > 0) {
-            const scale = maxHorizontal / totalHorizontal;
-            moveLeft *= scale;
-            moveRight *= scale;
-        }
-        const totalVertical = moveUp + moveDown;
-        if (totalVertical > maxVertical && totalVertical > 0) {
-            const scale = maxVertical / totalVertical;
-            moveUp *= scale;
-            moveDown *= scale;
-        }
-        const leftInset = effectivePad + moveRight;
-        const rightInset = effectivePad + moveLeft;
-        const topInset = effectivePad + moveDown;
-        const bottomInset = effectivePad + moveUp;
+        const paddedFrame = {
+            x: outer.x + effectivePad,
+            y: outer.y + effectivePad,
+            width: Math.max(8, outer.width - effectivePad * 2),
+            height: Math.max(8, outer.height - effectivePad * 2)
+        };
+        const boxWidth = Math.max(8, Math.min(baseBox.width, paddedFrame.width));
+        const boxHeight = Math.max(8, Math.min(baseBox.height, paddedFrame.height));
+        const shiftX = refTextInset(spec.textOffsetRight, 0) - refTextInset(spec.textOffsetLeft, 0);
+        const shiftY = refTextInset(spec.textOffsetDown, 0) - refTextInset(spec.textOffsetUp, 0);
+        const minX = paddedFrame.x;
+        const maxX = paddedFrame.x + paddedFrame.width - boxWidth;
+        const minY = paddedFrame.y;
+        const maxY = paddedFrame.y + paddedFrame.height - boxHeight;
         return {
-            x: baseBox.x + leftInset,
-            y: baseBox.y + topInset,
-            width: Math.max(8, baseBox.width - leftInset - rightInset),
-            height: Math.max(8, baseBox.height - topInset - bottomInset)
+            x: refClamp(baseBox.x + shiftX, minX, maxX),
+            y: refClamp(baseBox.y + shiftY, minY, maxY),
+            width: boxWidth,
+            height: boxHeight
         };
     }
 
@@ -2673,43 +2671,43 @@ def write_html_animation(
     function refShapeTextBox(spec, kind) {
         if (kind === "header_container") {
             const headerH = refComponentGroupHeaderHeight(spec);
-            return refApplyTextBoxAdjustments({ x: spec.x + 8, y: spec.y + 2, width: Math.max(24, spec.w - 16), height: Math.max(14, headerH - 4) }, spec);
+            return refApplyTextBoxAdjustments({ x: spec.x + 8, y: spec.y + 2, width: Math.max(24, spec.w - 16), height: Math.max(14, headerH - 4) }, spec, { x: spec.x, y: spec.y, width: spec.w, height: headerH });
         }
         if (kind === "component_group") {
             const titleHeight = refComponentGroupHeaderHeight(spec);
-            return refApplyTextBoxAdjustments({ x: spec.x + 8, y: spec.y + 2, width: Math.max(24, spec.w - 16), height: Math.max(14, titleHeight - 4) }, spec);
+            return refApplyTextBoxAdjustments({ x: spec.x + 8, y: spec.y + 2, width: Math.max(24, spec.w - 16), height: Math.max(14, titleHeight - 4) }, spec, { x: spec.x, y: spec.y, width: spec.w, height: titleHeight });
         }
         if (kind === "circle" || kind === "oval") {
-            return refApplyTextBoxAdjustments(refInsetTextBox(spec, { left: 0.18, right: 0.18, top: 0.14, bottom: 0.14, minX: 7, maxX: 24, minY: 6, maxY: 18 }, { width: 20, height: 20 }), spec);
+            return refApplyTextBoxAdjustments(refInsetTextBox(spec, { left: 0.18, right: 0.18, top: 0.14, bottom: 0.14, minX: 7, maxX: 24, minY: 6, maxY: 18 }, { width: 20, height: 20 }), spec, { x: spec.x, y: spec.y, width: spec.w, height: spec.h });
         }
         if (kind === "cylinder") {
-            return refApplyTextBoxAdjustments(refInsetTextBox(spec, { left: 0.14, right: 0.14, top: 0.2, bottom: 0.14, minX: 8, maxX: 22, minY: 8, maxY: 22 }, { width: 22, height: 22 }), spec);
+            return refApplyTextBoxAdjustments(refInsetTextBox(spec, { left: 0.14, right: 0.14, top: 0.2, bottom: 0.14, minX: 8, maxX: 22, minY: 8, maxY: 22 }, { width: 22, height: 22 }), spec, { x: spec.x, y: spec.y, width: spec.w, height: spec.h });
         }
         if (kind === "triangle") {
-            return refApplyTextBoxAdjustments(refInsetTextBox(spec, { left: 0.16, right: 0.16, top: 0.24, bottom: 0.18, minX: 8, maxX: 24, minY: 7, maxY: 22 }, { width: 20, height: 20 }), spec);
+            return refApplyTextBoxAdjustments(refInsetTextBox(spec, { left: 0.16, right: 0.16, top: 0.24, bottom: 0.18, minX: 8, maxX: 24, minY: 7, maxY: 22 }, { width: 20, height: 20 }), spec, { x: spec.x, y: spec.y, width: spec.w, height: spec.h });
         }
         if (kind === "diamond" || kind === "pentagon" || kind === "hexagon" || kind === "octagon") {
-            return refApplyTextBoxAdjustments(refInsetTextBox(spec, { left: 0.18, right: 0.18, top: 0.16, bottom: 0.16, minX: 8, maxX: 24, minY: 7, maxY: 20 }, { width: 22, height: 22 }), spec);
+            return refApplyTextBoxAdjustments(refInsetTextBox(spec, { left: 0.18, right: 0.18, top: 0.16, bottom: 0.16, minX: 8, maxX: 24, minY: 7, maxY: 20 }, { width: 22, height: 22 }), spec, { x: spec.x, y: spec.y, width: spec.w, height: spec.h });
         }
         if (kind === "cone") {
-            return refApplyTextBoxAdjustments(refInsetTextBox(spec, { left: 0.18, right: 0.18, top: 0.14, bottom: 0.24, minX: 8, maxX: 24, minY: 8, maxY: 24 }, { width: 22, height: 24 }), spec);
+            return refApplyTextBoxAdjustments(refInsetTextBox(spec, { left: 0.18, right: 0.18, top: 0.14, bottom: 0.24, minX: 8, maxX: 24, minY: 8, maxY: 24 }, { width: 22, height: 24 }), spec, { x: spec.x, y: spec.y, width: spec.w, height: spec.h });
         }
         if (kind === "cube" || kind === "cuboid" || kind === "hexagonal_prism") {
-            return refApplyTextBoxAdjustments(refInsetTextBox(spec, { left: 0.18, right: 0.08, top: 0.16, bottom: 0.1, minX: 10, maxX: 26, minY: 8, maxY: 20 }, { width: 22, height: 20 }), spec);
+            return refApplyTextBoxAdjustments(refInsetTextBox(spec, { left: 0.18, right: 0.08, top: 0.16, bottom: 0.1, minX: 10, maxX: 26, minY: 8, maxY: 20 }, { width: 22, height: 20 }), spec, { x: spec.x, y: spec.y, width: spec.w, height: spec.h });
         }
         if (kind === "cloud" || kind === "cloud_callout") {
-            return refApplyTextBoxAdjustments(refInsetTextBox(spec, { left: 0.18, right: 0.18, top: 0.18, bottom: kind === "cloud_callout" ? 0.24 : 0.18, minX: 10, maxX: 28, minY: 9, maxY: 24 }, { width: 26, height: 24 }), spec);
+            return refApplyTextBoxAdjustments(refInsetTextBox(spec, { left: 0.18, right: 0.18, top: 0.18, bottom: kind === "cloud_callout" ? 0.24 : 0.18, minX: 10, maxX: 28, minY: 9, maxY: 24 }, { width: 26, height: 24 }), spec, { x: spec.x, y: spec.y, width: spec.w, height: spec.h });
         }
         if (kind === "mail") {
-            return refApplyTextBoxAdjustments(refInsetTextBox(spec, { left: 0.12, right: 0.12, top: 0.26, bottom: 0.12, minX: 8, maxX: 20, minY: 8, maxY: 22 }, { width: 22, height: 20 }), spec);
+            return refApplyTextBoxAdjustments(refInsetTextBox(spec, { left: 0.12, right: 0.12, top: 0.26, bottom: 0.12, minX: 8, maxX: 20, minY: 8, maxY: 22 }, { width: 22, height: 20 }), spec, { x: spec.x, y: spec.y, width: spec.w, height: spec.h });
         }
         if (kind === "actor") {
-            return refApplyTextBoxAdjustments({ x: spec.x + 8, y: spec.y + spec.h * 0.48, width: Math.max(18, spec.w - 16), height: Math.max(20, spec.h * 0.42) }, spec);
+            return refApplyTextBoxAdjustments({ x: spec.x + 8, y: spec.y + spec.h * 0.48, width: Math.max(18, spec.w - 16), height: Math.max(20, spec.h * 0.42) }, spec, { x: spec.x, y: spec.y, width: spec.w, height: spec.h });
         }
         if (kind === "note") {
-            return refApplyTextBoxAdjustments({ x: spec.x + 10, y: spec.y + 10, width: Math.max(18, spec.w - 24), height: Math.max(18, spec.h - 20) }, spec);
+            return refApplyTextBoxAdjustments({ x: spec.x + 10, y: spec.y + 10, width: Math.max(18, spec.w - 24), height: Math.max(18, spec.h - 20) }, spec, { x: spec.x, y: spec.y, width: spec.w, height: spec.h });
         }
-        return refApplyTextBoxAdjustments(refInsetTextBox(spec, { left: 0.08, right: 0.08, top: 0.08, bottom: 0.08, minX: 6, maxX: 18, minY: 5, maxY: 16 }, { width: 20, height: 20 }), spec);
+        return refApplyTextBoxAdjustments(refInsetTextBox(spec, { left: 0.08, right: 0.08, top: 0.08, bottom: 0.08, minX: 6, maxX: 18, minY: 5, maxY: 16 }, { width: 20, height: 20 }), spec, { x: spec.x, y: spec.y, width: spec.w, height: spec.h });
     }
 
     function refRenderRichTextBlockInBox(g, spec, box) {
@@ -3275,7 +3273,12 @@ def write_html_animation(
                     textOffsetLeft: component.textOffsetLeft,
                     textOffsetRight: component.textOffsetRight,
                     textPadding: component.textPadding
-                }, refApplyTextBoxAdjustments(refComponentBoxTextBox(box), component));
+                }, refApplyTextBoxAdjustments(refComponentBoxTextBox(box), component, {
+                    x: box.x,
+                    y: box.y,
+                    width: box.w,
+                    height: box.h
+                }));
             });
 
             if (layout.direction === "horizontal") {
