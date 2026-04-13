@@ -2391,6 +2391,8 @@
 
   function renderRichTextBlockSpec(group, spec, box) {
     const html = sanitizeRichHtml(spec.richText, spec.text);
+    const shiftX = normalizeTextInset(spec.textOffsetRight, 0) - normalizeTextInset(spec.textOffsetLeft, 0);
+    const shiftY = normalizeTextInset(spec.textOffsetDown, 0) - normalizeTextInset(spec.textOffsetUp, 0);
     const foreign = createSvg("foreignObject", {
       x: box.x,
       y: box.y,
@@ -2418,7 +2420,12 @@
       ].join(";"),
     });
     const inner = createHtml("div", {
-      style: "width:100%;max-height:100%;overflow:hidden",
+      style: [
+        "width:100%",
+        "max-height:100%",
+        "overflow:hidden",
+        "transform:translate(" + shiftX + "px," + shiftY + "px)",
+      ].join(";"),
     });
     inner.innerHTML = html;
     wrapper.appendChild(inner);

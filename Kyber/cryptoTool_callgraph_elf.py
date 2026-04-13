@@ -2711,6 +2711,8 @@ def write_html_animation(
     }
 
     function refRenderRichTextBlockInBox(g, spec, box) {
+        const shiftX = refTextInset(spec.textOffsetRight, 0) - refTextInset(spec.textOffsetLeft, 0);
+        const shiftY = refTextInset(spec.textOffsetDown, 0) - refTextInset(spec.textOffsetUp, 0);
         const foreign = createSvgEl("foreignObject", {
             x: box.x,
             y: box.y,
@@ -2737,7 +2739,12 @@ def write_html_animation(
             "word-break:break-word"
         ].join(";"));
         const inner = document.createElementNS("http://www.w3.org/1999/xhtml", "div");
-        inner.setAttribute("style", "width:100%;max-height:100%;overflow:hidden");
+        inner.setAttribute("style", [
+            "width:100%",
+            "max-height:100%",
+            "overflow:hidden",
+            `transform:translate(${shiftX}px,${shiftY}px)`
+        ].join(";"));
         inner.innerHTML = String(spec.richText || refPlainTextToRichHtml(spec.label || spec.id || ""));
         wrapper.appendChild(inner);
         foreign.appendChild(wrapper);
