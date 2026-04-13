@@ -50,11 +50,13 @@
     and: { width: 96, height: 62 },
     or: { width: 102, height: 62 },
     message: { width: 112, height: 66 },
+    mail: { width: 110, height: 72 },
     actor: { width: 86, height: 116 },
     cloud: { width: 124, height: 76 },
     cloud_callout: { width: 132, height: 88 },
     card: { width: 82, height: 102 },
     note: { width: 86, height: 108 },
+    text_box: { width: 120, height: 64 },
     container: { width: 240, height: 200 },
     header_container: { width: 240, height: 200 },
     component_group: { width: 200, height: 70 },
@@ -101,11 +103,13 @@
     { kind: "and", label: "And" },
     { kind: "or", label: "Or" },
     { kind: "message", label: "Message" },
-    { kind: "actor", label: "Actor" },
+    { kind: "mail", label: "Mail" },
     { kind: "cloud", label: "Cloud" },
     { kind: "cloud_callout", label: "Cloud Callout" },
     { kind: "card", label: "Card" },
     { kind: "note", label: "Note" },
+    { kind: "text_box", label: "Text" },
+    { kind: "actor", label: "Actor" },
   ];
   const CONNECTION_TOOL_DEFS = [
     { mode: "connect_directional_connector", label: "Directional Connector" },
@@ -141,11 +145,13 @@
     "and",
     "or",
     "message",
+    "mail",
     "actor",
     "cloud",
     "cloud_callout",
     "card",
     "note",
+    "text_box",
     "container",
     "header_container",
     "component_group",
@@ -269,11 +275,13 @@
     if (kind === "and") return "And";
     if (kind === "or") return "Or";
     if (kind === "message") return "Message";
+    if (kind === "mail") return "Mail";
     if (kind === "actor") return "Actor";
     if (kind === "cloud") return "Cloud";
     if (kind === "cloud_callout") return "Cloud Callout";
     if (kind === "card") return "Card";
     if (kind === "note") return "Note";
+    if (kind === "text_box") return "Text";
     if (kind === "component_group") return "Group";
     return "Node";
   }
@@ -411,7 +419,9 @@
   }
 
   function normalizeLineStyle(raw) {
-    return String(raw || "").toLowerCase() === "dashed" ? "dashed" : "solid";
+    const style = String(raw || "").toLowerCase().trim();
+    if (style === "dashed" || style === "dotted") return style;
+    return "solid";
   }
 
   function normalizeConnectionType(raw) {
@@ -433,6 +443,7 @@
     return (
       kind === "square" ||
       kind === "rectangle" ||
+      kind === "text_box" ||
       kind === "container" ||
       kind === "header_container" ||
       kind === "component_group" ||
@@ -447,7 +458,9 @@
   }
 
   function normalizeBorderStyle(raw) {
-    return String(raw || "").toLowerCase() === "dashed" ? "dashed" : "solid";
+    const style = String(raw || "").toLowerCase().trim();
+    if (style === "none" || style === "dashed" || style === "dotted") return style;
+    return "solid";
   }
 
   function normalizeTextAlign(raw) {
@@ -470,6 +483,23 @@
     const n = Number(raw);
     if (!Number.isFinite(n)) return fallback;
     return clamp(n, 8, 40);
+  }
+
+  function normalizeTextInset(raw, fallback) {
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return fallback || 0;
+    return clamp(n, 0, 200);
+  }
+
+  function dashArrayForStyle(style) {
+    const normalized = String(style || "").toLowerCase().trim();
+    if (normalized === "dashed") return "7 4";
+    if (normalized === "dotted") return "1.2 5";
+    return "";
+  }
+
+  function lineCapForStyle(style) {
+    return String(style || "").toLowerCase().trim() === "dotted" ? "round" : "";
   }
 
   function normalizeComponentLabels(rawLabels, count) {
@@ -495,6 +525,11 @@
       textVAlign: "center",
       fontSize: normalizeFontSize(groupShape && groupShape.fontSize, 12),
       fontFamily: normalizeFontFamily(groupShape && groupShape.fontFamily),
+      textOffsetUp: normalizeTextInset(groupShape && groupShape.textOffsetUp, 0),
+      textOffsetDown: normalizeTextInset(groupShape && groupShape.textOffsetDown, 0),
+      textOffsetLeft: normalizeTextInset(groupShape && groupShape.textOffsetLeft, 0),
+      textOffsetRight: normalizeTextInset(groupShape && groupShape.textOffsetRight, 0),
+      textPadding: normalizeTextInset(groupShape && groupShape.textPadding, 0),
     };
   }
 
@@ -524,6 +559,11 @@
         raw.textVAlign = normalizeTextVAlign(raw.textVAlign || defaults.textVAlign);
         raw.fontSize = normalizeFontSize(raw.fontSize, defaults.fontSize);
         raw.fontFamily = normalizeFontFamily(raw.fontFamily || defaults.fontFamily);
+        raw.textOffsetUp = normalizeTextInset(raw.textOffsetUp, defaults.textOffsetUp);
+        raw.textOffsetDown = normalizeTextInset(raw.textOffsetDown, defaults.textOffsetDown);
+        raw.textOffsetLeft = normalizeTextInset(raw.textOffsetLeft, defaults.textOffsetLeft);
+        raw.textOffsetRight = normalizeTextInset(raw.textOffsetRight, defaults.textOffsetRight);
+        raw.textPadding = normalizeTextInset(raw.textPadding, defaults.textPadding);
         out.push(raw);
         continue;
       }
@@ -667,7 +707,7 @@
       const usesContainerColors = usesContainerPalette(shape.kind);
       shape.fill = normalizeColor(shape.fill, usesContainerColors ? "#0d172a" : "#1c2f4f");
       shape.stroke = normalizeColor(shape.stroke, usesContainerColors ? "#eef3ff" : "#80b6ff");
-      shape.borderStyle = normalizeBorderStyle(shape.borderStyle);
+      shape.borderStyle = normalizeBorderStyle(shape.kind === "text_box" && !shape.borderStyle ? "none" : shape.borderStyle);
       shape.borderWidth = normalizeBorderWidth(shape.borderWidth, defaultBorderWidth(shape.kind));
       shape.textColor = normalizeColor(shape.textColor, "#f4f7ff");
       shape.rounded = shapeSupportsRounding(shape.kind) ? shape.rounded !== false : false;
@@ -675,6 +715,11 @@
       shape.textVAlign = normalizeTextVAlign(shape.textVAlign || "center");
       shape.fontSize = normalizeFontSize(shape.fontSize, 12);
       shape.fontFamily = normalizeFontFamily(shape.fontFamily);
+      shape.textOffsetUp = normalizeTextInset(shape.textOffsetUp, 0);
+      shape.textOffsetDown = normalizeTextInset(shape.textOffsetDown, 0);
+      shape.textOffsetLeft = normalizeTextInset(shape.textOffsetLeft, 0);
+      shape.textOffsetRight = normalizeTextInset(shape.textOffsetRight, 0);
+      shape.textPadding = normalizeTextInset(shape.textPadding, 0);
       shape.componentDirection = normalizeComponentDirection(shape.componentDirection);
       const defaultComponentCount = shape.kind === "component_group" ? 4 : 1;
       shape.componentCount = Math.max(1, Math.min(24, Math.round(Number.isFinite(Number(shape.componentCount)) ? Number(shape.componentCount) : defaultComponentCount)));
@@ -1650,6 +1695,28 @@
     }, { width: 18, height: 18 });
   }
 
+  function applyTextBoxAdjustments(baseBox, spec) {
+    if (!baseBox || !spec) return baseBox;
+    const pad = normalizeTextInset(spec.textPadding, 0);
+    const maxPadX = Math.max(0, Math.floor((baseBox.width - 8) / 2));
+    const maxPadY = Math.max(0, Math.floor((baseBox.height - 8) / 2));
+    const effectivePad = Math.min(pad, maxPadX, maxPadY);
+    const padded = {
+      x: baseBox.x + effectivePad,
+      y: baseBox.y + effectivePad,
+      width: Math.max(8, baseBox.width - effectivePad * 2),
+      height: Math.max(8, baseBox.height - effectivePad * 2),
+    };
+    const shiftX = normalizeTextInset(spec.textOffsetRight, 0) - normalizeTextInset(spec.textOffsetLeft, 0);
+    const shiftY = normalizeTextInset(spec.textOffsetDown, 0) - normalizeTextInset(spec.textOffsetUp, 0);
+    return {
+      x: clamp(padded.x + shiftX, baseBox.x, baseBox.x + baseBox.width - padded.width),
+      y: clamp(padded.y + shiftY, baseBox.y, baseBox.y + baseBox.height - padded.height),
+      width: padded.width,
+      height: padded.height,
+    };
+  }
+
   function polygonVerticesForShape(shape) {
     const x = shape.x;
     const y = shape.y;
@@ -1839,10 +1906,12 @@
     if (polygonKinds.has(kind)) {
       addPolygon(polygonVerticesForShape(baseShape));
       if (kind === "note") {
-        addLine(33.6, 10, 33.6, 14.8);
-        addLine(33.6, 14.8, 40, 14.8);
+        const foldX = baseShape.x + baseShape.width * 0.8;
+        const foldY = baseShape.y + baseShape.height * 0.2;
+        addLine(foldX, baseShape.y, foldX, foldY);
+        addLine(foldX, foldY, baseShape.x + baseShape.width, foldY);
       } else if (kind === "card") {
-        addLine(8, 13.8, 13.2, 10);
+        addLine(baseShape.x, baseShape.y + baseShape.height * 0.16, baseShape.x + baseShape.width * 0.16, baseShape.y);
       }
       return svg;
     }
@@ -1978,11 +2047,46 @@
       return svg;
     }
 
+    if (kind === "mail") {
+      const rect = appendToolIconEl(svg, "rect", {
+        x: 8,
+        y: 11,
+        width: 32,
+        height: 22,
+        rx: 2,
+        ry: 2,
+        fill,
+        stroke,
+        "stroke-width": 1.8,
+      });
+      if (dash) rect.setAttribute("stroke-dasharray", dash);
+      addLine(8, 11, 24, 23);
+      addLine(40, 11, 24, 23);
+      addLine(8, 33, 20, 22);
+      addLine(40, 33, 28, 22);
+      return svg;
+    }
+
     if (kind === "cloud" || kind === "cloud_callout") {
       addPath("M 13 28 C 8 28 7 20 12 19 C 11 12 18 10 22 13 C 25 8 34 9 35 16 C 40 16 42 24 37 27 C 36 32 29 34 25 30 C 20 34 13 33 13 28 Z");
       if (kind === "cloud_callout") {
         addPolygon([{ x: 20, y: 29 }, { x: 16, y: 37 }, { x: 24, y: 31 }], fill);
       }
+      return svg;
+    }
+
+    if (kind === "text_box") {
+      const text = appendToolIconEl(svg, "text", {
+        x: 24,
+        y: 26,
+        fill: stroke,
+        "font-size": 12,
+        "font-family": DEFAULT_FONT_FAMILY,
+        "font-weight": "700",
+        "text-anchor": "middle",
+        "dominant-baseline": "middle",
+      });
+      text.textContent = "Text";
       return svg;
     }
 
@@ -2116,26 +2220,26 @@
       const headerH = componentGroupHeaderHeight(shape);
       const padX = proportionalInset(shape.width, 0.04, 8, 18, 24);
       const padY = Math.max(2, proportionalInset(headerH, 0.16, 2, 8, 14));
-      return {
+      return applyTextBoxAdjustments({
         x: shape.x + padX,
         y: shape.y + padY,
         width: Math.max(8, shape.width - padX * 2),
         height: Math.max(8, headerH - padY * 2),
-      };
+      }, shape);
     }
     if (shape.kind === "component_group") {
       const titleHeight = componentGroupHeaderHeight(shape);
       const padX = proportionalInset(shape.width, 0.04, 8, 18, 24);
       const padY = Math.max(2, proportionalInset(titleHeight, 0.16, 2, 8, 14));
-      return {
+      return applyTextBoxAdjustments({
         x: shape.x + padX,
         y: shape.y + padY,
         width: Math.max(8, shape.width - padX * 2),
         height: Math.max(8, titleHeight - padY * 2),
-      };
+      }, shape);
     }
     if (shape.kind === "circle" || shape.kind === "oval") {
-      return insetTextBox(shape, {
+      return applyTextBoxAdjustments(insetTextBox(shape, {
         left: 0.18,
         right: 0.18,
         top: 0.14,
@@ -2144,10 +2248,10 @@
         maxX: 24,
         minY: 6,
         maxY: 18,
-      }, { width: 20, height: 20 });
+      }, { width: 20, height: 20 }), shape);
     }
     if (shape.kind === "cylinder") {
-      return insetTextBox(shape, {
+      return applyTextBoxAdjustments(insetTextBox(shape, {
         left: 0.14,
         right: 0.14,
         top: 0.2,
@@ -2156,10 +2260,10 @@
         maxX: 22,
         minY: 8,
         maxY: 22,
-      }, { width: 22, height: 22 });
+      }, { width: 22, height: 22 }), shape);
     }
     if (shape.kind === "triangle") {
-      return insetTextBox(shape, {
+      return applyTextBoxAdjustments(insetTextBox(shape, {
         left: 0.16,
         right: 0.16,
         top: 0.24,
@@ -2168,10 +2272,10 @@
         maxX: 24,
         minY: 7,
         maxY: 22,
-      }, { width: 20, height: 20 });
+      }, { width: 20, height: 20 }), shape);
     }
     if (shape.kind === "diamond" || shape.kind === "pentagon" || shape.kind === "hexagon" || shape.kind === "octagon") {
-      return insetTextBox(shape, {
+      return applyTextBoxAdjustments(insetTextBox(shape, {
         left: 0.18,
         right: 0.18,
         top: 0.16,
@@ -2180,10 +2284,10 @@
         maxX: 24,
         minY: 7,
         maxY: 20,
-      }, { width: 22, height: 22 });
+      }, { width: 22, height: 22 }), shape);
     }
     if (shape.kind === "cone") {
-      return insetTextBox(shape, {
+      return applyTextBoxAdjustments(insetTextBox(shape, {
         left: 0.18,
         right: 0.18,
         top: 0.14,
@@ -2192,10 +2296,10 @@
         maxX: 24,
         minY: 8,
         maxY: 24,
-      }, { width: 22, height: 24 });
+      }, { width: 22, height: 24 }), shape);
     }
     if (shape.kind === "cube" || shape.kind === "cuboid" || shape.kind === "hexagonal_prism") {
-      return insetTextBox(shape, {
+      return applyTextBoxAdjustments(insetTextBox(shape, {
         left: 0.18,
         right: 0.08,
         top: 0.16,
@@ -2204,10 +2308,10 @@
         maxX: 26,
         minY: 8,
         maxY: 20,
-      }, { width: 22, height: 20 });
+      }, { width: 22, height: 20 }), shape);
     }
     if (shape.kind === "cloud" || shape.kind === "cloud_callout") {
-      return insetTextBox(shape, {
+      return applyTextBoxAdjustments(insetTextBox(shape, {
         left: 0.18,
         right: 0.18,
         top: 0.18,
@@ -2216,25 +2320,37 @@
         maxX: 28,
         minY: 9,
         maxY: 24,
-      }, { width: 26, height: 24 });
+      }, { width: 26, height: 24 }), shape);
+    }
+    if (shape.kind === "mail") {
+      return applyTextBoxAdjustments(insetTextBox(shape, {
+        left: 0.12,
+        right: 0.12,
+        top: 0.26,
+        bottom: 0.12,
+        minX: 8,
+        maxX: 20,
+        minY: 8,
+        maxY: 22,
+      }, { width: 22, height: 20 }), shape);
     }
     if (shape.kind === "actor") {
-      return {
+      return applyTextBoxAdjustments({
         x: shape.x + 8,
         y: shape.y + shape.height * 0.48,
         width: Math.max(18, shape.width - 16),
         height: Math.max(20, shape.height * 0.42),
-      };
+      }, shape);
     }
     if (shape.kind === "note") {
-      return {
+      return applyTextBoxAdjustments({
         x: shape.x + 10,
         y: shape.y + 10,
         width: Math.max(18, shape.width - 24),
         height: Math.max(18, shape.height - 20),
-      };
+      }, shape);
     }
-    return insetTextBox(shape, {
+    return applyTextBoxAdjustments(insetTextBox(shape, {
       left: 0.08,
       right: 0.08,
       top: 0.08,
@@ -2243,7 +2359,7 @@
       maxX: 18,
       minY: 5,
       maxY: 16,
-    }, { width: 20, height: 20 });
+    }, { width: 20, height: 20 }), shape);
   }
 
   function renderRichTextBlockSpec(group, spec, box) {
@@ -2317,14 +2433,22 @@
   }
 
   function renderShapeVisual(group, shape, strokeColor, strokeWidth) {
-    const dash = shape.borderStyle === "dashed" ? "7 4" : "";
+    const borderStyle = normalizeBorderStyle(shape.borderStyle);
+    const showOwnBorder = borderStyle !== "none";
+    const highlightStroke = strokeColor !== shape.stroke;
+    const outlineStyle = showOwnBorder ? borderStyle : (highlightStroke ? "solid" : "none");
+    const structuralStyle = showOwnBorder ? borderStyle : "none";
+    const dash = dashArrayForStyle(outlineStyle);
+    const structuralDash = dashArrayForStyle(structuralStyle);
+    const strokeLinecap = lineCapForStyle(outlineStyle);
+    const structuralLinecap = lineCapForStyle(structuralStyle);
     const separatorWidth = Math.max(1, strokeWidth * 0.62);
     const minorSeparatorWidth = Math.max(1, strokeWidth * 0.56);
     const roundedRadius = shapeCornerRadius(shape);
     const commonStroke = {
       fill: shape.fill,
-      stroke: strokeColor,
-      "stroke-width": strokeWidth,
+      stroke: outlineStyle === "none" ? "none" : strokeColor,
+      "stroke-width": outlineStyle === "none" ? 0 : strokeWidth,
       "stroke-dasharray": dash,
     };
     const kind = shape.kind;
@@ -2332,9 +2456,10 @@
     function appendShapeEl(tag, attrs, fillOverride) {
       const el = createSvg(tag, attrs);
       el.setAttribute("fill", fillOverride !== undefined ? fillOverride : shape.fill);
-      el.setAttribute("stroke", strokeColor);
-      el.setAttribute("stroke-width", String(strokeWidth));
+      el.setAttribute("stroke", outlineStyle === "none" ? "none" : strokeColor);
+      el.setAttribute("stroke-width", String(outlineStyle === "none" ? 0 : strokeWidth));
       if (dash) el.setAttribute("stroke-dasharray", dash);
+      if (strokeLinecap) el.setAttribute("stroke-linecap", strokeLinecap);
       group.appendChild(el);
       return el;
     }
@@ -2354,40 +2479,42 @@
       return appendPolygonShape(points, fillOverride);
     }
 
+    function appendStrokeLine(attrs, widthOverride) {
+      if (structuralStyle === "none") return null;
+      const line = createSvg("line", attrs);
+      line.setAttribute("stroke", strokeColor);
+      line.setAttribute("stroke-width", String(widthOverride || strokeWidth));
+      if (structuralDash) line.setAttribute("stroke-dasharray", structuralDash);
+      if (structuralLinecap) line.setAttribute("stroke-linecap", structuralLinecap);
+      group.appendChild(line);
+      return line;
+    }
+
     if (kind === "triangle" || kind === "diamond" || kind === "parallelogram" || kind === "trapezoid" || kind === "pentagon" || kind === "hexagon" || kind === "octagon" || kind === "message" || kind === "card" || kind === "note") {
       const points = polygonVerticesForShape(shape);
       appendPolygonShape(points);
       if (kind === "note") {
         const foldW = shape.width * 0.2;
         const foldH = shape.height * 0.2;
-        group.appendChild(createSvg("line", {
+        appendStrokeLine({
           x1: shape.x + shape.width * 0.8,
           y1: shape.y,
           x2: shape.x + shape.width * 0.8,
           y2: shape.y + foldH,
-          stroke: strokeColor,
-          "stroke-width": minorSeparatorWidth,
-          "stroke-dasharray": dash,
-        }));
-        group.appendChild(createSvg("line", {
+        }, minorSeparatorWidth);
+        appendStrokeLine({
           x1: shape.x + shape.width * 0.8,
           y1: shape.y + foldH,
           x2: shape.x + shape.width,
           y2: shape.y + foldH,
-          stroke: strokeColor,
-          "stroke-width": minorSeparatorWidth,
-          "stroke-dasharray": dash,
-        }));
+        }, minorSeparatorWidth);
       } else if (kind === "card") {
-        group.appendChild(createSvg("line", {
+        appendStrokeLine({
           x1: shape.x,
           y1: shape.y + shape.height * 0.16,
           x2: shape.x + shape.width * 0.16,
           y2: shape.y,
-          stroke: strokeColor,
-          "stroke-width": minorSeparatorWidth,
-          "stroke-dasharray": dash,
-        }));
+        }, minorSeparatorWidth);
       }
     } else if (kind === "circle" || kind === "oval") {
       group.appendChild(createSvg("ellipse", Object.assign({
@@ -2429,28 +2556,22 @@
         rx: rx,
         ry: ry,
         fill: shape.fill,
-        stroke: strokeColor,
-        "stroke-width": strokeWidth,
+        stroke: outlineStyle === "none" ? "none" : strokeColor,
+        "stroke-width": outlineStyle === "none" ? 0 : strokeWidth,
         "stroke-dasharray": dash,
       }));
-      group.appendChild(createSvg("line", {
+      appendStrokeLine({
         x1: shape.x,
         y1: topCy,
         x2: shape.x,
         y2: bottomCy,
-        stroke: strokeColor,
-        "stroke-width": strokeWidth,
-        "stroke-dasharray": dash,
-      }));
-      group.appendChild(createSvg("line", {
+      }, strokeWidth);
+      appendStrokeLine({
         x1: shape.x + shape.width,
         y1: topCy,
         x2: shape.x + shape.width,
         y2: bottomCy,
-        stroke: strokeColor,
-        "stroke-width": strokeWidth,
-        "stroke-dasharray": dash,
-      }));
+      }, strokeWidth);
     } else if (kind === "cone") {
       const rx = shape.width * 0.32;
       const ry = Math.max(8, Math.min(14, shape.height * 0.11));
@@ -2464,16 +2585,22 @@
         "Z",
       ].join(" ");
       appendPathShape(bodyPath);
-      group.appendChild(createSvg("ellipse", {
+      const baseEllipse = createSvg("ellipse", {
         cx: cx,
         cy: baseCy,
         rx: rx,
         ry: ry,
         fill: "none",
-        stroke: strokeColor,
-        "stroke-width": minorSeparatorWidth,
-        "stroke-dasharray": dash,
-      }));
+      });
+      if (structuralStyle !== "none") {
+        baseEllipse.setAttribute("stroke", strokeColor);
+        baseEllipse.setAttribute("stroke-width", String(minorSeparatorWidth));
+        if (structuralDash) baseEllipse.setAttribute("stroke-dasharray", structuralDash);
+        if (structuralLinecap) baseEllipse.setAttribute("stroke-linecap", structuralLinecap);
+      } else {
+        baseEllipse.setAttribute("stroke", "none");
+      }
+      group.appendChild(baseEllipse);
     } else if (kind === "cube" || kind === "cuboid") {
       const offX = Math.min(shape.width * (kind === "cube" ? 0.22 : 0.26), 26);
       const offY = Math.min(shape.height * 0.18, 18);
@@ -2509,42 +2636,30 @@
         rx: 0,
         ry: 0,
       }, darken(shape.fill, -16));
-      group.appendChild(createSvg("line", {
+      appendStrokeLine({
         x1: shape.x,
         y1: shape.y,
         x2: shape.x + offX,
         y2: shape.y + offY,
-        stroke: strokeColor,
-        "stroke-width": minorSeparatorWidth,
-        "stroke-dasharray": dash,
-      }));
-      group.appendChild(createSvg("line", {
+      }, minorSeparatorWidth);
+      appendStrokeLine({
         x1: shape.x + shape.width - offX,
         y1: shape.y,
         x2: shape.x + shape.width,
         y2: shape.y + offY,
-        stroke: strokeColor,
-        "stroke-width": minorSeparatorWidth,
-        "stroke-dasharray": dash,
-      }));
-      group.appendChild(createSvg("line", {
+      }, minorSeparatorWidth);
+      appendStrokeLine({
         x1: shape.x + shape.width - offX,
         y1: shape.y + shape.height - offY,
         x2: shape.x + shape.width,
         y2: shape.y + shape.height,
-        stroke: strokeColor,
-        "stroke-width": minorSeparatorWidth,
-        "stroke-dasharray": dash,
-      }));
-      group.appendChild(createSvg("line", {
+      }, minorSeparatorWidth);
+      appendStrokeLine({
         x1: shape.x,
         y1: shape.y + shape.height - offY,
         x2: shape.x + offX,
         y2: shape.y + shape.height,
-        stroke: strokeColor,
-        "stroke-width": minorSeparatorWidth,
-        "stroke-dasharray": dash,
-      }));
+      }, minorSeparatorWidth);
       appendShapeEl("rect", {
         x: frontRect.x,
         y: frontRect.y,
@@ -2570,15 +2685,12 @@
       appendPolygonShape(top, darken(shape.fill, -20));
       appendPolygonShape(bottom);
       [0, 1, 2, 3, 4, 5].forEach((idx) => {
-        group.appendChild(createSvg("line", {
+        appendStrokeLine({
           x1: top[idx].x,
           y1: top[idx].y,
           x2: bottom[idx].x,
           y2: bottom[idx].y,
-          stroke: strokeColor,
-          "stroke-width": minorSeparatorWidth,
-          "stroke-dasharray": dash,
-        }));
+        }, minorSeparatorWidth);
       });
     } else if (kind === "and") {
       const x0 = shape.x;
@@ -2610,15 +2722,11 @@
       const headR = Math.min(shape.width * 0.16, shape.height * 0.12);
       const cx = shape.x + shape.width / 2;
       const headCy = shape.y + shape.height * 0.16;
-      group.appendChild(createSvg("circle", {
+      appendShapeEl("circle", {
         cx: cx,
         cy: headCy,
         r: headR,
-        fill: shape.fill,
-        stroke: strokeColor,
-        "stroke-width": strokeWidth,
-        "stroke-dasharray": dash,
-      }));
+      });
       const limbs = [
         { x1: cx, y1: headCy + headR, x2: cx, y2: shape.y + shape.height * 0.62 },
         { x1: shape.x + shape.width * 0.24, y1: shape.y + shape.height * 0.36, x2: shape.x + shape.width * 0.76, y2: shape.y + shape.height * 0.36 },
@@ -2626,16 +2734,28 @@
         { x1: cx, y1: shape.y + shape.height * 0.62, x2: shape.x + shape.width * 0.74, y2: shape.y + shape.height * 0.94 },
       ];
       limbs.forEach((line) => {
-        group.appendChild(createSvg("line", {
+        appendStrokeLine({
           x1: line.x1,
           y1: line.y1,
           x2: line.x2,
           y2: line.y2,
-          stroke: strokeColor,
-          "stroke-width": strokeWidth,
-          "stroke-dasharray": dash,
-        }));
+        }, strokeWidth);
       });
+    } else if (kind === "mail") {
+      appendShapeEl("rect", {
+        x: shape.x,
+        y: shape.y,
+        width: shape.width,
+        height: shape.height,
+        rx: roundedRadius,
+        ry: roundedRadius,
+      });
+      const centerX = shape.x + shape.width / 2;
+      const flapY = shape.y + shape.height * 0.5;
+      appendStrokeLine({ x1: shape.x, y1: shape.y, x2: centerX, y2: flapY }, minorSeparatorWidth);
+      appendStrokeLine({ x1: shape.x + shape.width, y1: shape.y, x2: centerX, y2: flapY }, minorSeparatorWidth);
+      appendStrokeLine({ x1: shape.x, y1: shape.y + shape.height, x2: centerX, y2: flapY }, minorSeparatorWidth);
+      appendStrokeLine({ x1: shape.x + shape.width, y1: shape.y + shape.height, x2: centerX, y2: flapY }, minorSeparatorWidth);
     } else if (kind === "cloud" || kind === "cloud_callout") {
       const x0 = shape.x;
       const y0 = shape.y;
@@ -2680,15 +2800,12 @@
         rx: Math.max(0, roundedRadius - 1),
         ry: Math.max(0, roundedRadius - 1),
       }));
-      group.appendChild(createSvg("line", {
+      appendStrokeLine({
         x1: shape.x,
         y1: shape.y + headerH,
         x2: shape.x + shape.width,
         y2: shape.y + headerH,
-        stroke: strokeColor,
-        "stroke-width": separatorWidth,
-        "stroke-dasharray": dash,
-      }));
+      }, separatorWidth);
     } else if (kind === "component_group") {
       const headerH = componentGroupHeaderHeight(shape);
       const layout = componentGroupLayout(shape);
@@ -2716,15 +2833,12 @@
         rx: Math.max(0, roundedRadius - 1),
         ry: Math.max(0, roundedRadius - 1),
       }));
-      group.appendChild(createSvg("line", {
+      appendStrokeLine({
         x1: shape.x,
         y1: shape.y + headerH,
         x2: shape.x + shape.width,
         y2: shape.y + headerH,
-        stroke: strokeColor,
-        "stroke-width": separatorWidth,
-        "stroke-dasharray": dash,
-      }));
+      }, separatorWidth);
 
       layout.components.forEach((box, idx) => {
         const component = components[idx] || defaultGroupComponent(idx, shape);
@@ -2763,34 +2877,28 @@
           });
         }
         group.appendChild(bodyEl);
-        renderRichTextBlockSpec(group, component, componentBoxTextBox(box));
+        renderRichTextBlockSpec(group, component, applyTextBoxAdjustments(componentBoxTextBox(box), component));
       });
 
       if (layout.direction === "horizontal") {
         layout.components.forEach((box, idx) => {
           if (idx === 0) return;
-          group.appendChild(createSvg("line", {
+          appendStrokeLine({
             x1: box.x,
             y1: layout.bodyY,
             x2: box.x,
             y2: layout.bodyY + layout.bodyHeight,
-            stroke: strokeColor,
-            "stroke-width": minorSeparatorWidth,
-            "stroke-dasharray": dash,
-          }));
+          }, minorSeparatorWidth);
         });
       } else {
         layout.components.forEach((box, idx) => {
           if (idx === 0) return;
-          group.appendChild(createSvg("line", {
+          appendStrokeLine({
             x1: layout.bodyX,
             y1: box.y,
             x2: layout.bodyX + layout.bodyWidth,
             y2: box.y,
-            stroke: strokeColor,
-            "stroke-width": minorSeparatorWidth,
-            "stroke-dasharray": dash,
-          }));
+          }, minorSeparatorWidth);
         });
       }
     } else {
@@ -3213,7 +3321,8 @@
       fill: "none",
       stroke: stroke,
       "stroke-width": width,
-      "stroke-dasharray": arrow.lineStyle === "dashed" ? "6 4" : "",
+      "stroke-dasharray": dashArrayForStyle(arrow.lineStyle),
+      "stroke-linecap": lineCapForStyle(arrow.lineStyle),
       style: "cursor:pointer",
       "data-arrow-id": arrow.id,
     };
@@ -4243,6 +4352,7 @@
 
     const isContainer = usesContainerPalette(normalizedKind);
     const componentCount = normalizedKind === "component_group" ? 4 : 1;
+    const isTextBox = normalizedKind === "text_box";
     const shape = {
       id: id,
       idManual: false,
@@ -4255,7 +4365,7 @@
       height: size.height,
       fill: isContainer ? "#0d172a" : "#1c2f4f",
       stroke: isContainer ? "#eef3ff" : "#80b6ff",
-      borderStyle: "solid",
+      borderStyle: isTextBox ? "none" : "solid",
       borderWidth: defaultBorderWidth(normalizedKind),
       textColor: "#f4f7ff",
       rounded: shapeSupportsRounding(normalizedKind),
@@ -4263,6 +4373,11 @@
       textVAlign: "center",
       fontSize: 12,
       fontFamily: DEFAULT_FONT_FAMILY,
+      textOffsetUp: 0,
+      textOffsetDown: 0,
+      textOffsetLeft: 0,
+      textOffsetRight: 0,
+      textPadding: 0,
       componentDirection: "horizontal",
       componentCount: componentCount,
       components: normalizedKind === "component_group"
@@ -5583,6 +5698,36 @@
     applyToolbarFormatState(formatState);
   }
 
+  function textSpacingControlsHtml(prefix, spec) {
+    const base = prefix || "ins-spacing";
+    return [
+      "<h3>Spacing</h3>",
+      '<div class="spacing-grid">',
+      '<div class="spacing-control spacing-up"><input id="' + base + '-up" type="number" min="0" max="200" step="1" value="' + roundNum(normalizeTextInset(spec.textOffsetUp, 0)) + '"/><label for="' + base + '-up">UP</label></div>',
+      '<div class="spacing-control spacing-padding"><input id="' + base + '-padding" type="number" min="0" max="200" step="1" value="' + roundNum(normalizeTextInset(spec.textPadding, 0)) + '"/><label for="' + base + '-padding">Padding</label></div>',
+      '<div class="spacing-control spacing-left"><input id="' + base + '-left" type="number" min="0" max="200" step="1" value="' + roundNum(normalizeTextInset(spec.textOffsetLeft, 0)) + '"/><label for="' + base + '-left">Left</label></div>',
+      '<div class="spacing-control spacing-down"><input id="' + base + '-down" type="number" min="0" max="200" step="1" value="' + roundNum(normalizeTextInset(spec.textOffsetDown, 0)) + '"/><label for="' + base + '-down">DOWN</label></div>',
+      '<div class="spacing-control spacing-right"><input id="' + base + '-right" type="number" min="0" max="200" step="1" value="' + roundNum(normalizeTextInset(spec.textOffsetRight, 0)) + '"/><label for="' + base + '-right">Right</label></div>',
+      "</div>",
+    ].join("");
+  }
+
+  function bindTextSpacingControls(prefix, entity) {
+    const base = prefix || "ins-spacing";
+    const bindField = (suffix, key) => {
+      bindCommittedNumber(base + "-" + suffix, (num) => {
+        pushHistory();
+        entity[key] = normalizeTextInset(num, entity[key] || 0);
+        render();
+      });
+    };
+    bindField("up", "textOffsetUp");
+    bindField("down", "textOffsetDown");
+    bindField("left", "textOffsetLeft");
+    bindField("right", "textOffsetRight");
+    bindField("padding", "textPadding");
+  }
+
   function renderShapeInspector(shapeId) {
     const shape = shapeById(shapeId);
     if (!shape) {
@@ -5635,17 +5780,19 @@
         '<input id="ins-shape-font-color" class="compact-color" type="color" title="Font color" value="' + normalizeColor(shape.textColor, "#f4f7ff") + '"/>' +
         '<input id="ins-shape-font-size" class="font-size-input" type="number" min="8" max="1000" step="0.5" title="Font size" value="' + roundNum(shape.fontSize || 12) + '"/>' +
       "</div>",
-      '<div><label>ID</label><input id="ins-shape-id" type="text" value="' + escapeHtml(shape.id) + '"/></div>',
-      '<div class="switch-row"><label for="ins-shape-auto-id">Auto ID</label><label class="switch"><input id="ins-shape-auto-id" type="checkbox"' + (!shape.idManual ? " checked" : "") + '/><span class="switch-slider"></span></label></div>',
+      textSpacingControlsHtml("ins-spacing", shape),
+      '<div class="section-heading-row"><h3>ID</h3><label class="inline-toggle"><input id="ins-shape-auto-id" type="checkbox"' + (!shape.idManual ? " checked" : "") + '> Auto ID</label></div>',
+      '<div><input id="ins-shape-id" type="text" value="' + escapeHtml(shape.id) + '"/></div>',
       '<div><label>Parent container:</label><select id="ins-parent">' + parentOptions + '</select></div>',
-      "<h3>Border</h3>",
+      '<div class="section-heading-row"><h3>Border</h3>' +
+        (shapeSupportsRounding(shape.kind)
+          ? '<label class="inline-toggle"><input id="ins-shape-rounded" type="checkbox"' + (shape.rounded ? " checked" : "") + '> Rounded corners</label>'
+          : "") +
+      '</div>',
       '<div><div class="border-controls">' +
-        '<select id="ins-shape-border-style"><option value="solid"' + (shape.borderStyle === "solid" ? " selected" : "") + '>solid</option><option value="dashed"' + (shape.borderStyle === "dashed" ? " selected" : "") + '>dashed</option></select>' +
+        '<select id="ins-shape-border-style"><option value="none"' + (shape.borderStyle === "none" ? " selected" : "") + '>none</option><option value="solid"' + (shape.borderStyle === "solid" ? " selected" : "") + '>solid</option><option value="dashed"' + (shape.borderStyle === "dashed" ? " selected" : "") + '>dashed</option><option value="dotted"' + (shape.borderStyle === "dotted" ? " selected" : "") + '>dotted</option></select>' +
         '<input id="ins-shape-border-width" type="number" min="0.5" max="12" step="0.1" title="Border thickness" value="' + roundNum(shape.borderWidth || defaultBorderWidth(shape.kind)) + '"/>' +
       '</div></div>',
-      (shapeSupportsRounding(shape.kind)
-        ? '<div class="row"><label style="margin:0;"><input id="ins-shape-rounded" type="checkbox"' + (shape.rounded ? " checked" : "") + '> Rounded corners</label></div>'
-        : ""),
       isComponentGroup
         ? '<h3>Group Layout</h3>' +
           '<div><label>Direction</label><select id="ins-group-direction"><option value="horizontal"' + (normalizeComponentDirection(shape.componentDirection) === "horizontal" ? " selected" : "") + '>horizontal</option><option value="vertical"' + (normalizeComponentDirection(shape.componentDirection) === "vertical" ? " selected" : "") + '>vertical</option></select></div>' +
@@ -5848,6 +5995,8 @@
       render();
     });
 
+    bindTextSpacingControls("ins-spacing", shape);
+
     bindInput("ins-shape-fill", "input", (value) => {
       pushHistory();
       shape.fill = normalizeColor(value, shape.fill);
@@ -6040,6 +6189,7 @@
         '<input id="ins-shape-font-color" class="compact-color" type="color" title="Font color" value="' + normalizeColor(component.textColor, "#f4f7ff") + '"/>' +
         '<input id="ins-shape-font-size" class="font-size-input" type="number" min="8" max="1000" step="0.5" title="Font size" value="' + roundNum(component.fontSize || 12) + '"/>' +
       "</div>",
+      textSpacingControlsHtml("ins-spacing", component),
       '<div class="section-heading-row"><h3>Color</h3><label class="inline-toggle"><input id="ins-comp-fill-override" type="checkbox"' + (component.fillOverride ? " checked" : "") + '> Override</label></div>',
       '<div class="palette-block section-offset"><label>Fill palette</label><div class="palette" id="ins-comp-fill-palette"></div></div>',
       '<div class="color-inline-row"><label for="ins-comp-fill">Fill:</label><input id="ins-comp-fill" type="color" value="' + normalizeColor(fillValue, "#0d172a") + '"' + (component.fillOverride ? "" : " disabled") + '/></div>',
@@ -6207,6 +6357,11 @@
       render();
     });
 
+    const liveComponent = currentComponent();
+    if (liveComponent) {
+      bindTextSpacingControls("ins-spacing", liveComponent);
+    }
+
     bindChecked("ins-comp-fill-override", (checked) => {
       pushHistory();
       const nextComponent = currentComponent();
@@ -6262,7 +6417,7 @@
       '<div class="hint">To: <strong>' + escapeHtml(toShape ? toShape.id : arrow.to.shapeId) + '</strong> (' + arrow.to.side + ':' + arrow.to.anchorIndex + ')</div>',
       "<h3>Style</h3>",
       '<div><label>Type</label><select id="ins-arrow-type"><option value="directional_connector"' + (connectionType === "directional_connector" ? " selected" : "") + '>Directional Connector</option><option value="bidirectional_connector"' + (connectionType === "bidirectional_connector" ? " selected" : "") + '>Bi-directional Connector</option><option value="line"' + (connectionType === "line" ? " selected" : "") + '>Line</option></select></div>',
-      '<div><label>Line style</label><select id="ins-arrow-line"><option value="solid"' + (arrow.lineStyle === "solid" ? " selected" : "") + '>solid</option><option value="dashed"' + (arrow.lineStyle === "dashed" ? " selected" : "") + '>dashed</option></select></div>',
+      '<div><label>Line style</label><select id="ins-arrow-line"><option value="solid"' + (arrow.lineStyle === "solid" ? " selected" : "") + '>solid</option><option value="dashed"' + (arrow.lineStyle === "dashed" ? " selected" : "") + '>dashed</option><option value="dotted"' + (arrow.lineStyle === "dotted" ? " selected" : "") + '>dotted</option></select></div>',
       '<div><label>Routing</label><select id="ins-arrow-routing"><option value="angled"' + (arrow.routing === "angled" ? " selected" : "") + '>angled/orthogonal</option><option value="straight"' + (arrow.routing === "straight" ? " selected" : "") + '>straight</option><option value="curved"' + (arrow.routing === "curved" ? " selected" : "") + '>curved</option></select></div>',
       '<div><label>Color</label><input id="ins-arrow-color" type="color" value="' + normalizeColor(arrow.stroke, "#e8efff") + '"/></div>',
       '<div><label>Width</label><input id="ins-arrow-width" type="number" min="0.5" step="0.1" value="' + roundNum(arrow.width) + '"/></div>',

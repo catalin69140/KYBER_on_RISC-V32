@@ -2445,6 +2445,7 @@ def write_html_animation(
         return (
             kind === "square" ||
             kind === "rectangle" ||
+            kind === "text_box" ||
             kind === "container" ||
             kind === "header_container" ||
             kind === "component_group" ||
@@ -2456,6 +2457,35 @@ def write_html_animation(
             kind === "hexagon" ||
             kind === "octagon"
         );
+    }
+
+    function refNormalizeLineStyle(raw) {
+        const value = String(raw || "").toLowerCase().trim();
+        if (value === "dashed" || value === "dotted") return value;
+        return "solid";
+    }
+
+    function refNormalizeBorderStyle(raw) {
+        const value = String(raw || "").toLowerCase().trim();
+        if (value === "none" || value === "dashed" || value === "dotted") return value;
+        return "solid";
+    }
+
+    function refTextInset(value, fallback = 0) {
+        const num = Number(value);
+        if (!Number.isFinite(num)) return fallback;
+        return refClamp(num, 0, 200);
+    }
+
+    function refDashArrayForStyle(style) {
+        const normalized = refNormalizeBorderStyle(style);
+        if (normalized === "dashed") return "7 4";
+        if (normalized === "dotted") return "1.2 5";
+        return "";
+    }
+
+    function refLineCapForStyle(style) {
+        return refNormalizeBorderStyle(style) === "dotted" ? "round" : "";
     }
 
     function refShapeCornerRadius(spec, kind) {
@@ -2527,6 +2557,28 @@ def write_html_animation(
             { left: 0.08, right: 0.08, top: 0.08, bottom: 0.08, minX: 6, maxX: 16, minY: 5, maxY: 16 },
             { width: 18, height: 18 }
         );
+    }
+
+    function refApplyTextBoxAdjustments(baseBox, spec) {
+        if (!baseBox || !spec) return baseBox;
+        const pad = refTextInset(spec.textPadding, 0);
+        const maxPadX = Math.max(0, Math.floor((baseBox.width - 8) / 2));
+        const maxPadY = Math.max(0, Math.floor((baseBox.height - 8) / 2));
+        const effectivePad = Math.min(pad, maxPadX, maxPadY);
+        const padded = {
+            x: baseBox.x + effectivePad,
+            y: baseBox.y + effectivePad,
+            width: Math.max(8, baseBox.width - effectivePad * 2),
+            height: Math.max(8, baseBox.height - effectivePad * 2)
+        };
+        const shiftX = refTextInset(spec.textOffsetRight, 0) - refTextInset(spec.textOffsetLeft, 0);
+        const shiftY = refTextInset(spec.textOffsetDown, 0) - refTextInset(spec.textOffsetUp, 0);
+        return {
+            x: refClamp(padded.x + shiftX, baseBox.x, baseBox.x + baseBox.width - padded.width),
+            y: refClamp(padded.y + shiftY, baseBox.y, baseBox.y + baseBox.height - padded.height),
+            width: padded.width,
+            height: padded.height
+        };
     }
 
     function refPolygonVertices(spec, kind) {
@@ -2607,40 +2659,43 @@ def write_html_animation(
     function refShapeTextBox(spec, kind) {
         if (kind === "header_container") {
             const headerH = refComponentGroupHeaderHeight(spec);
-            return { x: spec.x + 8, y: spec.y + 2, width: Math.max(24, spec.w - 16), height: Math.max(14, headerH - 4) };
+            return refApplyTextBoxAdjustments({ x: spec.x + 8, y: spec.y + 2, width: Math.max(24, spec.w - 16), height: Math.max(14, headerH - 4) }, spec);
         }
         if (kind === "component_group") {
             const titleHeight = refComponentGroupHeaderHeight(spec);
-            return { x: spec.x + 8, y: spec.y + 2, width: Math.max(24, spec.w - 16), height: Math.max(14, titleHeight - 4) };
+            return refApplyTextBoxAdjustments({ x: spec.x + 8, y: spec.y + 2, width: Math.max(24, spec.w - 16), height: Math.max(14, titleHeight - 4) }, spec);
         }
         if (kind === "circle" || kind === "oval") {
-            return refInsetTextBox(spec, { left: 0.18, right: 0.18, top: 0.14, bottom: 0.14, minX: 7, maxX: 24, minY: 6, maxY: 18 }, { width: 20, height: 20 });
+            return refApplyTextBoxAdjustments(refInsetTextBox(spec, { left: 0.18, right: 0.18, top: 0.14, bottom: 0.14, minX: 7, maxX: 24, minY: 6, maxY: 18 }, { width: 20, height: 20 }), spec);
         }
         if (kind === "cylinder") {
-            return refInsetTextBox(spec, { left: 0.14, right: 0.14, top: 0.2, bottom: 0.14, minX: 8, maxX: 22, minY: 8, maxY: 22 }, { width: 22, height: 22 });
+            return refApplyTextBoxAdjustments(refInsetTextBox(spec, { left: 0.14, right: 0.14, top: 0.2, bottom: 0.14, minX: 8, maxX: 22, minY: 8, maxY: 22 }, { width: 22, height: 22 }), spec);
         }
         if (kind === "triangle") {
-            return refInsetTextBox(spec, { left: 0.16, right: 0.16, top: 0.24, bottom: 0.18, minX: 8, maxX: 24, minY: 7, maxY: 22 }, { width: 20, height: 20 });
+            return refApplyTextBoxAdjustments(refInsetTextBox(spec, { left: 0.16, right: 0.16, top: 0.24, bottom: 0.18, minX: 8, maxX: 24, minY: 7, maxY: 22 }, { width: 20, height: 20 }), spec);
         }
         if (kind === "diamond" || kind === "pentagon" || kind === "hexagon" || kind === "octagon") {
-            return refInsetTextBox(spec, { left: 0.18, right: 0.18, top: 0.16, bottom: 0.16, minX: 8, maxX: 24, minY: 7, maxY: 20 }, { width: 22, height: 22 });
+            return refApplyTextBoxAdjustments(refInsetTextBox(spec, { left: 0.18, right: 0.18, top: 0.16, bottom: 0.16, minX: 8, maxX: 24, minY: 7, maxY: 20 }, { width: 22, height: 22 }), spec);
         }
         if (kind === "cone") {
-            return refInsetTextBox(spec, { left: 0.18, right: 0.18, top: 0.14, bottom: 0.24, minX: 8, maxX: 24, minY: 8, maxY: 24 }, { width: 22, height: 24 });
+            return refApplyTextBoxAdjustments(refInsetTextBox(spec, { left: 0.18, right: 0.18, top: 0.14, bottom: 0.24, minX: 8, maxX: 24, minY: 8, maxY: 24 }, { width: 22, height: 24 }), spec);
         }
         if (kind === "cube" || kind === "cuboid" || kind === "hexagonal_prism") {
-            return refInsetTextBox(spec, { left: 0.18, right: 0.08, top: 0.16, bottom: 0.1, minX: 10, maxX: 26, minY: 8, maxY: 20 }, { width: 22, height: 20 });
+            return refApplyTextBoxAdjustments(refInsetTextBox(spec, { left: 0.18, right: 0.08, top: 0.16, bottom: 0.1, minX: 10, maxX: 26, minY: 8, maxY: 20 }, { width: 22, height: 20 }), spec);
         }
         if (kind === "cloud" || kind === "cloud_callout") {
-            return refInsetTextBox(spec, { left: 0.18, right: 0.18, top: 0.18, bottom: kind === "cloud_callout" ? 0.24 : 0.18, minX: 10, maxX: 28, minY: 9, maxY: 24 }, { width: 26, height: 24 });
+            return refApplyTextBoxAdjustments(refInsetTextBox(spec, { left: 0.18, right: 0.18, top: 0.18, bottom: kind === "cloud_callout" ? 0.24 : 0.18, minX: 10, maxX: 28, minY: 9, maxY: 24 }, { width: 26, height: 24 }), spec);
+        }
+        if (kind === "mail") {
+            return refApplyTextBoxAdjustments(refInsetTextBox(spec, { left: 0.12, right: 0.12, top: 0.26, bottom: 0.12, minX: 8, maxX: 20, minY: 8, maxY: 22 }, { width: 22, height: 20 }), spec);
         }
         if (kind === "actor") {
-            return { x: spec.x + 8, y: spec.y + spec.h * 0.48, width: Math.max(18, spec.w - 16), height: Math.max(20, spec.h * 0.42) };
+            return refApplyTextBoxAdjustments({ x: spec.x + 8, y: spec.y + spec.h * 0.48, width: Math.max(18, spec.w - 16), height: Math.max(20, spec.h * 0.42) }, spec);
         }
         if (kind === "note") {
-            return { x: spec.x + 10, y: spec.y + 10, width: Math.max(18, spec.w - 24), height: Math.max(18, spec.h - 20) };
+            return refApplyTextBoxAdjustments({ x: spec.x + 10, y: spec.y + 10, width: Math.max(18, spec.w - 24), height: Math.max(18, spec.h - 20) }, spec);
         }
-        return refInsetTextBox(spec, { left: 0.08, right: 0.08, top: 0.08, bottom: 0.08, minX: 6, maxX: 18, minY: 5, maxY: 16 }, { width: 20, height: 20 });
+        return refApplyTextBoxAdjustments(refInsetTextBox(spec, { left: 0.08, right: 0.08, top: 0.08, bottom: 0.08, minX: 6, maxX: 18, minY: 5, maxY: 16 }, { width: 20, height: 20 }), spec);
     }
 
     function refRenderRichTextBlockInBox(g, spec, box) {
@@ -2727,7 +2782,12 @@ def write_html_animation(
                     textAlign: String(raw.textAlign || "center"),
                     textVAlign: String(raw.textVAlign || "center"),
                     fontSize: Math.max(8, Math.min(40, Number(raw.fontSize) || Number(spec.fontSize) || 12)),
-                    fontFamily: String(raw.fontFamily || spec.fontFamily || REF_TEXT_FONT_FAMILY)
+                    fontFamily: String(raw.fontFamily || spec.fontFamily || REF_TEXT_FONT_FAMILY),
+                    textOffsetUp: refTextInset(raw.textOffsetUp, 0),
+                    textOffsetDown: refTextInset(raw.textOffsetDown, 0),
+                    textOffsetLeft: refTextInset(raw.textOffsetLeft, 0),
+                    textOffsetRight: refTextInset(raw.textOffsetRight, 0),
+                    textPadding: refTextInset(raw.textPadding, 0)
                 });
                 continue;
             }
@@ -2742,7 +2802,12 @@ def write_html_animation(
                     textAlign: "center",
                     textVAlign: "center",
                     fontSize: Math.max(8, Math.min(40, Number(spec.fontSize) || 12)),
-                    fontFamily: String(spec.fontFamily || REF_TEXT_FONT_FAMILY)
+                    fontFamily: String(spec.fontFamily || REF_TEXT_FONT_FAMILY),
+                    textOffsetUp: refTextInset(spec.textOffsetUp, 0),
+                    textOffsetDown: refTextInset(spec.textOffsetDown, 0),
+                    textOffsetLeft: refTextInset(spec.textOffsetLeft, 0),
+                    textOffsetRight: refTextInset(spec.textOffsetRight, 0),
+                    textPadding: refTextInset(spec.textPadding, 0)
                 });
                 continue;
             }
@@ -2755,7 +2820,12 @@ def write_html_animation(
                 textAlign: "center",
                 textVAlign: "center",
                 fontSize: Math.max(8, Math.min(40, Number(spec.fontSize) || 12)),
-                fontFamily: String(spec.fontFamily || REF_TEXT_FONT_FAMILY)
+                fontFamily: String(spec.fontFamily || REF_TEXT_FONT_FAMILY),
+                textOffsetUp: refTextInset(spec.textOffsetUp, 0),
+                textOffsetDown: refTextInset(spec.textOffsetDown, 0),
+                textOffsetLeft: refTextInset(spec.textOffsetLeft, 0),
+                textOffsetRight: refTextInset(spec.textOffsetRight, 0),
+                textPadding: refTextInset(spec.textPadding, 0)
             });
         }
         return out;
@@ -2835,15 +2905,18 @@ def write_html_animation(
         const separatorWidth = Math.max(1, borderWidth * 0.62);
         const minorSeparatorWidth = Math.max(1, borderWidth * 0.56);
         const rounded = refShapeCornerRadius(spec, shapeKind);
-        const borderStyle = String(spec.borderStyle || "solid").toLowerCase() === "dashed" ? "dashed" : "solid";
-        const dash = borderStyle === "dashed" ? "7 4" : "";
+        const borderStyle = refNormalizeBorderStyle(spec.borderStyle || "solid");
+        const dash = refDashArrayForStyle(borderStyle);
+        const strokeLinecap = refLineCapForStyle(borderStyle);
+        const showBorder = borderStyle !== "none";
 
         function appendShapeEl(tag, attrs, fillOverride) {
             const el = createSvgEl(tag, attrs);
             el.setAttribute("fill", fillOverride !== undefined ? fillOverride : fill);
-            el.setAttribute("stroke", stroke);
-            el.setAttribute("stroke-width", String(borderWidth));
+            el.setAttribute("stroke", showBorder ? stroke : "none");
+            el.setAttribute("stroke-width", String(showBorder ? borderWidth : 0));
             if (dash) el.setAttribute("stroke-dasharray", dash);
+            if (strokeLinecap) el.setAttribute("stroke-linecap", strokeLinecap);
             el.setAttribute("data-base-stroke", stroke);
             el.setAttribute("data-base-stroke-width", String(borderWidth));
             g.appendChild(el);
@@ -2865,43 +2938,42 @@ def write_html_animation(
             return appendPolygonShape(points, fillOverride);
         }
 
+        function appendStrokeLine(attrs, widthOverride) {
+            if (!showBorder) return null;
+            const line = createSvgEl("line", attrs);
+            line.setAttribute("stroke", stroke);
+            line.setAttribute("stroke-width", String(widthOverride || borderWidth));
+            if (dash) line.setAttribute("stroke-dasharray", dash);
+            if (strokeLinecap) line.setAttribute("stroke-linecap", strokeLinecap);
+            g.appendChild(line);
+            return line;
+        }
+
         if (["triangle", "diamond", "parallelogram", "trapezoid", "pentagon", "hexagon", "octagon", "message", "card", "note"].includes(shapeKind)) {
             const points = refPolygonVertices(spec, shapeKind);
             appendPolygonShape(points);
             if (shapeKind === "note") {
                 const foldW = spec.w * 0.2;
                 const foldH = spec.h * 0.2;
-                const foldV = createSvgEl("line", {
+                appendStrokeLine({
                     x1: spec.x + spec.w * 0.8,
                     y1: spec.y,
                     x2: spec.x + spec.w * 0.8,
                     y2: spec.y + foldH
-                });
-                foldV.setAttribute("stroke", stroke);
-                foldV.setAttribute("stroke-width", String(minorSeparatorWidth));
-                if (dash) foldV.setAttribute("stroke-dasharray", dash);
-                g.appendChild(foldV);
-                const foldHLine = createSvgEl("line", {
+                }, minorSeparatorWidth);
+                appendStrokeLine({
                     x1: spec.x + spec.w * 0.8,
                     y1: spec.y + foldH,
                     x2: spec.x + spec.w,
                     y2: spec.y + foldH
-                });
-                foldHLine.setAttribute("stroke", stroke);
-                foldHLine.setAttribute("stroke-width", String(minorSeparatorWidth));
-                if (dash) foldHLine.setAttribute("stroke-dasharray", dash);
-                g.appendChild(foldHLine);
+                }, minorSeparatorWidth);
             } else if (shapeKind === "card") {
-                const notch = createSvgEl("line", {
+                appendStrokeLine({
                     x1: spec.x,
                     y1: spec.y + spec.h * 0.16,
                     x2: spec.x + spec.w * 0.16,
                     y2: spec.y
-                });
-                notch.setAttribute("stroke", stroke);
-                notch.setAttribute("stroke-width", String(minorSeparatorWidth));
-                if (dash) notch.setAttribute("stroke-dasharray", dash);
-                g.appendChild(notch);
+                }, minorSeparatorWidth);
             }
         } else if (shapeKind === "circle" || shapeKind === "oval") {
             appendShapeEl("ellipse", {
@@ -2934,17 +3006,13 @@ def write_html_animation(
             appendShapeEl("ellipse", { cx: spec.x + rx, cy: topCy, rx, ry });
             const bottom = createSvgEl("ellipse", { cx: spec.x + rx, cy: bottomCy, rx, ry });
             bottom.setAttribute("fill", fill);
-            bottom.setAttribute("stroke", stroke);
-            bottom.setAttribute("stroke-width", String(borderWidth));
+            bottom.setAttribute("stroke", showBorder ? stroke : "none");
+            bottom.setAttribute("stroke-width", String(showBorder ? borderWidth : 0));
             if (dash) bottom.setAttribute("stroke-dasharray", dash);
             g.appendChild(bottom);
             ["left", "right"].forEach((side) => {
                 const x = side === "left" ? spec.x : (spec.x + spec.w);
-                const line = createSvgEl("line", { x1: x, y1: topCy, x2: x, y2: bottomCy });
-                line.setAttribute("stroke", stroke);
-                line.setAttribute("stroke-width", String(borderWidth));
-                if (dash) line.setAttribute("stroke-dasharray", dash);
-                g.appendChild(line);
+                appendStrokeLine({ x1: x, y1: topCy, x2: x, y2: bottomCy }, borderWidth);
             });
         } else if (shapeKind === "cone") {
             const rx = spec.w * 0.32;
@@ -2960,8 +3028,8 @@ def write_html_animation(
             ].join(" "));
             const base = createSvgEl("ellipse", { cx, cy: baseCy, rx, ry });
             base.setAttribute("fill", "none");
-            base.setAttribute("stroke", stroke);
-            base.setAttribute("stroke-width", String(minorSeparatorWidth));
+            base.setAttribute("stroke", showBorder ? stroke : "none");
+            base.setAttribute("stroke-width", String(showBorder ? minorSeparatorWidth : 0));
             if (dash) base.setAttribute("stroke-dasharray", dash);
             g.appendChild(base);
         } else if (shapeKind === "cube" || shapeKind === "cuboid") {
@@ -3004,22 +3072,14 @@ def write_html_animation(
                 [spec.x + spec.w - offX, spec.y, spec.x + spec.w, spec.y + offY],
                 [spec.x + spec.w - offX, spec.y + spec.h - offY, spec.x + spec.w, spec.y + spec.h]
             ].forEach(([x1, y1, x2, y2]) => {
-                const line = createSvgEl("line", { x1, y1, x2, y2 });
-                line.setAttribute("stroke", stroke);
-                line.setAttribute("stroke-width", String(minorSeparatorWidth));
-                if (dash) line.setAttribute("stroke-dasharray", dash);
-                g.appendChild(line);
+                appendStrokeLine({ x1, y1, x2, y2 }, minorSeparatorWidth);
             });
-            const bottomLeft = createSvgEl("line", {
+            appendStrokeLine({
                 x1: spec.x,
                 y1: spec.y + spec.h - offY,
                 x2: spec.x + offX,
                 y2: spec.y + spec.h
-            });
-            bottomLeft.setAttribute("stroke", stroke);
-            bottomLeft.setAttribute("stroke-width", String(minorSeparatorWidth));
-            if (dash) bottomLeft.setAttribute("stroke-dasharray", dash);
-            g.appendChild(bottomLeft);
+            }, minorSeparatorWidth);
             appendShapeEl("rect", {
                 x: frontRect.x,
                 y: frontRect.y,
@@ -3039,11 +3099,7 @@ def write_html_animation(
             appendPolygonShape(top, refDarkenHex(fill, -20));
             appendPolygonShape(bottom);
             [0, 1, 2, 3, 4, 5].forEach((idx) => {
-                const line = createSvgEl("line", { x1: top[idx].x, y1: top[idx].y, x2: bottom[idx].x, y2: bottom[idx].y });
-                line.setAttribute("stroke", stroke);
-                line.setAttribute("stroke-width", String(minorSeparatorWidth));
-                if (dash) line.setAttribute("stroke-dasharray", dash);
-                g.appendChild(line);
+                appendStrokeLine({ x1: top[idx].x, y1: top[idx].y, x2: bottom[idx].x, y2: bottom[idx].y }, minorSeparatorWidth);
             });
         } else if (shapeKind === "and") {
             appendPathShape(`M ${spec.x} ${spec.y} L ${spec.x + spec.w * 0.56} ${spec.y} Q ${spec.x + spec.w} ${spec.y + spec.h / 2} ${spec.x + spec.w * 0.56} ${spec.y + spec.h} L ${spec.x} ${spec.y + spec.h} Z`);
@@ -3060,12 +3116,19 @@ def write_html_animation(
                 [cx, spec.y + spec.h * 0.62, spec.x + spec.w * 0.26, spec.y + spec.h * 0.94],
                 [cx, spec.y + spec.h * 0.62, spec.x + spec.w * 0.74, spec.y + spec.h * 0.94]
             ].forEach(([x1, y1, x2, y2]) => {
-                const line = createSvgEl("line", { x1, y1, x2, y2 });
-                line.setAttribute("stroke", stroke);
-                line.setAttribute("stroke-width", String(borderWidth));
-                if (dash) line.setAttribute("stroke-dasharray", dash);
-                g.appendChild(line);
+                appendStrokeLine({ x1, y1, x2, y2 }, borderWidth);
             });
+        } else if (shapeKind === "mail") {
+            appendShapeEl("rect", {
+                x: spec.x, y: spec.y, width: spec.w, height: spec.h,
+                rx: rounded, ry: rounded
+            });
+            const centerX = spec.x + spec.w / 2;
+            const flapY = spec.y + spec.h * 0.5;
+            appendStrokeLine({ x1: spec.x, y1: spec.y, x2: centerX, y2: flapY }, minorSeparatorWidth);
+            appendStrokeLine({ x1: spec.x + spec.w, y1: spec.y, x2: centerX, y2: flapY }, minorSeparatorWidth);
+            appendStrokeLine({ x1: spec.x, y1: spec.y + spec.h, x2: centerX, y2: flapY }, minorSeparatorWidth);
+            appendStrokeLine({ x1: spec.x + spec.w, y1: spec.y + spec.h, x2: centerX, y2: flapY }, minorSeparatorWidth);
         } else if (shapeKind === "cloud" || shapeKind === "cloud_callout") {
             appendPathShape([
                 `M ${spec.x + spec.w * 0.2} ${spec.y + spec.h * 0.68}`,
@@ -3106,10 +3169,12 @@ def write_html_animation(
                 x2: spec.x + spec.w,
                 y2: spec.y + headerH
             });
-            sep.setAttribute("stroke", stroke);
-            sep.setAttribute("stroke-width", String(separatorWidth));
-            if (dash) sep.setAttribute("stroke-dasharray", dash);
-            g.appendChild(sep);
+            if (showBorder) {
+                sep.setAttribute("stroke", stroke);
+                sep.setAttribute("stroke-width", String(separatorWidth));
+                if (dash) sep.setAttribute("stroke-dasharray", dash);
+                g.appendChild(sep);
+            }
         } else if (shapeKind === "component_group") {
             const headerH = refComponentGroupHeaderHeight(spec);
             const layout = refComponentGroupLayout(spec);
@@ -3140,10 +3205,12 @@ def write_html_animation(
                 x2: spec.x + spec.w,
                 y2: spec.y + headerH
             });
-            splitTop.setAttribute("stroke", stroke);
-            splitTop.setAttribute("stroke-width", String(separatorWidth));
-            if (dash) splitTop.setAttribute("stroke-dasharray", dash);
-            g.appendChild(splitTop);
+            if (showBorder) {
+                splitTop.setAttribute("stroke", stroke);
+                splitTop.setAttribute("stroke-width", String(separatorWidth));
+                if (dash) splitTop.setAttribute("stroke-dasharray", dash);
+                g.appendChild(splitTop);
+            }
 
             layout.components.forEach((box, idx) => {
                 const component = components[idx];
@@ -3186,37 +3253,34 @@ def write_html_animation(
                     textAlign: component.textAlign,
                     textVAlign: component.textVAlign,
                     fontSize: component.fontSize,
-                    fontFamily: component.fontFamily
-                }, refComponentBoxTextBox(box));
+                    fontFamily: component.fontFamily,
+                    textOffsetUp: component.textOffsetUp,
+                    textOffsetDown: component.textOffsetDown,
+                    textOffsetLeft: component.textOffsetLeft,
+                    textOffsetRight: component.textOffsetRight,
+                    textPadding: component.textPadding
+                }, refApplyTextBoxAdjustments(refComponentBoxTextBox(box), component));
             });
 
             if (layout.direction === "horizontal") {
                 layout.components.forEach((box, idx) => {
                     if (idx === 0) return;
-                    const sep = createSvgEl("line", {
+                    appendStrokeLine({
                         x1: box.x,
                         y1: layout.bodyY,
                         x2: box.x,
                         y2: layout.bodyY + layout.bodyHeight
-                    });
-                    sep.setAttribute("stroke", stroke);
-                    sep.setAttribute("stroke-width", String(minorSeparatorWidth));
-                    if (dash) sep.setAttribute("stroke-dasharray", dash);
-                    g.appendChild(sep);
+                    }, minorSeparatorWidth);
                 });
             } else {
                 layout.components.forEach((box, idx) => {
                     if (idx === 0) return;
-                    const sep = createSvgEl("line", {
+                    appendStrokeLine({
                         x1: layout.bodyX,
                         y1: box.y,
                         x2: layout.bodyX + layout.bodyWidth,
                         y2: box.y
-                    });
-                    sep.setAttribute("stroke", stroke);
-                    sep.setAttribute("stroke-width", String(minorSeparatorWidth));
-                    if (dash) sep.setAttribute("stroke-dasharray", dash);
-                    g.appendChild(sep);
+                    }, minorSeparatorWidth);
                 });
             }
         } else {
@@ -3246,13 +3310,18 @@ def write_html_animation(
             opts.connectionType,
             opts.arrowHead === false ? "line" : "directional_connector"
         );
+        const lineStyle = refNormalizeLineStyle(opts.lineStyle || (opts.dashed ? "dashed" : "solid"));
 
         const path = createSvgEl("path", {
             d: opts.d || `M ${from.x} ${from.y} L ${to.x} ${to.y}`,
-            class: "ref-arrow" + (opts.dashed ? " ref-arrow-dashed" : "")
+            class: "ref-arrow" + (lineStyle === "dashed" ? " ref-arrow-dashed" : "")
         });
         if (opts.color) path.setAttribute("stroke", opts.color);
         if (opts.width) path.setAttribute("stroke-width", String(opts.width));
+        const dash = refDashArrayForStyle(lineStyle);
+        if (dash) path.setAttribute("stroke-dasharray", dash);
+        const lineCap = refLineCapForStyle(lineStyle);
+        if (lineCap) path.setAttribute("stroke-linecap", lineCap);
         if (connectionType === "bidirectional_connector") {
             path.setAttribute("marker-start", "url(#ref-arrow-head)");
             path.setAttribute("marker-end", "url(#ref-arrow-head)");

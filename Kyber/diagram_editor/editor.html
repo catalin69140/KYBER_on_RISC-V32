@@ -452,6 +452,48 @@
       min-width: 0;
     }
 
+    .spacing-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px 10px;
+      margin-top: 8px;
+      align-items: end;
+    }
+
+    .spacing-control {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    .spacing-control label {
+      margin: 0;
+      text-align: center;
+      font-size: 11px;
+      letter-spacing: 0.2px;
+    }
+
+    .spacing-up {
+      grid-column: 2;
+    }
+
+    .spacing-padding {
+      grid-column: 3;
+    }
+
+    .spacing-left {
+      grid-column: 1;
+    }
+
+    .spacing-down {
+      grid-column: 2;
+    }
+
+    .spacing-right {
+      grid-column: 3;
+    }
+
     .border-controls {
       display: grid;
       grid-template-columns: minmax(0, 1fr) 88px;
@@ -618,7 +660,7 @@
     }
 
     .palette-block.section-offset {
-      margin: 4px 0 8px;
+      margin: 6px 0 12px;
     }
 
     .palette-block.spaced {

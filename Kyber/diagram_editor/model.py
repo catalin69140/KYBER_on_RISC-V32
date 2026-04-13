@@ -67,11 +67,13 @@ VALID_SHAPE_KINDS = {
     "and",
     "or",
     "message",
+    "mail",
     "actor",
     "cloud",
     "cloud_callout",
     "card",
     "note",
+    "text_box",
     "container",
     "header_container",
     "component_group",
@@ -79,8 +81,8 @@ VALID_SHAPE_KINDS = {
 VALID_CONTAINER_KINDS = {"container", "header_container"}
 VALID_SIDES = {"left", "right", "top", "bottom"}
 VALID_ROUTINGS = {"straight", "curved", "angled"}
-VALID_LINE_STYLES = {"solid", "dashed"}
-VALID_BORDER_STYLES = {"solid", "dashed"}
+VALID_LINE_STYLES = {"solid", "dashed", "dotted"}
+VALID_BORDER_STYLES = {"none", "solid", "dashed", "dotted"}
 VALID_TEXT_ALIGN = {"left", "center", "right"}
 VALID_TEXT_V_ALIGN = {"top", "center", "bottom"}
 VALID_CONNECTION_TYPES = {"directional_connector", "bidirectional_connector", "line"}
@@ -143,6 +145,8 @@ def _default_shape_text(kind: str) -> str:
         return "Or"
     if kind == "message":
         return "Message"
+    if kind == "mail":
+        return "Mail"
     if kind == "actor":
         return "Actor"
     if kind == "cloud":
@@ -153,6 +157,8 @@ def _default_shape_text(kind: str) -> str:
         return "Card"
     if kind == "note":
         return "Note"
+    if kind == "text_box":
+        return "Text"
     if kind == "container":
         return "Container"
     if kind == "header_container":
@@ -201,6 +207,8 @@ def _default_shape_size(kind: str) -> Tuple[float, float]:
         return 102.0, 62.0
     if kind == "message":
         return 112.0, 66.0
+    if kind == "mail":
+        return 110.0, 72.0
     if kind == "actor":
         return 86.0, 116.0
     if kind == "cloud":
@@ -211,6 +219,8 @@ def _default_shape_size(kind: str) -> Tuple[float, float]:
         return 82.0, 102.0
     if kind == "note":
         return 86.0, 108.0
+    if kind == "text_box":
+        return 120.0, 64.0
     if kind in VALID_CONTAINER_KINDS:
         return 240.0, 200.0
     if kind == "component_group":
@@ -332,6 +342,10 @@ def _as_font_family(value: Any) -> str:
     return DEFAULT_FONT_FAMILY
 
 
+def _as_text_inset(value: Any, fallback: float = 0.0) -> float:
+    return max(0.0, min(200.0, _to_float(value, fallback)))
+
+
 def _normalize_component_labels(value: Any, count: int) -> List[str]:
     out: List[str] = []
     if isinstance(value, list):
@@ -360,6 +374,11 @@ def _default_group_component(
         "textVAlign": "center",
         "fontSize": max(8.0, min(40.0, float(font_size or 12.0))),
         "fontFamily": _as_font_family(font_family),
+        "textOffsetUp": 0.0,
+        "textOffsetDown": 0.0,
+        "textOffsetLeft": 0.0,
+        "textOffsetRight": 0.0,
+        "textPadding": 0.0,
     }
 
 
@@ -407,6 +426,11 @@ def _normalize_group_components(
                     "textVAlign": _as_text_v_align(raw_item.get("textVAlign")),
                     "fontSize": max(8.0, min(40.0, _to_float(raw_item.get("fontSize"), default["fontSize"]))),
                     "fontFamily": _as_font_family(raw_item.get("fontFamily")),
+                    "textOffsetUp": _as_text_inset(raw_item.get("textOffsetUp"), default["textOffsetUp"]),
+                    "textOffsetDown": _as_text_inset(raw_item.get("textOffsetDown"), default["textOffsetDown"]),
+                    "textOffsetLeft": _as_text_inset(raw_item.get("textOffsetLeft"), default["textOffsetLeft"]),
+                    "textOffsetRight": _as_text_inset(raw_item.get("textOffsetRight"), default["textOffsetRight"]),
+                    "textPadding": _as_text_inset(raw_item.get("textPadding"), default["textPadding"]),
                 }
             )
             continue
@@ -559,7 +583,7 @@ def normalize_model(raw_model: Any, elf_name: str = "") -> Dict[str, Any]:
             "height": height,
             "fill": str(raw_shape.get("fill") or fill_default),
             "stroke": str(raw_shape.get("stroke") or stroke_default),
-            "borderStyle": _as_border_style(raw_shape.get("borderStyle")),
+            "borderStyle": _as_border_style(raw_shape.get("borderStyle", "none" if kind == "text_box" else "solid")),
             "borderWidth": max(0.5, min(12.0, _to_float(raw_shape.get("borderWidth"), _default_border_width(kind)))),
             "textColor": str(raw_shape.get("textColor") or DEFAULT_TEXT_COLOR),
             "rounded": bool(raw_shape.get("rounded", True)),
@@ -567,6 +591,11 @@ def normalize_model(raw_model: Any, elf_name: str = "") -> Dict[str, Any]:
             "textVAlign": _as_text_v_align(raw_shape.get("textVAlign")),
             "fontSize": max(8.0, min(40.0, _to_float(raw_shape.get("fontSize"), 12.0))),
             "fontFamily": _as_font_family(raw_shape.get("fontFamily")),
+            "textOffsetUp": _as_text_inset(raw_shape.get("textOffsetUp"), 0.0),
+            "textOffsetDown": _as_text_inset(raw_shape.get("textOffsetDown"), 0.0),
+            "textOffsetLeft": _as_text_inset(raw_shape.get("textOffsetLeft"), 0.0),
+            "textOffsetRight": _as_text_inset(raw_shape.get("textOffsetRight"), 0.0),
+            "textPadding": _as_text_inset(raw_shape.get("textPadding"), 0.0),
             "componentDirection": _as_component_direction(raw_shape.get("componentDirection")),
             "componentCount": component_count,
             "z": _to_int(raw_shape.get("z"), idx),

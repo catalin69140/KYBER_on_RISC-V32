@@ -86,6 +86,11 @@ def _build_codegen_payload(model: Dict[str, Any]) -> Tuple[List[Dict[str, Any]],
                 "textVAlign": shape.get("textVAlign", "center"),
                 "fontSize": _fmt_num(shape.get("fontSize", 12)),
                 "fontFamily": shape.get("fontFamily"),
+                "textOffsetUp": _fmt_num(shape.get("textOffsetUp", 0)),
+                "textOffsetDown": _fmt_num(shape.get("textOffsetDown", 0)),
+                "textOffsetLeft": _fmt_num(shape.get("textOffsetLeft", 0)),
+                "textOffsetRight": _fmt_num(shape.get("textOffsetRight", 0)),
+                "textPadding": _fmt_num(shape.get("textPadding", 0)),
                 "componentDirection": shape.get("componentDirection", "horizontal"),
                 "componentCount": int(shape.get("componentCount", 1)),
                 "components": [
@@ -99,6 +104,11 @@ def _build_codegen_payload(model: Dict[str, Any]) -> Tuple[List[Dict[str, Any]],
                         "textVAlign": component.get("textVAlign", "center"),
                         "fontSize": _fmt_num(component.get("fontSize", 12)),
                         "fontFamily": component.get("fontFamily"),
+                        "textOffsetUp": _fmt_num(component.get("textOffsetUp", 0)),
+                        "textOffsetDown": _fmt_num(component.get("textOffsetDown", 0)),
+                        "textOffsetLeft": _fmt_num(component.get("textOffsetLeft", 0)),
+                        "textOffsetRight": _fmt_num(component.get("textOffsetRight", 0)),
+                        "textPadding": _fmt_num(component.get("textPadding", 0)),
                     }
                     for component in shape.get("components", [])
                     if isinstance(component, dict)
@@ -117,7 +127,7 @@ def _build_codegen_payload(model: Dict[str, Any]) -> Tuple[List[Dict[str, Any]],
 
         opts: Dict[str, Any] = {
             "routing": arrow.get("routing", "angled"),
-            "dashed": arrow.get("lineStyle", "solid") == "dashed",
+            "lineStyle": arrow.get("lineStyle", "solid"),
             "connectionType": arrow.get("connectionType", "directional_connector"),
             "color": arrow.get("stroke", "#e8efff"),
             "width": _fmt_num(arrow.get("width", 1.7)),
