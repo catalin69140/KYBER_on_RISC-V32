@@ -4642,9 +4642,7 @@
     if (range.collapsed) {
       const target = currentRichTextTarget();
       const pending = target ? getPendingRichTextFormat(target.key) : null;
-      const caretState = getCaretFormatState(editor, range);
-      if (!pending) return caretState;
-      return normalizeTextFormatState(Object.assign({}, caretState, pending));
+      return pending || getCaretFormatState(editor, range);
     }
     const textNodes = getRangeTextNodes(editor, range);
     const coverage = {
@@ -5021,9 +5019,15 @@
     };
     if (!range.collapsed) {
       clearPendingRichTextFormat(target.key);
-    } else if (!state.richTextToolbarInteraction && !state.richTextPendingSticky) {
-      setPendingRichTextFormat(target.key, getCaretFormatState(editor, range), false);
     }
+    updateRichTextToolbarState();
+  }
+
+  function syncPendingFormatFromCollapsedCaret(target, editor) {
+    if (!target || !editor) return;
+    const range = inspectRichTextSelection(editor);
+    if (!range || !range.collapsed) return;
+    setPendingRichTextFormat(target.key, getCaretFormatState(editor, range), false);
     updateRichTextToolbarState();
   }
 
@@ -5447,10 +5451,8 @@
     }
 
     if (range) {
-      const basisRange = range.cloneRange();
-      const currentState = basisRange
-        ? getSelectionFormatState(editor, basisRange)
-        : (getPendingRichTextFormat(target.key) || emptyTextFormatState());
+      const currentState = getPendingRichTextFormat(target.key) ||
+        getCaretFormatState(editor, range.cloneRange());
       const nextState = cloneTextFormatState(currentState);
       nextState[formatKey] = !currentState[formatKey];
       if (formatKey === "subscript" && nextState.subscript) nextState.superscript = false;
@@ -5491,10 +5493,8 @@
     }
 
     if (range) {
-      const basisRange = range.cloneRange();
-      const currentState = basisRange
-        ? getSelectionFormatState(editor, basisRange)
-        : (getPendingRichTextFormat(target.key) || emptyTextFormatState());
+      const currentState = getPendingRichTextFormat(target.key) ||
+        getCaretFormatState(editor, range.cloneRange());
       const nextState = cloneTextFormatState(currentState);
       nextState.overline = !currentState.overline;
       setPendingRichTextFormat(target.key, nextState, true);
@@ -5736,15 +5736,20 @@
       textEditor.addEventListener("keyup", (evt) => {
         if (!state.richTextToolbarInteraction && shouldReleaseStickyTypingStateOnKeyup(evt)) {
           state.richTextPendingSticky = false;
+          syncPendingFormatFromCollapsedCaret(textTarget, textEditor);
         }
         captureRichTextSelection();
       });
       textEditor.addEventListener("mouseup", () => {
-        if (!state.richTextToolbarInteraction) state.richTextPendingSticky = false;
+        if (!state.richTextToolbarInteraction) {
+          state.richTextPendingSticky = false;
+          syncPendingFormatFromCollapsedCaret(textTarget, textEditor);
+        }
         captureRichTextSelection();
       });
       textEditor.addEventListener("focus", () => {
         updateTextInspectorMeta(textTarget, textEditor);
+        syncPendingFormatFromCollapsedCaret(textTarget, textEditor);
         updateRichTextToolbarState();
       });
       textEditor.addEventListener("blur", () => {
@@ -6090,15 +6095,20 @@
       textEditor.addEventListener("keyup", (evt) => {
         if (!state.richTextToolbarInteraction && shouldReleaseStickyTypingStateOnKeyup(evt)) {
           state.richTextPendingSticky = false;
+          syncPendingFormatFromCollapsedCaret(target, textEditor);
         }
         captureRichTextSelection();
       });
       textEditor.addEventListener("mouseup", () => {
-        if (!state.richTextToolbarInteraction) state.richTextPendingSticky = false;
+        if (!state.richTextToolbarInteraction) {
+          state.richTextPendingSticky = false;
+          syncPendingFormatFromCollapsedCaret(target, textEditor);
+        }
         captureRichTextSelection();
       });
       textEditor.addEventListener("focus", () => {
         updateTextInspectorMeta(target, textEditor);
+        syncPendingFormatFromCollapsedCaret(target, textEditor);
         updateRichTextToolbarState();
       });
       textEditor.addEventListener("blur", () => {
