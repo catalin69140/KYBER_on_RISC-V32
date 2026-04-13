@@ -591,6 +591,7 @@ def normalize_model(raw_model: Any, elf_name: str = "") -> Dict[str, Any]:
             "textVAlign": _as_text_v_align(raw_shape.get("textVAlign")),
             "fontSize": max(8.0, min(40.0, _to_float(raw_shape.get("fontSize"), 12.0))),
             "fontFamily": _as_font_family(raw_shape.get("fontFamily")),
+            "noBackground": bool(raw_shape.get("noBackground", kind == "text_box")),
             "textOffsetUp": _as_text_inset(raw_shape.get("textOffsetUp"), 0.0),
             "textOffsetDown": _as_text_inset(raw_shape.get("textOffsetDown"), 0.0),
             "textOffsetLeft": _as_text_inset(raw_shape.get("textOffsetLeft"), 0.0),

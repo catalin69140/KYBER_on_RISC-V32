@@ -715,6 +715,7 @@
       shape.textVAlign = normalizeTextVAlign(shape.textVAlign || "center");
       shape.fontSize = normalizeFontSize(shape.fontSize, 12);
       shape.fontFamily = normalizeFontFamily(shape.fontFamily);
+      shape.noBackground = shape.kind === "text_box" ? shape.noBackground !== false : !!shape.noBackground;
       shape.textOffsetUp = normalizeTextInset(shape.textOffsetUp, 0);
       shape.textOffsetDown = normalizeTextInset(shape.textOffsetDown, 0);
       shape.textOffsetLeft = normalizeTextInset(shape.textOffsetLeft, 0);
@@ -1701,19 +1702,33 @@
     const maxPadX = Math.max(0, Math.floor((baseBox.width - 8) / 2));
     const maxPadY = Math.max(0, Math.floor((baseBox.height - 8) / 2));
     const effectivePad = Math.min(pad, maxPadX, maxPadY);
-    const padded = {
-      x: baseBox.x + effectivePad,
-      y: baseBox.y + effectivePad,
-      width: Math.max(8, baseBox.width - effectivePad * 2),
-      height: Math.max(8, baseBox.height - effectivePad * 2),
-    };
-    const shiftX = normalizeTextInset(spec.textOffsetRight, 0) - normalizeTextInset(spec.textOffsetLeft, 0);
-    const shiftY = normalizeTextInset(spec.textOffsetDown, 0) - normalizeTextInset(spec.textOffsetUp, 0);
+    let moveLeft = normalizeTextInset(spec.textOffsetLeft, 0);
+    let moveRight = normalizeTextInset(spec.textOffsetRight, 0);
+    let moveUp = normalizeTextInset(spec.textOffsetUp, 0);
+    let moveDown = normalizeTextInset(spec.textOffsetDown, 0);
+    const maxHorizontal = Math.max(0, baseBox.width - 8 - effectivePad * 2);
+    const maxVertical = Math.max(0, baseBox.height - 8 - effectivePad * 2);
+    const totalHorizontal = moveLeft + moveRight;
+    if (totalHorizontal > maxHorizontal && totalHorizontal > 0) {
+      const scale = maxHorizontal / totalHorizontal;
+      moveLeft *= scale;
+      moveRight *= scale;
+    }
+    const totalVertical = moveUp + moveDown;
+    if (totalVertical > maxVertical && totalVertical > 0) {
+      const scale = maxVertical / totalVertical;
+      moveUp *= scale;
+      moveDown *= scale;
+    }
+    const leftInset = effectivePad + moveRight;
+    const rightInset = effectivePad + moveLeft;
+    const topInset = effectivePad + moveDown;
+    const bottomInset = effectivePad + moveUp;
     return {
-      x: clamp(padded.x + shiftX, baseBox.x, baseBox.x + baseBox.width - padded.width),
-      y: clamp(padded.y + shiftY, baseBox.y, baseBox.y + baseBox.height - padded.height),
-      width: padded.width,
-      height: padded.height,
+      x: baseBox.x + leftInset,
+      y: baseBox.y + topInset,
+      width: Math.max(8, baseBox.width - leftInset - rightInset),
+      height: Math.max(8, baseBox.height - topInset - bottomInset),
     };
   }
 
@@ -2433,6 +2448,7 @@
   }
 
   function renderShapeVisual(group, shape, strokeColor, strokeWidth) {
+    const baseFill = shape.kind === "text_box" && shape.noBackground ? "none" : shape.fill;
     const borderStyle = normalizeBorderStyle(shape.borderStyle);
     const showOwnBorder = borderStyle !== "none";
     const highlightStroke = strokeColor !== shape.stroke;
@@ -2446,7 +2462,7 @@
     const minorSeparatorWidth = Math.max(1, strokeWidth * 0.56);
     const roundedRadius = shapeCornerRadius(shape);
     const commonStroke = {
-      fill: shape.fill,
+      fill: baseFill,
       stroke: outlineStyle === "none" ? "none" : strokeColor,
       "stroke-width": outlineStyle === "none" ? 0 : strokeWidth,
       "stroke-dasharray": dash,
@@ -2455,7 +2471,7 @@
 
     function appendShapeEl(tag, attrs, fillOverride) {
       const el = createSvg(tag, attrs);
-      el.setAttribute("fill", fillOverride !== undefined ? fillOverride : shape.fill);
+      el.setAttribute("fill", fillOverride !== undefined ? fillOverride : baseFill);
       el.setAttribute("stroke", outlineStyle === "none" ? "none" : strokeColor);
       el.setAttribute("stroke-width", String(outlineStyle === "none" ? 0 : strokeWidth));
       if (dash) el.setAttribute("stroke-dasharray", dash);
@@ -2751,11 +2767,11 @@
         ry: roundedRadius,
       });
       const centerX = shape.x + shape.width / 2;
-      const flapY = shape.y + shape.height * 0.5;
+      const flapY = shape.y + shape.height * 0.54;
       appendStrokeLine({ x1: shape.x, y1: shape.y, x2: centerX, y2: flapY }, minorSeparatorWidth);
       appendStrokeLine({ x1: shape.x + shape.width, y1: shape.y, x2: centerX, y2: flapY }, minorSeparatorWidth);
-      appendStrokeLine({ x1: shape.x, y1: shape.y + shape.height, x2: centerX, y2: flapY }, minorSeparatorWidth);
-      appendStrokeLine({ x1: shape.x + shape.width, y1: shape.y + shape.height, x2: centerX, y2: flapY }, minorSeparatorWidth);
+      appendStrokeLine({ x1: shape.x, y1: shape.y + shape.height, x2: shape.x + shape.width * 0.42, y2: flapY }, minorSeparatorWidth);
+      appendStrokeLine({ x1: shape.x + shape.width, y1: shape.y + shape.height, x2: shape.x + shape.width * 0.58, y2: flapY }, minorSeparatorWidth);
     } else if (kind === "cloud" || kind === "cloud_callout") {
       const x0 = shape.x;
       const y0 = shape.y;
@@ -4373,6 +4389,7 @@
       textVAlign: "center",
       fontSize: 12,
       fontFamily: DEFAULT_FONT_FAMILY,
+      noBackground: isTextBox,
       textOffsetUp: 0,
       textOffsetDown: 0,
       textOffsetLeft: 0,
@@ -5701,8 +5718,8 @@
   function textSpacingControlsHtml(prefix, spec) {
     const base = prefix || "ins-spacing";
     return [
-      "<h3>Spacing</h3>",
       '<div class="spacing-grid">',
+      '<div class="spacing-title">Spacing</div>',
       '<div class="spacing-control spacing-up"><input id="' + base + '-up" type="number" min="0" max="200" step="1" value="' + roundNum(normalizeTextInset(spec.textOffsetUp, 0)) + '"/><label for="' + base + '-up">UP</label></div>',
       '<div class="spacing-control spacing-padding"><input id="' + base + '-padding" type="number" min="0" max="200" step="1" value="' + roundNum(normalizeTextInset(spec.textPadding, 0)) + '"/><label for="' + base + '-padding">Padding</label></div>',
       '<div class="spacing-control spacing-left"><input id="' + base + '-left" type="number" min="0" max="200" step="1" value="' + roundNum(normalizeTextInset(spec.textOffsetLeft, 0)) + '"/><label for="' + base + '-left">Left</label></div>',
@@ -5715,6 +5732,11 @@
   function bindTextSpacingControls(prefix, entity) {
     const base = prefix || "ins-spacing";
     const bindField = (suffix, key) => {
+      bindNumber(base + "-" + suffix, "input", (num) => {
+        pushHistory();
+        entity[key] = normalizeTextInset(num, entity[key] || 0);
+        render();
+      });
       bindCommittedNumber(base + "-" + suffix, (num) => {
         pushHistory();
         entity[key] = normalizeTextInset(num, entity[key] || 0);
@@ -5798,10 +5820,12 @@
           '<div><label>Direction</label><select id="ins-group-direction"><option value="horizontal"' + (normalizeComponentDirection(shape.componentDirection) === "horizontal" ? " selected" : "") + '>horizontal</option><option value="vertical"' + (normalizeComponentDirection(shape.componentDirection) === "vertical" ? " selected" : "") + '>vertical</option></select></div>' +
           '<div><label>Components</label><input id="ins-group-count" type="number" min="1" max="24" step="1" value="' + Math.max(1, Math.min(24, Math.round(Number(shape.componentCount) || 4)) ) + '"/></div>'
         : "",
-      "<h3>Color</h3>",
+      (shape.kind === "text_box"
+        ? '<div class="section-heading-row"><h3>Color</h3><label class="inline-toggle"><input id="ins-shape-no-bg" type="checkbox"' + (shape.noBackground ? " checked" : "") + '> No background</label></div>'
+        : "<h3>Color</h3>"),
       '<div class="palette-block"><label>Fill palette</label><div class="palette" id="ins-shape-fill-palette"></div></div>',
       '<div class="palette-block spaced"><label>Border palette</label><div class="palette" id="ins-shape-stroke-palette"></div></div>',
-      '<div class="color-inline-row"><label for="ins-shape-fill">Fill:</label><input id="ins-shape-fill" type="color" value="' + normalizeColor(shape.fill, "#1c2f4f") + '"/><label for="ins-shape-stroke">Border:</label><input id="ins-shape-stroke" type="color" value="' + normalizeColor(shape.stroke, "#80b6ff") + '"/></div>',
+      '<div class="color-inline-row"><label for="ins-shape-fill">Fill:</label><input id="ins-shape-fill" type="color" value="' + normalizeColor(shape.fill, "#1c2f4f") + '"' + (shape.kind === "text_box" && shape.noBackground ? " disabled" : "") + '/><label for="ins-shape-stroke">Border:</label><input id="ins-shape-stroke" type="color" value="' + normalizeColor(shape.stroke, "#80b6ff") + '"/></div>',
       "<h3>Geometry</h3>",
       '<div class="grid2">' +
         '<div class="inline-field"><label for="ins-shape-x">x:</label><input id="ins-shape-x" type="number" step="1" value="' + roundNum(shape.x) + '"/></div>' +
@@ -5834,7 +5858,9 @@
           : "0 1px 0 rgba(0,0,0,0.22)";
         sw.title = entry.label + " fill";
         sw.textContent = entry.letter;
+        sw.disabled = shape.kind === "text_box" && shape.noBackground;
         sw.addEventListener("click", () => {
+          if (shape.kind === "text_box" && shape.noBackground) return;
           pushHistory();
           shape.fill = normalizeColor(entry.fill, shape.fill);
           render();
@@ -5998,6 +6024,7 @@
     bindTextSpacingControls("ins-spacing", shape);
 
     bindInput("ins-shape-fill", "input", (value) => {
+      if (shape.kind === "text_box" && shape.noBackground) return;
       pushHistory();
       shape.fill = normalizeColor(value, shape.fill);
       render();
@@ -6008,6 +6035,14 @@
       shape.stroke = normalizeColor(value, shape.stroke);
       render();
     });
+
+    if (shape.kind === "text_box") {
+      bindChecked("ins-shape-no-bg", (checked) => {
+        pushHistory();
+        shape.noBackground = checked;
+        render();
+      });
+    }
 
     bindInput("ins-shape-border-style", "change", (value) => {
       pushHistory();

@@ -2565,19 +2565,33 @@ def write_html_animation(
         const maxPadX = Math.max(0, Math.floor((baseBox.width - 8) / 2));
         const maxPadY = Math.max(0, Math.floor((baseBox.height - 8) / 2));
         const effectivePad = Math.min(pad, maxPadX, maxPadY);
-        const padded = {
-            x: baseBox.x + effectivePad,
-            y: baseBox.y + effectivePad,
-            width: Math.max(8, baseBox.width - effectivePad * 2),
-            height: Math.max(8, baseBox.height - effectivePad * 2)
-        };
-        const shiftX = refTextInset(spec.textOffsetRight, 0) - refTextInset(spec.textOffsetLeft, 0);
-        const shiftY = refTextInset(spec.textOffsetDown, 0) - refTextInset(spec.textOffsetUp, 0);
+        let moveLeft = refTextInset(spec.textOffsetLeft, 0);
+        let moveRight = refTextInset(spec.textOffsetRight, 0);
+        let moveUp = refTextInset(spec.textOffsetUp, 0);
+        let moveDown = refTextInset(spec.textOffsetDown, 0);
+        const maxHorizontal = Math.max(0, baseBox.width - 8 - effectivePad * 2);
+        const maxVertical = Math.max(0, baseBox.height - 8 - effectivePad * 2);
+        const totalHorizontal = moveLeft + moveRight;
+        if (totalHorizontal > maxHorizontal && totalHorizontal > 0) {
+            const scale = maxHorizontal / totalHorizontal;
+            moveLeft *= scale;
+            moveRight *= scale;
+        }
+        const totalVertical = moveUp + moveDown;
+        if (totalVertical > maxVertical && totalVertical > 0) {
+            const scale = maxVertical / totalVertical;
+            moveUp *= scale;
+            moveDown *= scale;
+        }
+        const leftInset = effectivePad + moveRight;
+        const rightInset = effectivePad + moveLeft;
+        const topInset = effectivePad + moveDown;
+        const bottomInset = effectivePad + moveUp;
         return {
-            x: refClamp(padded.x + shiftX, baseBox.x, baseBox.x + baseBox.width - padded.width),
-            y: refClamp(padded.y + shiftY, baseBox.y, baseBox.y + baseBox.height - padded.height),
-            width: padded.width,
-            height: padded.height
+            x: baseBox.x + leftInset,
+            y: baseBox.y + topInset,
+            width: Math.max(8, baseBox.width - leftInset - rightInset),
+            height: Math.max(8, baseBox.height - topInset - bottomInset)
         };
     }
 
@@ -2899,7 +2913,9 @@ def write_html_animation(
             "data-node-id": spec.id
         });
         const isContainer = (shapeKind === "container" || shapeKind === "header_container" || shapeKind === "component_group");
+        const noBackground = shapeKind === "text_box" ? spec.noBackground !== false : !!spec.noBackground;
         const fill = spec.fill || (isContainer ? "#0d172a" : "#1c2f4f");
+        const baseFill = noBackground ? "none" : fill;
         const stroke = spec.stroke || (isContainer ? "#eef3ff" : "#80b6ff");
         const borderWidth = Math.max(0.5, Math.min(12, Number(spec.borderWidth) || (isContainer ? 1.8 : 1.5)));
         const separatorWidth = Math.max(1, borderWidth * 0.62);
@@ -2912,7 +2928,7 @@ def write_html_animation(
 
         function appendShapeEl(tag, attrs, fillOverride) {
             const el = createSvgEl(tag, attrs);
-            el.setAttribute("fill", fillOverride !== undefined ? fillOverride : fill);
+            el.setAttribute("fill", fillOverride !== undefined ? fillOverride : baseFill);
             el.setAttribute("stroke", showBorder ? stroke : "none");
             el.setAttribute("stroke-width", String(showBorder ? borderWidth : 0));
             if (dash) el.setAttribute("stroke-dasharray", dash);
@@ -3124,11 +3140,11 @@ def write_html_animation(
                 rx: rounded, ry: rounded
             });
             const centerX = spec.x + spec.w / 2;
-            const flapY = spec.y + spec.h * 0.5;
+            const flapY = spec.y + spec.h * 0.54;
             appendStrokeLine({ x1: spec.x, y1: spec.y, x2: centerX, y2: flapY }, minorSeparatorWidth);
             appendStrokeLine({ x1: spec.x + spec.w, y1: spec.y, x2: centerX, y2: flapY }, minorSeparatorWidth);
-            appendStrokeLine({ x1: spec.x, y1: spec.y + spec.h, x2: centerX, y2: flapY }, minorSeparatorWidth);
-            appendStrokeLine({ x1: spec.x + spec.w, y1: spec.y + spec.h, x2: centerX, y2: flapY }, minorSeparatorWidth);
+            appendStrokeLine({ x1: spec.x, y1: spec.y + spec.h, x2: spec.x + spec.w * 0.42, y2: flapY }, minorSeparatorWidth);
+            appendStrokeLine({ x1: spec.x + spec.w, y1: spec.y + spec.h, x2: spec.x + spec.w * 0.58, y2: flapY }, minorSeparatorWidth);
         } else if (shapeKind === "cloud" || shapeKind === "cloud_callout") {
             appendPathShape([
                 `M ${spec.x + spec.w * 0.2} ${spec.y + spec.h * 0.68}`,
