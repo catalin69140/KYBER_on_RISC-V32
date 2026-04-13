@@ -2506,6 +2506,22 @@
       return line;
     }
 
+    if (kind === "text_box" && shape.noBackground) {
+      const hitRect = createSvg("rect", {
+        x: shape.x,
+        y: shape.y,
+        width: shape.width,
+        height: shape.height,
+        rx: roundedRadius,
+        ry: roundedRadius,
+        fill: "#ffffff",
+        "fill-opacity": 0.001,
+        stroke: "none",
+        "pointer-events": "all",
+      });
+      group.appendChild(hitRect);
+    }
+
     if (kind === "triangle" || kind === "diamond" || kind === "parallelogram" || kind === "trapezoid" || kind === "pentagon" || kind === "hexagon" || kind === "octagon" || kind === "message" || kind === "card" || kind === "note") {
       const points = polygonVerticesForShape(shape);
       appendPolygonShape(points);
@@ -5732,15 +5748,50 @@
   function bindTextSpacingControls(prefix, entity) {
     const base = prefix || "ins-spacing";
     const bindField = (suffix, key) => {
-      bindNumber(base + "-" + suffix, "input", (num) => {
-        pushHistory();
+      const inputId = base + "-" + suffix;
+      const el = document.getElementById(inputId);
+      if (!el) return;
+      let pushed = false;
+      const apply = (num) => {
         entity[key] = normalizeTextInset(num, entity[key] || 0);
-        render();
+        render(true);
+      };
+      const commit = () => {
+        const value = String(el.value || "").trim();
+        if (!value) {
+          pushed = false;
+          return;
+        }
+        const num = Number(value);
+        if (!Number.isFinite(num)) return;
+        if (!pushed) {
+          pushHistory();
+          pushed = true;
+        }
+        apply(num);
+        pushed = false;
+      };
+      el.addEventListener("focus", () => {
+        pushed = false;
       });
-      bindCommittedNumber(base + "-" + suffix, (num) => {
-        pushHistory();
-        entity[key] = normalizeTextInset(num, entity[key] || 0);
-        render();
+      el.addEventListener("input", () => {
+        const value = String(el.value || "").trim();
+        if (!value) return;
+        const num = Number(value);
+        if (!Number.isFinite(num)) return;
+        if (!pushed) {
+          pushHistory();
+          pushed = true;
+        }
+        apply(num);
+      });
+      el.addEventListener("change", commit);
+      el.addEventListener("keydown", (evt) => {
+        if (evt.key === "Enter") {
+          evt.preventDefault();
+          commit();
+          el.blur();
+        }
       });
     };
     bindField("up", "textOffsetUp");
