@@ -4517,6 +4517,8 @@
       key === "ArrowRight" ||
       key === "ArrowUp" ||
       key === "ArrowDown" ||
+      key === "Backspace" ||
+      key === "Delete" ||
       key === "Home" ||
       key === "End" ||
       key === "PageUp" ||
@@ -5458,7 +5460,7 @@
       if (formatKey === "subscript" && nextState.subscript) nextState.superscript = false;
       if (formatKey === "superscript" && nextState.superscript) nextState.subscript = false;
       setPendingRichTextFormat(target.key, nextState, true);
-      updateRichTextToolbarState();
+      applyToolbarFormatState(nextState);
       return;
     }
 
@@ -5473,7 +5475,7 @@
     if (formatKey === "subscript" && nextState.subscript) nextState.superscript = false;
     if (formatKey === "superscript" && nextState.superscript) nextState.subscript = false;
     setPendingRichTextFormat(target.key, nextState, true);
-    updateRichTextToolbarState();
+    applyToolbarFormatState(nextState);
   }
 
   function executeOverlineCommand(target) {
@@ -5498,7 +5500,7 @@
       const nextState = cloneTextFormatState(currentState);
       nextState.overline = !currentState.overline;
       setPendingRichTextFormat(target.key, nextState, true);
-      updateRichTextToolbarState();
+      applyToolbarFormatState(nextState);
       return;
     }
 
@@ -5510,7 +5512,7 @@
     const nextState = cloneTextFormatState(currentState);
     nextState.overline = !currentState.overline;
     setPendingRichTextFormat(target.key, nextState, true);
-    updateRichTextToolbarState();
+    applyToolbarFormatState(nextState);
   }
 
   function applyInlineStyleCommand(target, styles, blockWhenAll) {
@@ -5550,6 +5552,16 @@
     el.classList.toggle("active", !!active);
   }
 
+  function applyToolbarFormatState(formatState) {
+    const next = normalizeTextFormatState(formatState);
+    setButtonActive("fmt-bold", next.bold);
+    setButtonActive("fmt-italic", next.italic);
+    setButtonActive("fmt-underline", next.underline);
+    setButtonActive("fmt-overline", next.overline);
+    setButtonActive("fmt-subscript", next.subscript);
+    setButtonActive("fmt-superscript", next.superscript);
+  }
+
   function updateRichTextToolbarState() {
     const editor = getRichTextEditorEl();
     if (!editor) return;
@@ -5568,12 +5580,7 @@
         formatState = pending || emptyTextFormatState();
       }
     }
-    setButtonActive("fmt-bold", formatState.bold);
-    setButtonActive("fmt-italic", formatState.italic);
-    setButtonActive("fmt-underline", formatState.underline);
-    setButtonActive("fmt-overline", formatState.overline);
-    setButtonActive("fmt-subscript", formatState.subscript);
-    setButtonActive("fmt-superscript", formatState.superscript);
+    applyToolbarFormatState(formatState);
   }
 
   function renderShapeInspector(shapeId) {
