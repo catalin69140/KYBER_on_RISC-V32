@@ -43,6 +43,7 @@ DEFAULT_CONTAINER_STROKE = "#eef3ff"
 
 DEFAULT_ARROW_STROKE = "#e8efff"
 DEFAULT_ARROW_WIDTH = 1.7
+MAX_GROUP_CELLS = 576
 
 ID_BAD_CHARS = re.compile(r"[^a-zA-Z0-9_]+")
 ID_MULTI_UNDERSCORE = re.compile(r"_+")
@@ -363,14 +364,14 @@ def _normalize_component_labels(value: Any, count: int) -> List[str]:
     out: List[str] = []
     if isinstance(value, list):
         out = [str(v or "").strip() for v in value]
-    safe_count = max(1, min(24, int(count)))
+    safe_count = max(1, min(MAX_GROUP_CELLS, int(count)))
     while len(out) < safe_count:
         out.append(f"Item {len(out) + 1}")
     return out[:safe_count]
 
 
 def _normalize_fraction_list(value: Any, count: int) -> List[float]:
-    safe_count = max(1, min(24, int(count)))
+    safe_count = max(1, min(MAX_GROUP_CELLS, int(count)))
     if safe_count == 1:
         return [1.0]
     source = value if isinstance(value, list) else []
@@ -420,7 +421,7 @@ def _normalize_group_components(
     font_family: str,
     fallback_labels: Any = None,
 ) -> List[Dict[str, Any]]:
-    safe_count = max(1, min(24, int(count)))
+    safe_count = max(1, min(MAX_GROUP_CELLS, int(count)))
     defaults = [
         _default_group_component(idx, fill, text_color, font_size, font_family)
         for idx in range(safe_count)

@@ -73,6 +73,9 @@
   const ZOOM_VISIBLE_WIDTH_AT_100 = 1280;
   const DEFAULT_ANCHOR_STOPS = Array.from({ length: 11 }, (_, idx) => idx / 10);
   const MAX_SHAPE_TEXT_LENGTH = 500;
+  const MAX_GROUP_CELLS = 576;
+  const TABLE_MIN_CELL_WIDTH = 72;
+  const TABLE_MIN_CELL_HEIGHT = 48;
   const HANDLE_SIZE = 8;
   const MIN_SHAPE_SIZE = 24;
   const HISTORY_LIMIT = 120;
@@ -522,7 +525,7 @@
 
   function normalizeComponentLabels(rawLabels, count) {
     const out = [];
-    const safeCount = Math.max(1, Math.min(24, Number(count) || 1));
+    const safeCount = Math.max(1, Math.min(MAX_GROUP_CELLS, Number(count) || 1));
     if (Array.isArray(rawLabels)) {
       rawLabels.forEach((txt) => out.push(String(txt || "").trim()));
     }
@@ -533,7 +536,7 @@
   }
 
   function normalizeSegmentFractions(rawFractions, count) {
-    const safeCount = Math.max(1, Math.min(24, Math.round(Number(count) || 1)));
+    const safeCount = Math.max(1, Math.min(MAX_GROUP_CELLS, Math.round(Number(count) || 1)));
     if (safeCount === 1) return [1];
     const source = Array.isArray(rawFractions) ? rawFractions : [];
     const out = [];
@@ -568,7 +571,7 @@
   }
 
   function normalizeGroupComponents(rawComponents, count, groupShape, fallbackLabels) {
-    const safeCount = Math.max(1, Math.min(24, Number(count) || 1));
+    const safeCount = Math.max(1, Math.min(MAX_GROUP_CELLS, Number(count) || 1));
     const labels = normalizeComponentLabels(fallbackLabels, safeCount);
     const source = Array.isArray(rawComponents) ? rawComponents : [];
     const out = [];
@@ -1884,6 +1887,83 @@
       br: touchesBodyRight && touchesBodyBottom && bodyAtOuterRight && bodyAtOuterBottom ? radius : 0,
       bl: touchesBodyLeft && touchesBodyBottom && bodyAtOuterLeft && bodyAtOuterBottom ? radius : 0,
     };
+  }
+
+  function ensureTableMinimumCellSize(shape) {
+    if (!shape || shape.kind !== "table_group") return;
+    const rows = Math.max(1, Math.min(24, Math.round(Number(shape.tableRows) || 2)));
+    const cols = Math.max(1, Math.min(24, Math.round(Number(shape.tableCols) || 2)));
+    const layout = groupFormLayout(shape);
+    let widthDelta = 0;
+    let heightDelta = 0;
+    const minBodyWidth = cols * TABLE_MIN_CELL_WIDTH;
+    const minBodyHeight = rows * TABLE_MIN_CELL_HEIGHT;
+    if (layout.bodyWidth < minBodyWidth) {
+      widthDelta = minBodyWidth - layout.bodyWidth;
+    }
+    if (layout.bodyHeight < minBodyHeight) {
+      heightDelta = minBodyHeight - layout.bodyHeight;
+    }
+    if (widthDelta > 0) {
+      shape.width = snapToStep(shape.width + widthDelta, GRID_MINOR_STEP);
+    }
+    if (heightDelta > 0) {
+      shape.height = snapToStep(shape.height + heightDelta, GRID_MINOR_STEP);
+    }
+  }
+
+  function insertTableRow(shape, rowIndex, insertAfter) {
+    if (!shape || shape.kind !== "table_group") return null;
+    const rows = Math.max(1, Math.min(24, Math.round(Number(shape.tableRows) || 2)));
+    const cols = Math.max(1, Math.min(24, Math.round(Number(shape.tableCols) || 2)));
+    if (rows >= 24) return null;
+    const safeRow = clamp(Math.round(Number(rowIndex) || 0), 0, rows - 1);
+    const insertAt = safeRow + (insertAfter ? 1 : 0);
+    const current = normalizeGroupComponents(shape.components, rows * cols, shape);
+    const next = [];
+    for (let row = 0; row < rows + 1; row += 1) {
+      if (row === insertAt) {
+        for (let col = 0; col < cols; col += 1) {
+          next.push(defaultGroupComponent(next.length, shape));
+        }
+        continue;
+      }
+      const sourceRow = row > insertAt ? row - 1 : row;
+      for (let col = 0; col < cols; col += 1) {
+        next.push(deepClone(current[sourceRow * cols + col] || defaultGroupComponent(next.length, shape)));
+      }
+    }
+    shape.tableRows = rows + 1;
+    shape.rowFractions = normalizeSegmentFractions([], shape.tableRows);
+    shape.components = next;
+    ensureTableMinimumCellSize(shape);
+    return insertAt * cols + clamp(0, 0, cols - 1);
+  }
+
+  function insertTableColumn(shape, colIndex, insertAfter) {
+    if (!shape || shape.kind !== "table_group") return null;
+    const rows = Math.max(1, Math.min(24, Math.round(Number(shape.tableRows) || 2)));
+    const cols = Math.max(1, Math.min(24, Math.round(Number(shape.tableCols) || 2)));
+    if (cols >= 24) return null;
+    const safeCol = clamp(Math.round(Number(colIndex) || 0), 0, cols - 1);
+    const insertAt = safeCol + (insertAfter ? 1 : 0);
+    const current = normalizeGroupComponents(shape.components, rows * cols, shape);
+    const next = [];
+    for (let row = 0; row < rows; row += 1) {
+      for (let col = 0; col < cols + 1; col += 1) {
+        if (col === insertAt) {
+          next.push(defaultGroupComponent(next.length, shape));
+          continue;
+        }
+        const sourceCol = col > insertAt ? col - 1 : col;
+        next.push(deepClone(current[row * cols + sourceCol] || defaultGroupComponent(next.length, shape)));
+      }
+    }
+    shape.tableCols = cols + 1;
+    shape.colFractions = normalizeSegmentFractions([], shape.tableCols);
+    shape.components = next;
+    ensureTableMinimumCellSize(shape);
+    return clamp(0, 0, rows - 1) * shape.tableCols + insertAt;
   }
 
   function componentBoxTextBox(box) {
@@ -6346,8 +6426,8 @@
           ? '<h3>Group Layout</h3>' +
             '<div><label>Main header</label><select id="ins-group-header-side"><option value="top"' + (normalizeGroupHeaderSide(shape.groupHeaderSide) === "top" ? " selected" : "") + '>top</option><option value="right"' + (normalizeGroupHeaderSide(shape.groupHeaderSide) === "right" ? " selected" : "") + '>right</option><option value="bottom"' + (normalizeGroupHeaderSide(shape.groupHeaderSide) === "bottom" ? " selected" : "") + '>bottom</option><option value="left"' + (normalizeGroupHeaderSide(shape.groupHeaderSide) === "left" ? " selected" : "") + '>left</option><option value="none"' + (normalizeGroupHeaderSide(shape.groupHeaderSide) === "none" ? " selected" : "") + '>none</option></select></div>' +
             '<div class="grid2">' +
-              '<div class="inline-field"><label for="ins-group-rows">Vertical cells:</label><input id="ins-group-rows" type="number" min="1" max="24" step="1" value="' + Math.max(1, Math.min(24, Math.round(Number(shape.tableRows) || 2))) + '"/></div>' +
-              '<div class="inline-field"><label for="ins-group-cols">Horizontal cells:</label><input id="ins-group-cols" type="number" min="1" max="24" step="1" value="' + Math.max(1, Math.min(24, Math.round(Number(shape.tableCols) || 2))) + '"/></div>' +
+              '<div class="inline-field"><label for="ins-group-cols">Vertical cells:</label><input id="ins-group-cols" type="number" min="1" max="24" step="1" value="' + Math.max(1, Math.min(24, Math.round(Number(shape.tableCols) || 2))) + '"/></div>' +
+              '<div class="inline-field"><label for="ins-group-rows">Horizontal cells:</label><input id="ins-group-rows" type="number" min="1" max="24" step="1" value="' + Math.max(1, Math.min(24, Math.round(Number(shape.tableRows) || 2))) + '"/></div>' +
             '</div>'
           : ""),
       (shape.kind === "text_box"
@@ -6609,15 +6689,19 @@
       bindNumber("ins-group-rows", "change", (num) => {
         pushHistory();
         shape.tableRows = Math.max(1, Math.min(24, Math.round(num || 1)));
-        shape.rowFractions = normalizeSegmentFractions(shape.rowFractions, shape.tableRows);
+        shape.rowFractions = normalizeSegmentFractions([], shape.tableRows);
         shape.components = normalizeGroupComponents(shape.components, shape.tableRows * shape.tableCols, shape);
+        ensureTableMinimumCellSize(shape);
+        syncCanvasRectToContent();
         render();
       });
       bindNumber("ins-group-cols", "change", (num) => {
         pushHistory();
         shape.tableCols = Math.max(1, Math.min(24, Math.round(num || 1)));
-        shape.colFractions = normalizeSegmentFractions(shape.colFractions, shape.tableCols);
+        shape.colFractions = normalizeSegmentFractions([], shape.tableCols);
         shape.components = normalizeGroupComponents(shape.components, shape.tableRows * shape.tableCols, shape);
+        ensureTableMinimumCellSize(shape);
+        syncCanvasRectToContent();
         render();
       });
     }
@@ -6735,6 +6819,7 @@
     const layout = groupFormLayout(shape);
     shape.components = normalizeGroupComponents(shape.components, layout.components.length, shape);
     const safeIndex = Math.max(0, Math.min(shape.components.length - 1, Number(componentIndex) || 0));
+    const selectedBox = layout.components[safeIndex];
     const currentComponent = () => getGroupComponentAt(shape, safeIndex);
     const component = currentComponent();
     if (!component) {
@@ -6778,6 +6863,12 @@
         '<input id="ins-shape-font-size" class="font-size-input" type="number" min="8" max="1000" step="0.5" title="Font size" value="' + roundNum(component.fontSize || 12) + '"/>' +
       "</div>",
       textSpacingControlsHtml("ins-spacing", component),
+      (shape.kind === "table_group"
+        ? '<div><label>Structure</label>' +
+          '<div class="row"><button id="ins-row-before" type="button">Row before</button><button id="ins-row-after" type="button">Row after</button></div>' +
+          '<div class="row"><button id="ins-col-before" type="button">Column before</button><button id="ins-col-after" type="button">Column after</button></div>' +
+          '</div>'
+        : ""),
       '<div class="section-heading-row"><h3>Color</h3><label class="inline-toggle"><input id="ins-comp-fill-override" type="checkbox"' + (component.fillOverride ? " checked" : "") + '> Override</label></div>',
       '<div class="palette-block section-offset"><label>Fill palette</label><div class="palette" id="ins-comp-fill-palette"></div></div>',
       '<div class="color-inline-row"><label for="ins-comp-fill">Fill:</label><input id="ins-comp-fill" type="color" value="' + normalizeColor(fillValue, "#0d172a") + '"' + (component.fillOverride ? "" : " disabled") + '/></div>',
@@ -6968,6 +7059,42 @@
       nextComponent.fill = normalizeColor(value, nextComponent.fill || fillValue);
       render();
     });
+
+    if (shape.kind === "table_group" && selectedBox) {
+      const bindInsert = (id, handler) => {
+        const btn = document.getElementById(id);
+        if (!btn) return;
+        btn.addEventListener("click", handler);
+      };
+      bindInsert("ins-row-before", () => {
+        pushHistory();
+        const insertRow = clamp(selectedBox.row, 0, shape.tableRows - 1);
+        insertTableRow(shape, selectedBox.row, false);
+        syncCanvasRectToContent();
+        setSelected({ type: "group_component", shapeId: shape.id, componentIndex: insertRow * shape.tableCols + selectedBox.col });
+      });
+      bindInsert("ins-row-after", () => {
+        pushHistory();
+        const insertRow = clamp(selectedBox.row + 1, 0, shape.tableRows);
+        insertTableRow(shape, selectedBox.row, true);
+        syncCanvasRectToContent();
+        setSelected({ type: "group_component", shapeId: shape.id, componentIndex: insertRow * shape.tableCols + selectedBox.col });
+      });
+      bindInsert("ins-col-before", () => {
+        pushHistory();
+        const insertCol = clamp(selectedBox.col, 0, shape.tableCols - 1);
+        insertTableColumn(shape, selectedBox.col, false);
+        syncCanvasRectToContent();
+        setSelected({ type: "group_component", shapeId: shape.id, componentIndex: selectedBox.row * shape.tableCols + insertCol });
+      });
+      bindInsert("ins-col-after", () => {
+        pushHistory();
+        const insertCol = clamp(selectedBox.col + 1, 0, shape.tableCols);
+        insertTableColumn(shape, selectedBox.col, true);
+        syncCanvasRectToContent();
+        setSelected({ type: "group_component", shapeId: shape.id, componentIndex: selectedBox.row * shape.tableCols + insertCol });
+      });
+    }
   }
 
   function setControlPoint(arrow, index, axis, value) {

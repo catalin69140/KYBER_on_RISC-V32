@@ -2532,7 +2532,7 @@ def write_html_animation(
     }
 
     function refNormalizeFractionList(value, count) {
-        const safeCount = Math.max(1, Math.min(24, Number(count) || 1));
+        const safeCount = Math.max(1, Math.min(576, Number(count) || 1));
         if (safeCount === 1) return [1];
         const source = Array.isArray(value) ? value : [];
         const out = [];
@@ -2908,7 +2908,7 @@ def write_html_animation(
     }
 
     function normalizeRefGroupComponents(rawComponents, count, spec) {
-        const safeCount = Math.max(1, Math.min(24, Number(count) || 1));
+        const safeCount = Math.max(1, Math.min(576, Number(count) || 1));
         const source = Array.isArray(rawComponents) ? rawComponents : [];
         const out = [];
         for (let idx = 0; idx < safeCount; idx += 1) {
