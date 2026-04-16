@@ -170,57 +170,57 @@ def _default_shape_text(kind: str) -> str:
 
 def _default_shape_size(kind: str) -> Tuple[float, float]:
     if kind == "square":
-        return 48.0, 50.0
+        return 50.0, 50.0
     if kind == "cube":
-        return 78.0, 66.0
+        return 80.0, 70.0
     if kind == "rectangle":
         return 100.0, 50.0
     if kind == "cuboid":
-        return 110.0, 72.0
+        return 110.0, 70.0
     if kind == "triangle":
         return 90.0, 60.0
     if kind == "cone":
-        return 88.0, 92.0
+        return 90.0, 90.0
     if kind == "diamond":
-        return 96.0, 64.0
+        return 100.0, 60.0
     if kind == "parallelogram":
-        return 104.0, 58.0
+        return 100.0, 60.0
     if kind == "trapezoid":
-        return 104.0, 60.0
+        return 100.0, 60.0
     if kind == "pentagon":
-        return 94.0, 76.0
+        return 90.0, 80.0
     if kind == "hexagon":
-        return 108.0, 66.0
+        return 110.0, 70.0
     if kind == "octagon":
-        return 108.0, 70.0
+        return 110.0, 70.0
     if kind == "circle":
         return 60.0, 60.0
     if kind == "oval":
         return 100.0, 90.0
     if kind == "cylinder":
-        return 108.0, 84.0
+        return 110.0, 80.0
     if kind == "hexagonal_prism":
-        return 116.0, 78.0
+        return 120.0, 80.0
     if kind == "and":
-        return 96.0, 62.0
+        return 100.0, 60.0
     if kind == "or":
-        return 102.0, 62.0
+        return 100.0, 60.0
     if kind == "message":
-        return 112.0, 66.0
+        return 110.0, 70.0
     if kind == "mail":
-        return 110.0, 72.0
+        return 110.0, 70.0
     if kind == "actor":
-        return 86.0, 116.0
+        return 90.0, 120.0
     if kind == "cloud":
-        return 124.0, 76.0
+        return 120.0, 80.0
     if kind == "cloud_callout":
-        return 132.0, 88.0
+        return 130.0, 90.0
     if kind == "card":
-        return 82.0, 102.0
+        return 80.0, 100.0
     if kind == "note":
-        return 86.0, 108.0
+        return 90.0, 110.0
     if kind == "text_box":
-        return 120.0, 64.0
+        return 120.0, 60.0
     if kind in VALID_CONTAINER_KINDS:
         return 240.0, 200.0
     if kind == "component_group":

@@ -2571,25 +2571,37 @@ def write_html_animation(
         const maxPadX = Math.max(0, Math.floor((outer.width - 8) / 2));
         const maxPadY = Math.max(0, Math.floor((outer.height - 8) / 2));
         const effectivePad = Math.min(pad, maxPadX, maxPadY);
-        const paddedFrame = {
-            x: outer.x + effectivePad,
-            y: outer.y + effectivePad,
-            width: Math.max(8, outer.width - effectivePad * 2),
-            height: Math.max(8, outer.height - effectivePad * 2)
-        };
-        const boxWidth = Math.max(8, Math.min(baseBox.width, paddedFrame.width));
-        const boxHeight = Math.max(8, Math.min(baseBox.height, paddedFrame.height));
-        const shiftX = refTextInset(spec.textOffsetRight, 0) - refTextInset(spec.textOffsetLeft, 0);
-        const shiftY = refTextInset(spec.textOffsetDown, 0) - refTextInset(spec.textOffsetUp, 0);
-        const minX = paddedFrame.x;
-        const maxX = paddedFrame.x + paddedFrame.width - boxWidth;
-        const minY = paddedFrame.y;
-        const maxY = paddedFrame.y + paddedFrame.height - boxHeight;
+        const baseLeft = refClamp(baseBox.x - outer.x, 0, Math.max(0, outer.width - 8));
+        const baseTop = refClamp(baseBox.y - outer.y, 0, Math.max(0, outer.height - 8));
+        const baseRight = refClamp((outer.x + outer.width) - (baseBox.x + baseBox.width), 0, Math.max(0, outer.width - 8));
+        const baseBottom = refClamp((outer.y + outer.height) - (baseBox.y + baseBox.height), 0, Math.max(0, outer.height - 8));
+        let leftInset = Math.max(effectivePad, baseLeft + refTextInset(spec.textOffsetRight, 0) - refTextInset(spec.textOffsetLeft, 0));
+        let rightInset = Math.max(effectivePad, baseRight + refTextInset(spec.textOffsetLeft, 0) - refTextInset(spec.textOffsetRight, 0));
+        let topInset = Math.max(effectivePad, baseTop + refTextInset(spec.textOffsetDown, 0) - refTextInset(spec.textOffsetUp, 0));
+        let bottomInset = Math.max(effectivePad, baseBottom + refTextInset(spec.textOffsetUp, 0) - refTextInset(spec.textOffsetDown, 0));
+        const maxExtraW = Math.max(0, outer.width - 8 - effectivePad * 2);
+        const extraLeft = Math.max(0, leftInset - effectivePad);
+        const extraRight = Math.max(0, rightInset - effectivePad);
+        const extraW = extraLeft + extraRight;
+        if (extraW > maxExtraW && extraW > 0) {
+            const scale = maxExtraW / extraW;
+            leftInset = effectivePad + extraLeft * scale;
+            rightInset = effectivePad + extraRight * scale;
+        }
+        const maxExtraH = Math.max(0, outer.height - 8 - effectivePad * 2);
+        const extraTop = Math.max(0, topInset - effectivePad);
+        const extraBottom = Math.max(0, bottomInset - effectivePad);
+        const extraH = extraTop + extraBottom;
+        if (extraH > maxExtraH && extraH > 0) {
+            const scale = maxExtraH / extraH;
+            topInset = effectivePad + extraTop * scale;
+            bottomInset = effectivePad + extraBottom * scale;
+        }
         return {
-            x: refClamp(baseBox.x + shiftX, minX, maxX),
-            y: refClamp(baseBox.y + shiftY, minY, maxY),
-            width: boxWidth,
-            height: boxHeight
+            x: outer.x + leftInset,
+            y: outer.y + topInset,
+            width: Math.max(8, outer.width - leftInset - rightInset),
+            height: Math.max(8, outer.height - topInset - bottomInset)
         };
     }
 
@@ -2711,8 +2723,6 @@ def write_html_animation(
     }
 
     function refRenderRichTextBlockInBox(g, spec, box) {
-        const shiftX = refTextInset(spec.textOffsetRight, 0) - refTextInset(spec.textOffsetLeft, 0);
-        const shiftY = refTextInset(spec.textOffsetDown, 0) - refTextInset(spec.textOffsetUp, 0);
         const foreign = createSvgEl("foreignObject", {
             x: box.x,
             y: box.y,
@@ -2739,12 +2749,7 @@ def write_html_animation(
             "word-break:break-word"
         ].join(";"));
         const inner = document.createElementNS("http://www.w3.org/1999/xhtml", "div");
-        inner.setAttribute("style", [
-            "width:100%",
-            "max-height:100%",
-            "overflow:hidden",
-            `transform:translate(${shiftX}px,${shiftY}px)`
-        ].join(";"));
+        inner.setAttribute("style", "width:100%;max-height:100%;overflow:hidden");
         inner.innerHTML = String(spec.richText || refPlainTextToRichHtml(spec.label || spec.id || ""));
         wrapper.appendChild(inner);
         foreign.appendChild(wrapper);
@@ -3095,6 +3100,12 @@ def write_html_animation(
             ].forEach(([x1, y1, x2, y2]) => {
                 appendStrokeLine({ x1, y1, x2, y2 }, minorSeparatorWidth);
             });
+            appendFacePolygon([
+                { x: backRect.x, y: backRect.y + backRect.height },
+                { x: backRect.x + backRect.width, y: backRect.y + backRect.height },
+                { x: frontRect.x + frontRect.width, y: frontRect.y + frontRect.height },
+                { x: frontRect.x, y: frontRect.y + frontRect.height }
+            ], refDarkenHex(fill, -14));
             appendStrokeLine({
                 x1: spec.x,
                 y1: spec.y + spec.h - offY,

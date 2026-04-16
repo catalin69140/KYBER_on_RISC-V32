@@ -31,32 +31,32 @@
   ];
   const FONT_FAMILY_VALUES = new Set(FONT_FAMILY_OPTIONS.map((option) => option.value));
   const DEFAULT_SHAPE_SIZES = {
-    square: { width: 48, height: 50 },
-    cube: { width: 78, height: 66 },
+    square: { width: 50, height: 50 },
+    cube: { width: 80, height: 70 },
     rectangle: { width: 100, height: 50 },
-    cuboid: { width: 110, height: 72 },
+    cuboid: { width: 110, height: 70 },
     triangle: { width: 90, height: 60 },
-    cone: { width: 88, height: 92 },
-    diamond: { width: 96, height: 64 },
-    parallelogram: { width: 104, height: 58 },
-    trapezoid: { width: 104, height: 60 },
-    pentagon: { width: 94, height: 76 },
-    hexagon: { width: 108, height: 66 },
-    octagon: { width: 108, height: 70 },
+    cone: { width: 90, height: 90 },
+    diamond: { width: 100, height: 60 },
+    parallelogram: { width: 100, height: 60 },
+    trapezoid: { width: 100, height: 60 },
+    pentagon: { width: 90, height: 80 },
+    hexagon: { width: 110, height: 70 },
+    octagon: { width: 110, height: 70 },
     circle: { width: 60, height: 60 },
     oval: { width: 100, height: 90 },
-    cylinder: { width: 108, height: 84 },
-    hexagonal_prism: { width: 116, height: 78 },
-    and: { width: 96, height: 62 },
-    or: { width: 102, height: 62 },
-    message: { width: 112, height: 66 },
-    mail: { width: 110, height: 72 },
-    actor: { width: 86, height: 116 },
-    cloud: { width: 124, height: 76 },
-    cloud_callout: { width: 132, height: 88 },
-    card: { width: 82, height: 102 },
-    note: { width: 86, height: 108 },
-    text_box: { width: 120, height: 64 },
+    cylinder: { width: 110, height: 80 },
+    hexagonal_prism: { width: 120, height: 80 },
+    and: { width: 100, height: 60 },
+    or: { width: 100, height: 60 },
+    message: { width: 110, height: 70 },
+    mail: { width: 110, height: 70 },
+    actor: { width: 90, height: 120 },
+    cloud: { width: 120, height: 80 },
+    cloud_callout: { width: 130, height: 90 },
+    card: { width: 80, height: 100 },
+    note: { width: 90, height: 110 },
+    text_box: { width: 120, height: 60 },
     container: { width: 240, height: 200 },
     header_container: { width: 240, height: 200 },
     component_group: { width: 200, height: 70 },
@@ -1087,7 +1087,7 @@
     bundle.forEach((oldShape) => {
       const copied = deepClone(oldShape);
       copied.id = idMap[oldShape.id];
-      copied.idManual = true;
+      copied.idManual = false;
       copied.x = Number(copied.x || 0) + offset;
       copied.y = Number(copied.y || 0) + offset;
       copied.parentId = copied.parentId && idMap[copied.parentId] ? idMap[copied.parentId] : null;
@@ -1095,8 +1095,17 @@
       state.model.shapes.push(copied);
     });
 
+    bundle.forEach((oldShape) => {
+      const copied = shapeById(idMap[oldShape.id]);
+      if (!copied) return;
+      updateAutoId(copied, copied.parentId);
+    });
+
     state.clipboard.pasteCount += 1;
-    const pastedRootIds = normalizeSelectionIds((state.clipboard.rootIds || []).map((id) => idMap[id]));
+    const pastedRootIds = normalizeSelectionIds((state.clipboard.rootIds || []).map((id) => {
+      const copied = shapeById(idMap[id]);
+      return copied ? copied.id : null;
+    }));
     if (pastedRootIds.length) {
       setShapeSelection(pastedRootIds, pastedRootIds[pastedRootIds.length - 1], true);
     }
@@ -1708,29 +1717,37 @@
     const maxPadX = Math.max(0, Math.floor((outer.width - 8) / 2));
     const maxPadY = Math.max(0, Math.floor((outer.height - 8) / 2));
     const effectivePad = Math.min(pad, maxPadX, maxPadY);
-    let moveLeft = normalizeTextInset(spec.textOffsetLeft, 0);
-    let moveRight = normalizeTextInset(spec.textOffsetRight, 0);
-    let moveUp = normalizeTextInset(spec.textOffsetUp, 0);
-    let moveDown = normalizeTextInset(spec.textOffsetDown, 0);
-    const paddedFrame = {
-      x: outer.x + effectivePad,
-      y: outer.y + effectivePad,
-      width: Math.max(8, outer.width - effectivePad * 2),
-      height: Math.max(8, outer.height - effectivePad * 2),
-    };
-    const boxWidth = Math.max(8, Math.min(baseBox.width, paddedFrame.width));
-    const boxHeight = Math.max(8, Math.min(baseBox.height, paddedFrame.height));
-    const shiftX = moveRight - moveLeft;
-    const shiftY = moveDown - moveUp;
-    const minX = paddedFrame.x;
-    const maxX = paddedFrame.x + paddedFrame.width - boxWidth;
-    const minY = paddedFrame.y;
-    const maxY = paddedFrame.y + paddedFrame.height - boxHeight;
+    const baseLeft = clamp(baseBox.x - outer.x, 0, Math.max(0, outer.width - 8));
+    const baseTop = clamp(baseBox.y - outer.y, 0, Math.max(0, outer.height - 8));
+    const baseRight = clamp((outer.x + outer.width) - (baseBox.x + baseBox.width), 0, Math.max(0, outer.width - 8));
+    const baseBottom = clamp((outer.y + outer.height) - (baseBox.y + baseBox.height), 0, Math.max(0, outer.height - 8));
+    let leftInset = Math.max(effectivePad, baseLeft + normalizeTextInset(spec.textOffsetRight, 0) - normalizeTextInset(spec.textOffsetLeft, 0));
+    let rightInset = Math.max(effectivePad, baseRight + normalizeTextInset(spec.textOffsetLeft, 0) - normalizeTextInset(spec.textOffsetRight, 0));
+    let topInset = Math.max(effectivePad, baseTop + normalizeTextInset(spec.textOffsetDown, 0) - normalizeTextInset(spec.textOffsetUp, 0));
+    let bottomInset = Math.max(effectivePad, baseBottom + normalizeTextInset(spec.textOffsetUp, 0) - normalizeTextInset(spec.textOffsetDown, 0));
+    const maxExtraW = Math.max(0, outer.width - 8 - effectivePad * 2);
+    const extraLeft = Math.max(0, leftInset - effectivePad);
+    const extraRight = Math.max(0, rightInset - effectivePad);
+    const extraW = extraLeft + extraRight;
+    if (extraW > maxExtraW && extraW > 0) {
+      const scale = maxExtraW / extraW;
+      leftInset = effectivePad + extraLeft * scale;
+      rightInset = effectivePad + extraRight * scale;
+    }
+    const maxExtraH = Math.max(0, outer.height - 8 - effectivePad * 2);
+    const extraTop = Math.max(0, topInset - effectivePad);
+    const extraBottom = Math.max(0, bottomInset - effectivePad);
+    const extraH = extraTop + extraBottom;
+    if (extraH > maxExtraH && extraH > 0) {
+      const scale = maxExtraH / extraH;
+      topInset = effectivePad + extraTop * scale;
+      bottomInset = effectivePad + extraBottom * scale;
+    }
     return {
-      x: clamp(baseBox.x + shiftX, minX, maxX),
-      y: clamp(baseBox.y + shiftY, minY, maxY),
-      width: boxWidth,
-      height: boxHeight,
+      x: outer.x + leftInset,
+      y: outer.y + topInset,
+      width: Math.max(8, outer.width - leftInset - rightInset),
+      height: Math.max(8, outer.height - topInset - bottomInset),
     };
   }
 
@@ -2391,8 +2408,6 @@
 
   function renderRichTextBlockSpec(group, spec, box) {
     const html = sanitizeRichHtml(spec.richText, spec.text);
-    const shiftX = normalizeTextInset(spec.textOffsetRight, 0) - normalizeTextInset(spec.textOffsetLeft, 0);
-    const shiftY = normalizeTextInset(spec.textOffsetDown, 0) - normalizeTextInset(spec.textOffsetUp, 0);
     const foreign = createSvg("foreignObject", {
       x: box.x,
       y: box.y,
@@ -2420,12 +2435,7 @@
       ].join(";"),
     });
     const inner = createHtml("div", {
-      style: [
-        "width:100%",
-        "max-height:100%",
-        "overflow:hidden",
-        "transform:translate(" + shiftX + "px," + shiftY + "px)",
-      ].join(";"),
+      style: "width:100%;max-height:100%;overflow:hidden",
     });
     inner.innerHTML = html;
     wrapper.appendChild(inner);
@@ -2705,6 +2715,12 @@
         x2: shape.x + shape.width,
         y2: shape.y + shape.height,
       }, minorSeparatorWidth);
+      appendFacePolygon([
+        { x: backRect.x, y: backRect.y + backRect.height },
+        { x: backRect.x + backRect.width, y: backRect.y + backRect.height },
+        { x: frontRect.x + frontRect.width, y: frontRect.y + frontRect.height },
+        { x: frontRect.x, y: frontRect.y + frontRect.height },
+      ], darken(shape.fill, -14));
       appendStrokeLine({
         x1: shape.x,
         y1: shape.y + shape.height - offY,
@@ -2862,18 +2878,14 @@
       const layout = componentGroupLayout(shape);
       const components = normalizeGroupComponents(shape.components, shape.componentCount, shape);
       shape.components = components;
-      group.appendChild(createSvg("rect", {
+      group.appendChild(createSvg("rect", Object.assign({
         x: shape.x,
         y: shape.y,
         width: shape.width,
         height: shape.height,
-        fill: shape.fill,
-        stroke: strokeColor,
-        "stroke-width": strokeWidth,
-        "stroke-dasharray": dash,
         rx: roundedRadius,
         ry: roundedRadius,
-      }));
+      }, commonStroke)));
       group.appendChild(createSvg("rect", {
         x: shape.x + 1,
         y: shape.y + 1,
