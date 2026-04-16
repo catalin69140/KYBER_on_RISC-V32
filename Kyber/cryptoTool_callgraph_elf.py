@@ -2641,6 +2641,27 @@ def write_html_animation(
         };
     }
 
+    function refGroupCellCornerRadii(spec, layout, box) {
+        const radius = spec.rounded ? Math.max(0, refShapeCornerRadius(spec, spec.kind) - 1) : 0;
+        if (!radius || !layout || !box) {
+            return { tl: 0, tr: 0, br: 0, bl: 0 };
+        }
+        const touchesBodyLeft = Math.abs(box.x - layout.bodyX) < 0.5;
+        const touchesBodyRight = Math.abs((box.x + box.w) - (layout.bodyX + layout.bodyWidth)) < 0.5;
+        const touchesBodyTop = Math.abs(box.y - layout.bodyY) < 0.5;
+        const touchesBodyBottom = Math.abs((box.y + box.h) - (layout.bodyY + layout.bodyHeight)) < 0.5;
+        const bodyAtOuterLeft = layout.bodyX <= spec.x + 1.5;
+        const bodyAtOuterRight = (layout.bodyX + layout.bodyWidth) >= (spec.x + spec.w - 1.5);
+        const bodyAtOuterTop = layout.bodyY <= spec.y + 1.5;
+        const bodyAtOuterBottom = (layout.bodyY + layout.bodyHeight) >= (spec.y + spec.h - 1.5);
+        return {
+            tl: touchesBodyLeft && touchesBodyTop && bodyAtOuterLeft && bodyAtOuterTop ? radius : 0,
+            tr: touchesBodyRight && touchesBodyTop && bodyAtOuterRight && bodyAtOuterTop ? radius : 0,
+            br: touchesBodyRight && touchesBodyBottom && bodyAtOuterRight && bodyAtOuterBottom ? radius : 0,
+            bl: touchesBodyLeft && touchesBodyBottom && bodyAtOuterLeft && bodyAtOuterBottom ? radius : 0
+        };
+    }
+
     function refComponentBoxTextBox(box) {
         return refInsetTextBox(
             { x: box.x, y: box.y, w: box.w, h: box.h },
@@ -3343,14 +3364,23 @@ def write_html_animation(
             layout.components.forEach((box, idx) => {
                 const component = components[idx];
                 const effectiveFill = refEffectiveGroupComponentFill(spec, component);
-                g.appendChild(createSvgEl("rect", {
-                    x: box.x,
-                    y: box.y,
-                    width: box.w,
-                    height: box.h,
-                    fill: effectiveFill,
-                    stroke: "none"
-                }));
+                const cornerRadii = refGroupCellCornerRadii(spec, layout, box);
+                if (cornerRadii.tl || cornerRadii.tr || cornerRadii.br || cornerRadii.bl) {
+                    g.appendChild(createSvgEl("path", {
+                        d: refRoundedRectPathSelective(box.x, box.y, box.w, box.h, cornerRadii),
+                        fill: effectiveFill,
+                        stroke: "none"
+                    }));
+                } else {
+                    g.appendChild(createSvgEl("rect", {
+                        x: box.x,
+                        y: box.y,
+                        width: box.w,
+                        height: box.h,
+                        fill: effectiveFill,
+                        stroke: "none"
+                    }));
+                }
                 refRenderRichTextBlockInBox(g, {
                     label: component.text,
                     richText: component.richText,
@@ -3428,23 +3458,10 @@ def write_html_animation(
             layout.components.forEach((box, idx) => {
                 const component = components[idx];
                 const effectiveFill = refEffectiveGroupComponentFill(spec, component);
-                const innerRadius = Math.max(0, rounded - 1);
-                const isFirst = idx === 0;
-                const isLast = idx === layout.components.length - 1;
-                const bottomLeftRadius = layout.direction === "horizontal"
-                    ? (isFirst ? innerRadius : 0)
-                    : (isLast ? innerRadius : 0);
-                const bottomRightRadius = layout.direction === "horizontal"
-                    ? (isLast ? innerRadius : 0)
-                    : (isLast ? innerRadius : 0);
-                if (bottomLeftRadius || bottomRightRadius) {
+                const cornerRadii = refGroupCellCornerRadii(spec, layout, box);
+                if (cornerRadii.tl || cornerRadii.tr || cornerRadii.br || cornerRadii.bl) {
                     const componentShape = createSvgEl("path", {
-                        d: refRoundedRectPathSelective(box.x, box.y, box.w, box.h, {
-                            tl: 0,
-                            tr: 0,
-                            br: bottomRightRadius,
-                            bl: bottomLeftRadius
-                        }),
+                        d: refRoundedRectPathSelective(box.x, box.y, box.w, box.h, cornerRadii),
                         fill: effectiveFill,
                         stroke: "none"
                     });

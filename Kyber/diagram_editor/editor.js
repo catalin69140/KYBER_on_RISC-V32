@@ -1107,8 +1107,38 @@
     setStatus("Copied " + bundle.length + " shape(s).", "ok");
   }
 
+  function copySelectedGroupComponent() {
+    const selected = currentSelectedGroupComponent();
+    if (!selected) {
+      setStatus("Select a group cell to copy.", "error");
+      return;
+    }
+    state.clipboard = {
+      type: "groupComponent",
+      component: deepClone(selected.component),
+    };
+    setStatus("Copied cell " + (selected.componentIndex + 1) + ".", "ok");
+  }
+
   function pasteClipboard() {
-    if (!state.clipboard || state.clipboard.type !== "shapeBundle") {
+    if (!state.clipboard) {
+      setStatus("Clipboard is empty.", "error");
+      return;
+    }
+    if (state.clipboard.type === "groupComponent") {
+      const selected = currentSelectedGroupComponent();
+      if (!selected) {
+        setStatus("Select a target group cell to paste into.", "error");
+        return;
+      }
+      pushHistory();
+      Object.keys(selected.component).forEach((key) => delete selected.component[key]);
+      Object.assign(selected.component, deepClone(state.clipboard.component || {}));
+      render();
+      setStatus("Pasted cell into " + selected.shape.text + ".", "ok");
+      return;
+    }
+    if (state.clipboard.type !== "shapeBundle") {
       setStatus("Clipboard is empty.", "error");
       return;
     }
@@ -1833,6 +1863,27 @@
 
   function componentGroupLayout(shape) {
     return groupFormLayout(shape);
+  }
+
+  function groupCellCornerRadii(shape, layout, box) {
+    const radius = shape.rounded ? Math.max(0, shapeCornerRadius(shape) - 1) : 0;
+    if (!radius || !layout || !box) {
+      return { tl: 0, tr: 0, br: 0, bl: 0 };
+    }
+    const touchesBodyLeft = Math.abs(box.x - layout.bodyX) < 0.5;
+    const touchesBodyRight = Math.abs((box.x + box.width) - (layout.bodyX + layout.bodyWidth)) < 0.5;
+    const touchesBodyTop = Math.abs(box.y - layout.bodyY) < 0.5;
+    const touchesBodyBottom = Math.abs((box.y + box.height) - (layout.bodyY + layout.bodyHeight)) < 0.5;
+    const bodyAtOuterLeft = layout.bodyX <= shape.x + 1.5;
+    const bodyAtOuterRight = (layout.bodyX + layout.bodyWidth) >= (shape.x + shape.width - 1.5);
+    const bodyAtOuterTop = layout.bodyY <= shape.y + 1.5;
+    const bodyAtOuterBottom = (layout.bodyY + layout.bodyHeight) >= (shape.y + shape.height - 1.5);
+    return {
+      tl: touchesBodyLeft && touchesBodyTop && bodyAtOuterLeft && bodyAtOuterTop ? radius : 0,
+      tr: touchesBodyRight && touchesBodyTop && bodyAtOuterRight && bodyAtOuterTop ? radius : 0,
+      br: touchesBodyRight && touchesBodyBottom && bodyAtOuterRight && bodyAtOuterBottom ? radius : 0,
+      bl: touchesBodyLeft && touchesBodyBottom && bodyAtOuterLeft && bodyAtOuterBottom ? radius : 0,
+    };
   }
 
   function componentBoxTextBox(box) {
@@ -3087,15 +3138,25 @@
       layout.components.forEach((box, idx) => {
         const component = components[idx] || defaultGroupComponent(idx, shape);
         const effectiveFill = effectiveGroupComponentFill(shape, component);
-        group.appendChild(createSvg("rect", {
-          x: box.x,
-          y: box.y,
-          width: box.width,
-          height: box.height,
-          fill: effectiveFill,
-          stroke: "none",
-          "data-group-component-index": idx,
-        }));
+        const cornerRadii = groupCellCornerRadii(shape, layout, box);
+        if (cornerRadii.tl || cornerRadii.tr || cornerRadii.br || cornerRadii.bl) {
+          group.appendChild(createSvg("path", {
+            d: roundedRectPathSelective(box.x, box.y, box.width, box.height, cornerRadii),
+            fill: effectiveFill,
+            stroke: "none",
+            "data-group-component-index": idx,
+          }));
+        } else {
+          group.appendChild(createSvg("rect", {
+            x: box.x,
+            y: box.y,
+            width: box.width,
+            height: box.height,
+            fill: effectiveFill,
+            stroke: "none",
+            "data-group-component-index": idx,
+          }));
+        }
         renderRichTextBlockSpec(group, component, applyTextBoxAdjustments(componentBoxTextBox(box), component, {
           x: box.x,
           y: box.y,
@@ -3153,24 +3214,11 @@
       layout.components.forEach((box, idx) => {
         const component = components[idx] || defaultGroupComponent(idx, shape);
         const effectiveFill = effectiveGroupComponentFill(shape, component);
-        const innerRadius = Math.max(0, roundedRadius - 1);
-        const isFirst = idx === 0;
-        const isLast = idx === layout.components.length - 1;
-        const bottomLeftRadius = layout.direction === "horizontal"
-          ? (isFirst ? innerRadius : 0)
-          : (isLast ? innerRadius : 0);
-        const bottomRightRadius = layout.direction === "horizontal"
-          ? (isLast ? innerRadius : 0)
-          : (isLast ? innerRadius : 0);
+        const cornerRadii = groupCellCornerRadii(shape, layout, box);
         let bodyEl;
-        if (bottomLeftRadius || bottomRightRadius) {
+        if (cornerRadii.tl || cornerRadii.tr || cornerRadii.br || cornerRadii.bl) {
           bodyEl = createSvg("path", {
-            d: roundedRectPathSelective(box.x, box.y, box.width, box.height, {
-              tl: 0,
-              tr: 0,
-              br: bottomRightRadius,
-              bl: bottomLeftRadius,
-            }),
+            d: roundedRectPathSelective(box.x, box.y, box.width, box.height, cornerRadii),
             fill: effectiveFill,
             stroke: "none",
             "data-group-component-index": idx,
@@ -3990,35 +4038,16 @@
         "stroke-dasharray": "8 5",
         "pointer-events": "none",
       };
-      if (shape.kind === "component_group") {
-        const roundedRadius = shape.rounded ? Math.max(0, shapeCornerRadius(shape) - 1) : 0;
-        const isFirst = selectedComponent.componentIndex === 0;
-        const isLast = selectedComponent.componentIndex === layout.components.length - 1;
-        const bottomLeftRadius = layout.direction === "horizontal"
-          ? (isFirst ? roundedRadius : 0)
-          : (isLast ? roundedRadius : 0);
-        const bottomRightRadius = layout.direction === "horizontal"
-          ? (isLast ? roundedRadius : 0)
-          : (isLast ? roundedRadius : 0);
-        if (bottomLeftRadius || bottomRightRadius) {
-          overlayLayer.appendChild(createSvg("path", Object.assign({
-            d: roundedRectPathSelective(box.x - 2, box.y - 2, box.width + 4, box.height + 4, {
-              tl: 0,
-              tr: 0,
-              br: bottomRightRadius,
-              bl: bottomLeftRadius,
-            }),
-          }, attrs)));
-        } else {
-          overlayLayer.appendChild(createSvg("rect", Object.assign({
-            x: box.x - 2,
-            y: box.y - 2,
-            width: box.width + 4,
-            height: box.height + 4,
-            rx: 4,
-            ry: 4,
-          }, attrs)));
-        }
+      const cornerRadii = groupCellCornerRadii(shape, layout, box);
+      if (cornerRadii.tl || cornerRadii.tr || cornerRadii.br || cornerRadii.bl) {
+        overlayLayer.appendChild(createSvg("path", Object.assign({
+          d: roundedRectPathSelective(box.x - 2, box.y - 2, box.width + 4, box.height + 4, {
+            tl: cornerRadii.tl ? cornerRadii.tl + 2 : 0,
+            tr: cornerRadii.tr ? cornerRadii.tr + 2 : 0,
+            br: cornerRadii.br ? cornerRadii.br + 2 : 0,
+            bl: cornerRadii.bl ? cornerRadii.bl + 2 : 0,
+          }),
+        }, attrs)));
       } else {
         overlayLayer.appendChild(createSvg("rect", Object.assign({
           x: box.x - 2,
@@ -6719,15 +6748,6 @@
       .map((option) => '<option value="' + escapeHtml(option.value) + '"' + (selectedFontFamily === option.value ? " selected" : "") + '>' + escapeHtml(option.label) + '</option>')
       .join("");
     const fillValue = effectiveGroupComponentFill(shape, component);
-    const copyTargetOptions = layout.components
-      .filter((box) => box.index !== safeIndex)
-      .map((box) => {
-        const label = shape.kind === "table_group"
-          ? ("Cell " + (box.row + 1) + "," + (box.col + 1))
-          : ("Cell " + (box.index + 1));
-        return '<option value="' + box.index + '">' + escapeHtml(label) + '</option>';
-      })
-      .join("");
 
     state.richTextSelection = null;
     clearPendingRichTextFormat();
@@ -6758,9 +6778,6 @@
         '<input id="ins-shape-font-size" class="font-size-input" type="number" min="8" max="1000" step="0.5" title="Font size" value="' + roundNum(component.fontSize || 12) + '"/>' +
       "</div>",
       textSpacingControlsHtml("ins-spacing", component),
-      copyTargetOptions
-        ? '<div><label>Copy to cell</label><div class="row"><select id="ins-group-copy-target">' + copyTargetOptions + '</select><button id="ins-group-copy-btn" type="button">Copy</button></div></div>'
-        : "",
       '<div class="section-heading-row"><h3>Color</h3><label class="inline-toggle"><input id="ins-comp-fill-override" type="checkbox"' + (component.fillOverride ? " checked" : "") + '> Override</label></div>',
       '<div class="palette-block section-offset"><label>Fill palette</label><div class="palette" id="ins-comp-fill-palette"></div></div>',
       '<div class="color-inline-row"><label for="ins-comp-fill">Fill:</label><input id="ins-comp-fill" type="color" value="' + normalizeColor(fillValue, "#0d172a") + '"' + (component.fillOverride ? "" : " disabled") + '/></div>',
@@ -6951,22 +6968,6 @@
       nextComponent.fill = normalizeColor(value, nextComponent.fill || fillValue);
       render();
     });
-
-    const copyBtn = document.getElementById("ins-group-copy-btn");
-    const copyTarget = document.getElementById("ins-group-copy-target");
-    if (copyBtn && copyTarget) {
-      copyBtn.addEventListener("click", () => {
-        const destIndex = Math.max(0, Math.min(shape.components.length - 1, Math.round(Number(copyTarget.value) || 0)));
-        if (destIndex === safeIndex) return;
-        const sourceComponent = currentComponent();
-        const destComponent = getGroupComponentAt(shape, destIndex);
-        if (!sourceComponent || !destComponent) return;
-        pushHistory();
-        Object.keys(destComponent).forEach((key) => delete destComponent[key]);
-        Object.assign(destComponent, deepClone(sourceComponent));
-        render();
-      });
-    }
   }
 
   function setControlPoint(arrow, index, axis, value) {
@@ -7381,7 +7382,11 @@
       if ((evt.ctrlKey || evt.metaKey) && evt.key.toLowerCase() === "c") {
         if (inInput) return;
         evt.preventDefault();
-        copySelectedShapeBundle();
+        if (state.selected && state.selected.type === "group_component") {
+          copySelectedGroupComponent();
+        } else {
+          copySelectedShapeBundle();
+        }
         return;
       }
 
