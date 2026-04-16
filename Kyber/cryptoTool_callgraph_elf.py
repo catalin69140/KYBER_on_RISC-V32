@@ -2448,6 +2448,7 @@ def write_html_animation(
             kind === "text_box" ||
             kind === "container" ||
             kind === "header_container" ||
+            kind === "table_group" ||
             kind === "component_group" ||
             kind === "triangle" ||
             kind === "diamond" ||
@@ -2524,31 +2525,120 @@ def write_html_animation(
         return Math.max(18, Math.min(36, Math.round(spec.h * 0.22)));
     }
 
+    function refNormalizeGroupHeaderSide(value) {
+        const side = String(value || "").toLowerCase().trim();
+        if (side === "top" || side === "right" || side === "bottom" || side === "left" || side === "none") return side;
+        return "top";
+    }
+
+    function refNormalizeFractionList(value, count) {
+        const safeCount = Math.max(1, Math.min(24, Number(count) || 1));
+        if (safeCount === 1) return [1];
+        const source = Array.isArray(value) ? value : [];
+        const out = [];
+        for (let idx = 0; idx < safeCount; idx += 1) {
+            const raw = Number(source[idx]);
+            out.push(Number.isFinite(raw) && raw > 0 ? raw : 1);
+        }
+        const total = out.reduce((sum, num) => sum + num, 0);
+        if (!(total > 0)) return new Array(safeCount).fill(1 / safeCount);
+        return out.map((num) => num / total);
+    }
+
+    function refGroupHeaderRect(spec) {
+        if (String(spec.kind || "") !== "table_group") {
+            return { side: "top", thickness: refComponentGroupHeaderHeight(spec), x: spec.x, y: spec.y, width: spec.w, height: refComponentGroupHeaderHeight(spec) };
+        }
+        const side = refNormalizeGroupHeaderSide(spec.groupHeaderSide);
+        if (side === "none") return null;
+        const axisSize = (side === "left" || side === "right") ? spec.w : spec.h;
+        const thickness = Math.max(18, Math.min(36, Math.round(axisSize * 0.22)));
+        if (side === "bottom") return { side, thickness, x: spec.x, y: spec.y + spec.h - thickness, width: spec.w, height: thickness };
+        if (side === "left") return { side, thickness, x: spec.x, y: spec.y, width: thickness, height: spec.h };
+        if (side === "right") return { side, thickness, x: spec.x + spec.w - thickness, y: spec.y, width: thickness, height: spec.h };
+        return { side, thickness, x: spec.x, y: spec.y, width: spec.w, height: thickness };
+    }
+
+    function refGroupBodyRect(spec) {
+        const header = refGroupHeaderRect(spec);
+        const body = {
+            x: spec.x + 1,
+            y: spec.y + 1,
+            width: Math.max(1, spec.w - 2),
+            height: Math.max(1, spec.h - 2)
+        };
+        if (!header) return body;
+        if (header.side === "top") {
+            body.y += header.height;
+            body.height = Math.max(1, body.height - header.height);
+        } else if (header.side === "bottom") {
+            body.height = Math.max(1, body.height - header.height);
+        } else if (header.side === "left") {
+            body.x += header.width;
+            body.width = Math.max(1, body.width - header.width);
+        } else if (header.side === "right") {
+            body.width = Math.max(1, body.width - header.width);
+        }
+        return body;
+    }
+
+    function refSegmentBoxes(start, total, fractions) {
+        const out = [];
+        let cursor = start;
+        let running = 0;
+        fractions.forEach((fraction, index) => {
+            running += fraction;
+            const next = index === fractions.length - 1 ? (start + total) : (start + total * running);
+            out.push({ index, start: cursor, size: Math.max(1, next - cursor) });
+            cursor = next;
+        });
+        return out;
+    }
+
     function refComponentGroupLayout(spec) {
         const count = Math.max(1, Math.min(24, Number(spec.componentCount) || 4));
         const direction = String(spec.componentDirection || "horizontal").toLowerCase() === "vertical" ? "vertical" : "horizontal";
-        const headerH = refComponentGroupHeaderHeight(spec);
-        const bodyX = spec.x + 1;
-        const bodyY = spec.y + headerH + 1;
-        const bodyWidth = Math.max(1, spec.w - 2);
-        const bodyHeight = Math.max(1, spec.h - headerH - 2);
+        const body = refGroupBodyRect(spec);
+        const fractions = refNormalizeFractionList(spec.componentFractions, count);
         const components = [];
         if (direction === "horizontal") {
-            const cellWidth = bodyWidth / count;
-            for (let idx = 0; idx < count; idx += 1) {
-                const x0 = bodyX + idx * cellWidth;
-                const x1 = idx === count - 1 ? (bodyX + bodyWidth) : (x0 + cellWidth);
-                components.push({ index: idx, x: x0, y: bodyY, w: Math.max(1, x1 - x0), h: bodyHeight });
-            }
+            refSegmentBoxes(body.x, body.width, fractions).forEach((box, idx) => {
+                components.push({ index: idx, x: box.start, y: body.y, w: box.size, h: body.height });
+            });
         } else {
-            const cellHeight = bodyHeight / count;
-            for (let idx = 0; idx < count; idx += 1) {
-                const y0 = bodyY + idx * cellHeight;
-                const y1 = idx === count - 1 ? (bodyY + bodyHeight) : (y0 + cellHeight);
-                components.push({ index: idx, x: bodyX, y: y0, w: bodyWidth, h: Math.max(1, y1 - y0) });
-            }
+            refSegmentBoxes(body.y, body.height, fractions).forEach((box, idx) => {
+                components.push({ index: idx, x: body.x, y: box.start, w: body.width, h: box.size });
+            });
         }
-        return { headerH, bodyX, bodyY, bodyWidth, bodyHeight, direction, components };
+        return { headerRect: refGroupHeaderRect(spec), headerH: refComponentGroupHeaderHeight(spec), bodyX: body.x, bodyY: body.y, bodyWidth: body.width, bodyHeight: body.height, direction, componentFractions: fractions, components };
+    }
+
+    function refTableGroupLayout(spec) {
+        const rows = Math.max(1, Math.min(24, Number(spec.tableRows) || 2));
+        const cols = Math.max(1, Math.min(24, Number(spec.tableCols) || 2));
+        const body = refGroupBodyRect(spec);
+        const rowFractions = refNormalizeFractionList(spec.rowFractions, rows);
+        const colFractions = refNormalizeFractionList(spec.colFractions, cols);
+        const rowBoxes = refSegmentBoxes(body.y, body.height, rowFractions);
+        const colBoxes = refSegmentBoxes(body.x, body.width, colFractions);
+        const components = [];
+        rowBoxes.forEach((row, rowIndex) => {
+            colBoxes.forEach((col, colIndex) => {
+                components.push({ index: rowIndex * cols + colIndex, row: rowIndex, col: colIndex, x: col.start, y: row.start, w: col.size, h: row.size });
+            });
+        });
+        return {
+            headerRect: refGroupHeaderRect(spec),
+            bodyX: body.x,
+            bodyY: body.y,
+            bodyWidth: body.width,
+            bodyHeight: body.height,
+            rows,
+            cols,
+            rowBoxes,
+            colBoxes,
+            components
+        };
     }
 
     function refComponentBoxTextBox(box) {
@@ -2686,8 +2776,16 @@ def write_html_animation(
             return refApplyTextBoxAdjustments({ x: spec.x + 8, y: spec.y + 2, width: Math.max(24, spec.w - 16), height: Math.max(14, headerH - 4) }, spec, { x: spec.x, y: spec.y, width: spec.w, height: headerH });
         }
         if (kind === "component_group") {
-            const titleHeight = refComponentGroupHeaderHeight(spec);
+            const headerRect = refGroupHeaderRect(spec);
+            const titleHeight = headerRect ? headerRect.height : refComponentGroupHeaderHeight(spec);
             return refApplyTextBoxAdjustments({ x: spec.x + 8, y: spec.y + 2, width: Math.max(24, spec.w - 16), height: Math.max(14, titleHeight - 4) }, spec, { x: spec.x, y: spec.y, width: spec.w, height: titleHeight });
+        }
+        if (kind === "table_group") {
+            const headerRect = refGroupHeaderRect(spec);
+            if (!headerRect) {
+                return { x: spec.x, y: spec.y, width: 0, height: 0 };
+            }
+            return refApplyTextBoxAdjustments({ x: headerRect.x + 8, y: headerRect.y + 2, width: Math.max(24, headerRect.width - 16), height: Math.max(14, headerRect.height - 4) }, spec, { x: headerRect.x, y: headerRect.y, width: headerRect.width, height: headerRect.height });
         }
         if (kind === "circle" || kind === "oval") {
             return refApplyTextBoxAdjustments(refInsetTextBox(spec, { left: 0.18, right: 0.18, top: 0.14, bottom: 0.14, minX: 7, maxX: 24, minY: 6, maxY: 18 }, { width: 20, height: 20 }), spec, { x: spec.x, y: spec.y, width: spec.w, height: spec.h });
@@ -2922,7 +3020,7 @@ def write_html_animation(
             class: `ref-node generated-ref-node kind-${shapeKind}`,
             "data-node-id": spec.id
         });
-        const isContainer = (shapeKind === "container" || shapeKind === "header_container" || shapeKind === "component_group");
+        const isContainer = (shapeKind === "container" || shapeKind === "header_container" || shapeKind === "table_group" || shapeKind === "component_group");
         const noBackground = shapeKind === "text_box" ? spec.noBackground !== false : !!spec.noBackground;
         const fill = spec.fill || (isContainer ? "#0d172a" : "#1c2f4f");
         const baseFill = noBackground ? "none" : fill;
@@ -3207,6 +3305,89 @@ def write_html_animation(
                 if (dash) sep.setAttribute("stroke-dasharray", dash);
                 g.appendChild(sep);
             }
+        } else if (shapeKind === "table_group") {
+            const layout = refTableGroupLayout(spec);
+            const components = normalizeRefGroupComponents(spec.components || spec.componentLabels, layout.rows * layout.cols, spec);
+            const headerRect = layout.headerRect;
+
+            appendShapeEl("rect", {
+                x: spec.x,
+                y: spec.y,
+                width: spec.w,
+                height: spec.h,
+                rx: rounded,
+                ry: rounded
+            });
+            if (headerRect) {
+                g.appendChild(createSvgEl("rect", {
+                    x: headerRect.x + 1,
+                    y: headerRect.y + 1,
+                    width: Math.max(1, headerRect.width - 2),
+                    height: Math.max(1, headerRect.height - 2),
+                    fill: refDarkenHex(fill, -14),
+                    stroke: "none",
+                    rx: Math.max(0, rounded - 1),
+                    ry: Math.max(0, rounded - 1)
+                }));
+                if (headerRect.side === "top") {
+                    appendStrokeLine({ x1: spec.x, y1: headerRect.y + headerRect.height, x2: spec.x + spec.w, y2: headerRect.y + headerRect.height }, separatorWidth);
+                } else if (headerRect.side === "bottom") {
+                    appendStrokeLine({ x1: spec.x, y1: headerRect.y, x2: spec.x + spec.w, y2: headerRect.y }, separatorWidth);
+                } else if (headerRect.side === "left") {
+                    appendStrokeLine({ x1: headerRect.x + headerRect.width, y1: spec.y, x2: headerRect.x + headerRect.width, y2: spec.y + spec.h }, separatorWidth);
+                } else if (headerRect.side === "right") {
+                    appendStrokeLine({ x1: headerRect.x, y1: spec.y, x2: headerRect.x, y2: spec.y + spec.h }, separatorWidth);
+                }
+            }
+
+            layout.components.forEach((box, idx) => {
+                const component = components[idx];
+                const effectiveFill = refEffectiveGroupComponentFill(spec, component);
+                g.appendChild(createSvgEl("rect", {
+                    x: box.x,
+                    y: box.y,
+                    width: box.w,
+                    height: box.h,
+                    fill: effectiveFill,
+                    stroke: "none"
+                }));
+                refRenderRichTextBlockInBox(g, {
+                    label: component.text,
+                    richText: component.richText,
+                    textColor: component.textColor,
+                    textAlign: component.textAlign,
+                    textVAlign: component.textVAlign,
+                    fontSize: component.fontSize,
+                    fontFamily: component.fontFamily,
+                    textOffsetUp: component.textOffsetUp,
+                    textOffsetDown: component.textOffsetDown,
+                    textOffsetLeft: component.textOffsetLeft,
+                    textOffsetRight: component.textOffsetRight,
+                    textPadding: component.textPadding
+                }, refApplyTextBoxAdjustments(refComponentBoxTextBox(box), component, {
+                    x: box.x,
+                    y: box.y,
+                    width: box.w,
+                    height: box.h
+                }));
+            });
+
+            layout.colBoxes.slice(1).forEach((box) => {
+                appendStrokeLine({
+                    x1: box.start,
+                    y1: layout.bodyY,
+                    x2: box.start,
+                    y2: layout.bodyY + layout.bodyHeight
+                }, minorSeparatorWidth);
+            });
+            layout.rowBoxes.slice(1).forEach((box) => {
+                appendStrokeLine({
+                    x1: layout.bodyX,
+                    y1: box.start,
+                    x2: layout.bodyX + layout.bodyWidth,
+                    y2: box.start
+                }, minorSeparatorWidth);
+            });
         } else if (shapeKind === "component_group") {
             const headerH = refComponentGroupHeaderHeight(spec);
             const layout = refComponentGroupLayout(spec);

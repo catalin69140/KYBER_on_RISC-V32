@@ -4,7 +4,7 @@ import copy
 import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-MODEL_VERSION = 3
+MODEL_VERSION = 4
 DEFAULT_VIEWBOX = {"x": 0.0, "y": 0.0, "width": 1000.0, "height": 1000.0}
 DEFAULT_BACKGROUND = "#0b1220"
 DEFAULT_ANCHOR_STOPS = [i / 10 for i in range(11)]
@@ -76,6 +76,7 @@ VALID_SHAPE_KINDS = {
     "text_box",
     "container",
     "header_container",
+    "table_group",
     "component_group",
 }
 VALID_CONTAINER_KINDS = {"container", "header_container"}
@@ -86,6 +87,7 @@ VALID_BORDER_STYLES = {"none", "solid", "dashed", "dotted"}
 VALID_TEXT_ALIGN = {"left", "center", "right"}
 VALID_TEXT_V_ALIGN = {"top", "center", "bottom"}
 VALID_CONNECTION_TYPES = {"directional_connector", "bidirectional_connector", "line"}
+VALID_GROUP_HEADER_SIDES = {"top", "right", "bottom", "left", "none"}
 
 
 def sanitize_id(value: Any) -> str:
@@ -159,6 +161,8 @@ def _default_shape_text(kind: str) -> str:
         return "Note"
     if kind == "text_box":
         return "Text"
+    if kind == "table_group":
+        return "Table"
     if kind == "container":
         return "Container"
     if kind == "header_container":
@@ -223,13 +227,15 @@ def _default_shape_size(kind: str) -> Tuple[float, float]:
         return 120.0, 60.0
     if kind in VALID_CONTAINER_KINDS:
         return 240.0, 200.0
+    if kind == "table_group":
+        return 240.0, 180.0
     if kind == "component_group":
         return 200.0, 70.0
     return 100.0, 48.0
 
 
 def _default_border_width(kind: str) -> float:
-    if kind in VALID_CONTAINER_KINDS or kind == "component_group":
+    if kind in VALID_CONTAINER_KINDS or kind in {"table_group", "component_group"}:
         return 1.8
     return 1.5
 
@@ -335,6 +341,13 @@ def _as_component_direction(value: Any) -> str:
     return "vertical" if str(value or "").strip().lower() == "vertical" else "horizontal"
 
 
+def _as_group_header_side(value: Any) -> str:
+    side = str(value or "").strip().lower()
+    if side in VALID_GROUP_HEADER_SIDES:
+        return side
+    return "top"
+
+
 def _as_font_family(value: Any) -> str:
     family = str(value or "").strip()
     if family in VALID_FONT_FAMILIES:
@@ -354,6 +367,22 @@ def _normalize_component_labels(value: Any, count: int) -> List[str]:
     while len(out) < safe_count:
         out.append(f"Item {len(out) + 1}")
     return out[:safe_count]
+
+
+def _normalize_fraction_list(value: Any, count: int) -> List[float]:
+    safe_count = max(1, min(24, int(count)))
+    if safe_count == 1:
+        return [1.0]
+    source = value if isinstance(value, list) else []
+    out: List[float] = []
+    for idx in range(safe_count):
+        raw = source[idx] if idx < len(source) else None
+        num = _to_float(raw, 1.0)
+        out.append(num if num > 0 else 1.0)
+    total = sum(out)
+    if not total > 0:
+        return [1.0 / safe_count for _ in range(safe_count)]
+    return [num / total for num in out]
 
 
 def _default_group_component(
@@ -447,7 +476,7 @@ def _normalize_group_components(
 
 
 def _shape_defaults(kind: str) -> Tuple[str, str]:
-    if kind in VALID_CONTAINER_KINDS or kind == "component_group":
+    if kind in VALID_CONTAINER_KINDS or kind in {"table_group", "component_group"}:
         return DEFAULT_CONTAINER_FILL, DEFAULT_CONTAINER_STROKE
     return DEFAULT_SHAPE_FILL, DEFAULT_SHAPE_STROKE
 
@@ -568,6 +597,8 @@ def normalize_model(raw_model: Any, elf_name: str = "") -> Dict[str, Any]:
             height = side
         component_count_fallback = 4 if kind == "component_group" else 1
         component_count = max(1, min(24, _to_int(raw_shape.get("componentCount"), component_count_fallback)))
+        table_rows = max(1, min(24, _to_int(raw_shape.get("tableRows"), 2)))
+        table_cols = max(1, min(24, _to_int(raw_shape.get("tableCols"), 2)))
         raw_components = raw_shape.get("components")
         component_labels_raw = raw_shape.get("componentLabels")
 
@@ -597,15 +628,22 @@ def normalize_model(raw_model: Any, elf_name: str = "") -> Dict[str, Any]:
             "textOffsetLeft": _as_text_inset(raw_shape.get("textOffsetLeft"), 0.0),
             "textOffsetRight": _as_text_inset(raw_shape.get("textOffsetRight"), 0.0),
             "textPadding": _as_text_inset(raw_shape.get("textPadding"), 0.0),
+            "groupHeaderSide": _as_group_header_side(raw_shape.get("groupHeaderSide", "top")),
             "componentDirection": _as_component_direction(raw_shape.get("componentDirection")),
             "componentCount": component_count,
+            "componentFractions": _normalize_fraction_list(raw_shape.get("componentFractions"), component_count),
+            "tableRows": table_rows,
+            "tableCols": table_cols,
+            "rowFractions": _normalize_fraction_list(raw_shape.get("rowFractions"), table_rows),
+            "colFractions": _normalize_fraction_list(raw_shape.get("colFractions"), table_cols),
             "z": _to_int(raw_shape.get("z"), idx),
             "parentId": parent_id,
         }
-        if kind == "component_group":
+        if kind in {"component_group", "table_group"}:
+            component_total = component_count if kind == "component_group" else table_rows * table_cols
             shape["components"] = _normalize_group_components(
                 raw_components,
-                shape["componentCount"],
+                component_total,
                 shape["fill"],
                 shape["textColor"],
                 shape["fontSize"],

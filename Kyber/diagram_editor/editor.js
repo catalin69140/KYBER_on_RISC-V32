@@ -59,6 +59,7 @@
     text_box: { width: 120, height: 60 },
     container: { width: 240, height: 200 },
     header_container: { width: 240, height: 200 },
+    table_group: { width: 240, height: 180 },
     component_group: { width: 200, height: 70 },
   };
   const DEFAULT_VIEWBOX = { x: 0, y: 0, width: 1000, height: 1000 };
@@ -121,10 +122,12 @@
     { kind: "header_container", label: "Header Container" },
   ];
   const GROUP_TOOL_DEFS = [
+    { kind: "table_group", label: "Table" },
     { kind: "component_group", label: "Component Group" },
   ];
 
   const CONTAINER_KINDS = new Set(["container", "header_container"]);
+  const GROUP_FORM_KINDS = new Set(["table_group", "component_group"]);
   const SHAPE_KINDS = new Set([
     "square",
     "cube",
@@ -154,6 +157,7 @@
     "text_box",
     "container",
     "header_container",
+    "table_group",
     "component_group",
   ]);
 
@@ -237,8 +241,12 @@
     return "square";
   }
 
+  function isGroupFormKind(kind) {
+    return GROUP_FORM_KINDS.has(String(kind || "").trim().toLowerCase());
+  }
+
   function usesContainerPalette(kind) {
-    return isContainerKind(kind) || kind === "component_group";
+    return isContainerKind(kind) || isGroupFormKind(kind);
   }
 
   function deriveShapeId(text, containerText) {
@@ -282,6 +290,7 @@
     if (kind === "card") return "Card";
     if (kind === "note") return "Note";
     if (kind === "text_box") return "Text";
+    if (kind === "table_group") return "Table";
     if (kind === "component_group") return "Group";
     return "Node";
   }
@@ -347,7 +356,7 @@
 
   function defaultModel(elfName) {
     return {
-      version: 2,
+      version: 4,
       metadata: {
         elf: elfName || "",
         viewBox: {
@@ -446,6 +455,7 @@
       kind === "text_box" ||
       kind === "container" ||
       kind === "header_container" ||
+      kind === "table_group" ||
       kind === "component_group" ||
       kind === "triangle" ||
       kind === "diamond" ||
@@ -477,6 +487,14 @@
 
   function normalizeComponentDirection(raw) {
     return String(raw || "").toLowerCase() === "vertical" ? "vertical" : "horizontal";
+  }
+
+  function normalizeGroupHeaderSide(raw) {
+    const side = String(raw || "").toLowerCase().trim();
+    if (side === "top" || side === "right" || side === "bottom" || side === "left" || side === "none") {
+      return side;
+    }
+    return "top";
   }
 
   function normalizeFontSize(raw, fallback) {
@@ -512,6 +530,22 @@
       out.push("Item " + (out.length + 1));
     }
     return out.slice(0, safeCount);
+  }
+
+  function normalizeSegmentFractions(rawFractions, count) {
+    const safeCount = Math.max(1, Math.min(24, Math.round(Number(count) || 1)));
+    if (safeCount === 1) return [1];
+    const source = Array.isArray(rawFractions) ? rawFractions : [];
+    const out = [];
+    for (let idx = 0; idx < safeCount; idx += 1) {
+      const value = Number(source[idx]);
+      out.push(Number.isFinite(value) && value > 0 ? value : 1);
+    }
+    const total = out.reduce((sum, value) => sum + value, 0);
+    if (!(total > 0)) {
+      return new Array(safeCount).fill(1 / safeCount);
+    }
+    return out.map((value) => value / total);
   }
 
   function defaultGroupComponent(index, groupShape) {
@@ -721,14 +755,23 @@
       shape.textOffsetLeft = normalizeTextInset(shape.textOffsetLeft, 0);
       shape.textOffsetRight = normalizeTextInset(shape.textOffsetRight, 0);
       shape.textPadding = normalizeTextInset(shape.textPadding, 0);
+      shape.groupHeaderSide = normalizeGroupHeaderSide(shape.groupHeaderSide);
       shape.componentDirection = normalizeComponentDirection(shape.componentDirection);
       const defaultComponentCount = shape.kind === "component_group" ? 4 : 1;
       shape.componentCount = Math.max(1, Math.min(24, Math.round(Number.isFinite(Number(shape.componentCount)) ? Number(shape.componentCount) : defaultComponentCount)));
-      if (shape.kind === "component_group") {
+      shape.componentFractions = normalizeSegmentFractions(shape.componentFractions, shape.componentCount);
+      shape.tableRows = Math.max(1, Math.min(24, Math.round(Number.isFinite(Number(shape.tableRows)) ? Number(shape.tableRows) : 2)));
+      shape.tableCols = Math.max(1, Math.min(24, Math.round(Number.isFinite(Number(shape.tableCols)) ? Number(shape.tableCols) : 2)));
+      shape.rowFractions = normalizeSegmentFractions(shape.rowFractions, shape.tableRows);
+      shape.colFractions = normalizeSegmentFractions(shape.colFractions, shape.tableCols);
+      if (isGroupFormKind(shape.kind)) {
         const rawComponentLabels = Array.isArray(shape.componentLabels) && shape.componentLabels.length
           ? shape.componentLabels
           : [];
-        shape.components = normalizeGroupComponents(shape.components, shape.componentCount, shape, rawComponentLabels);
+        const normalizedCount = shape.kind === "table_group"
+          ? (shape.tableRows * shape.tableCols)
+          : shape.componentCount;
+        shape.components = normalizeGroupComponents(shape.components, normalizedCount, shape, rawComponentLabels);
       } else if (shape.components) {
         delete shape.components;
       }
@@ -1639,51 +1682,157 @@
     return Math.max(18, Math.min(36, Math.round(shape.height * 0.22)));
   }
 
-  function componentGroupLayout(shape) {
+  function groupHeaderSideForShape(shape) {
+    if (!shape) return "none";
+    if (shape.kind === "table_group") return normalizeGroupHeaderSide(shape.groupHeaderSide);
+    if (shape.kind === "component_group") return "top";
+    return "none";
+  }
+
+  function groupHeaderThickness(shape) {
+    const side = groupHeaderSideForShape(shape);
+    if (side === "none") return 0;
+    const axisSize = (side === "left" || side === "right") ? shape.width : shape.height;
+    return Math.max(18, Math.min(36, Math.round(axisSize * 0.22)));
+  }
+
+  function groupHeaderRect(shape) {
+    const side = groupHeaderSideForShape(shape);
+    const thickness = groupHeaderThickness(shape);
+    if (!thickness || side === "none") return null;
+    if (side === "bottom") {
+      return { side, thickness, x: shape.x, y: shape.y + shape.height - thickness, width: shape.width, height: thickness };
+    }
+    if (side === "left") {
+      return { side, thickness, x: shape.x, y: shape.y, width: thickness, height: shape.height };
+    }
+    if (side === "right") {
+      return { side, thickness, x: shape.x + shape.width - thickness, y: shape.y, width: thickness, height: shape.height };
+    }
+    return { side, thickness, x: shape.x, y: shape.y, width: shape.width, height: thickness };
+  }
+
+  function groupBodyRect(shape) {
+    const header = groupHeaderRect(shape);
+    const body = {
+      x: shape.x + 1,
+      y: shape.y + 1,
+      width: Math.max(1, shape.width - 2),
+      height: Math.max(1, shape.height - 2),
+    };
+    if (!header) return body;
+    if (header.side === "top") {
+      body.y += header.height;
+      body.height = Math.max(1, body.height - header.height);
+    } else if (header.side === "bottom") {
+      body.height = Math.max(1, body.height - header.height);
+    } else if (header.side === "left") {
+      body.x += header.width;
+      body.width = Math.max(1, body.width - header.width);
+    } else if (header.side === "right") {
+      body.width = Math.max(1, body.width - header.width);
+    }
+    return body;
+  }
+
+  function segmentBoxes(start, total, fractions) {
+    const boxes = [];
+    let cursor = start;
+    fractions.forEach((fraction, index) => {
+      const next = index === fractions.length - 1 ? (start + total) : (start + total * (fractions.slice(0, index + 1).reduce((sum, value) => sum + value, 0)));
+      boxes.push({
+        index,
+        start: cursor,
+        size: Math.max(1, next - cursor),
+      });
+      cursor = next;
+    });
+    return boxes;
+  }
+
+  function groupFormLayout(shape) {
+    const header = groupHeaderRect(shape);
+    const body = groupBodyRect(shape);
+    if (shape.kind === "table_group") {
+      const rows = Math.max(1, Math.min(24, Math.round(Number(shape.tableRows) || 2)));
+      const cols = Math.max(1, Math.min(24, Math.round(Number(shape.tableCols) || 2)));
+      const rowFractions = normalizeSegmentFractions(shape.rowFractions, rows);
+      const colFractions = normalizeSegmentFractions(shape.colFractions, cols);
+      const rowBoxes = segmentBoxes(body.y, body.height, rowFractions);
+      const colBoxes = segmentBoxes(body.x, body.width, colFractions);
+      const components = [];
+      rowBoxes.forEach((row, rowIndex) => {
+        colBoxes.forEach((col, colIndex) => {
+          components.push({
+            index: rowIndex * cols + colIndex,
+            row: rowIndex,
+            col: colIndex,
+            x: col.start,
+            y: row.start,
+            width: col.size,
+            height: row.size,
+          });
+        });
+      });
+      return {
+        kind: "table_group",
+        headerRect: header,
+        headerSide: header ? header.side : "none",
+        headerHeight: header && (header.side === "top" || header.side === "bottom") ? header.height : 0,
+        bodyX: body.x,
+        bodyY: body.y,
+        bodyWidth: body.width,
+        bodyHeight: body.height,
+        rows,
+        cols,
+        rowFractions,
+        colFractions,
+        rowBoxes,
+        colBoxes,
+        components,
+        verticalDividers: colBoxes.slice(1).map((col, index) => ({ index, x: col.start, y1: body.y, y2: body.y + body.height })),
+        horizontalDividers: rowBoxes.slice(1).map((row, index) => ({ index, y: row.start, x1: body.x, x2: body.x + body.width })),
+      };
+    }
+
     const count = Math.max(1, Math.min(24, Math.round(Number(shape.componentCount) || 4)));
     const direction = normalizeComponentDirection(shape.componentDirection);
-    const headerH = componentGroupHeaderHeight(shape);
-    const bodyX = shape.x + 1;
-    const bodyY = shape.y + headerH + 1;
-    const bodyWidth = Math.max(1, shape.width - 2);
-    const bodyHeight = Math.max(1, shape.height - headerH - 2);
-    const components = [];
-    if (direction === "horizontal") {
-      const cellWidth = bodyWidth / count;
-      for (let idx = 0; idx < count; idx += 1) {
-        const x0 = bodyX + idx * cellWidth;
-        const x1 = idx === count - 1 ? (bodyX + bodyWidth) : (x0 + cellWidth);
-        components.push({
-          index: idx,
-          x: x0,
-          y: bodyY,
-          width: Math.max(1, x1 - x0),
-          height: bodyHeight,
-        });
-      }
-    } else {
-      const cellHeight = bodyHeight / count;
-      for (let idx = 0; idx < count; idx += 1) {
-        const y0 = bodyY + idx * cellHeight;
-        const y1 = idx === count - 1 ? (bodyY + bodyHeight) : (y0 + cellHeight);
-        components.push({
-          index: idx,
-          x: bodyX,
-          y: y0,
-          width: bodyWidth,
-          height: Math.max(1, y1 - y0),
-        });
-      }
-    }
+    const fractions = normalizeSegmentFractions(shape.componentFractions, count);
+    const segments = direction === "horizontal"
+      ? segmentBoxes(body.x, body.width, fractions)
+      : segmentBoxes(body.y, body.height, fractions);
+    const components = segments.map((segment, idx) => ({
+      index: idx,
+      row: direction === "horizontal" ? 0 : idx,
+      col: direction === "horizontal" ? idx : 0,
+      x: direction === "horizontal" ? segment.start : body.x,
+      y: direction === "horizontal" ? body.y : segment.start,
+      width: direction === "horizontal" ? segment.size : body.width,
+      height: direction === "horizontal" ? body.height : segment.size,
+    }));
     return {
-      headerHeight: headerH,
-      bodyX,
-      bodyY,
-      bodyWidth,
-      bodyHeight,
+      kind: "component_group",
+      headerRect: header,
+      headerSide: "top",
+      headerHeight: header ? header.height : 0,
+      bodyX: body.x,
+      bodyY: body.y,
+      bodyWidth: body.width,
+      bodyHeight: body.height,
       direction,
+      componentFractions: fractions,
       components,
+      verticalDividers: direction === "horizontal"
+        ? components.slice(1).map((box, index) => ({ index, x: box.x, y1: body.y, y2: body.y + body.height }))
+        : [],
+      horizontalDividers: direction === "vertical"
+        ? components.slice(1).map((box, index) => ({ index, y: box.y, x1: body.x, x2: body.x + body.width }))
+        : [],
     };
+  }
+
+  function componentGroupLayout(shape) {
+    return groupFormLayout(shape);
   }
 
   function componentBoxTextBox(box) {
@@ -2124,7 +2273,7 @@
       return svg;
     }
 
-    if (kind === "container" || kind === "header_container" || kind === "component_group") {
+    if (kind === "container" || kind === "header_container" || isGroupFormKind(kind)) {
       const rect = appendToolIconEl(svg, "rect", {
         x: 7,
         y: 8,
@@ -2140,7 +2289,11 @@
       if (kind !== "container") {
         addLine(7, 15, 41, 15);
       }
-      if (kind === "component_group") {
+      if (kind === "table_group") {
+        addLine(18.5, 15, 18.5, 36);
+        addLine(29.5, 15, 29.5, 36);
+        addLine(7, 25.5, 41, 25.5);
+      } else if (kind === "component_group") {
         addLine(18.5, 15, 18.5, 36);
         addLine(29.5, 15, 29.5, 36);
       }
@@ -2266,20 +2419,23 @@
         height: headerH,
       });
     }
-    if (shape.kind === "component_group") {
-      const titleHeight = componentGroupHeaderHeight(shape);
-      const padX = proportionalInset(shape.width, 0.04, 8, 18, 24);
-      const padY = Math.max(2, proportionalInset(titleHeight, 0.16, 2, 8, 14));
+    if (shape.kind === "component_group" || shape.kind === "table_group") {
+      const headerRect = groupHeaderRect(shape);
+      if (!headerRect) {
+        return { x: shape.x, y: shape.y, width: 0, height: 0 };
+      }
+      const padX = proportionalInset(headerRect.width, 0.04, 6, 18, 24);
+      const padY = Math.max(2, proportionalInset(headerRect.height, 0.16, 2, 8, 14));
       return applyTextBoxAdjustments({
-        x: shape.x + padX,
-        y: shape.y + padY,
-        width: Math.max(8, shape.width - padX * 2),
-        height: Math.max(8, titleHeight - padY * 2),
+        x: headerRect.x + padX,
+        y: headerRect.y + padY,
+        width: Math.max(8, headerRect.width - padX * 2),
+        height: Math.max(8, headerRect.height - padY * 2),
       }, shape, {
-        x: shape.x,
-        y: shape.y,
-        width: shape.width,
-        height: titleHeight,
+        x: headerRect.x,
+        y: headerRect.y,
+        width: headerRect.width,
+        height: headerRect.height,
       });
     }
     if (shape.kind === "circle" || shape.kind === "oval") {
@@ -2873,6 +3029,97 @@
         x2: shape.x + shape.width,
         y2: shape.y + headerH,
       }, separatorWidth);
+    } else if (kind === "table_group") {
+      const layout = groupFormLayout(shape);
+      const components = normalizeGroupComponents(shape.components, layout.rows * layout.cols, shape);
+      shape.components = components;
+      const headerRect = layout.headerRect;
+      group.appendChild(createSvg("rect", Object.assign({
+        x: shape.x,
+        y: shape.y,
+        width: shape.width,
+        height: shape.height,
+        rx: roundedRadius,
+        ry: roundedRadius,
+      }, commonStroke)));
+      if (headerRect) {
+        group.appendChild(createSvg("rect", {
+          x: headerRect.x + 1,
+          y: headerRect.y + 1,
+          width: Math.max(1, headerRect.width - 2),
+          height: Math.max(1, headerRect.height - 2),
+          fill: darken(shape.fill, -14),
+          stroke: "none",
+          rx: Math.max(0, roundedRadius - 1),
+          ry: Math.max(0, roundedRadius - 1),
+        }));
+        if (headerRect.side === "top") {
+          appendStrokeLine({
+            x1: shape.x,
+            y1: headerRect.y + headerRect.height,
+            x2: shape.x + shape.width,
+            y2: headerRect.y + headerRect.height,
+          }, separatorWidth);
+        } else if (headerRect.side === "bottom") {
+          appendStrokeLine({
+            x1: shape.x,
+            y1: headerRect.y,
+            x2: shape.x + shape.width,
+            y2: headerRect.y,
+          }, separatorWidth);
+        } else if (headerRect.side === "left") {
+          appendStrokeLine({
+            x1: headerRect.x + headerRect.width,
+            y1: shape.y,
+            x2: headerRect.x + headerRect.width,
+            y2: shape.y + shape.height,
+          }, separatorWidth);
+        } else if (headerRect.side === "right") {
+          appendStrokeLine({
+            x1: headerRect.x,
+            y1: shape.y,
+            x2: headerRect.x,
+            y2: shape.y + shape.height,
+          }, separatorWidth);
+        }
+      }
+
+      layout.components.forEach((box, idx) => {
+        const component = components[idx] || defaultGroupComponent(idx, shape);
+        const effectiveFill = effectiveGroupComponentFill(shape, component);
+        group.appendChild(createSvg("rect", {
+          x: box.x,
+          y: box.y,
+          width: box.width,
+          height: box.height,
+          fill: effectiveFill,
+          stroke: "none",
+          "data-group-component-index": idx,
+        }));
+        renderRichTextBlockSpec(group, component, applyTextBoxAdjustments(componentBoxTextBox(box), component, {
+          x: box.x,
+          y: box.y,
+          width: box.width,
+          height: box.height,
+        }));
+      });
+
+      layout.verticalDividers.forEach((divider) => {
+        appendStrokeLine({
+          x1: divider.x,
+          y1: divider.y1,
+          x2: divider.x,
+          y2: divider.y2,
+        }, minorSeparatorWidth);
+      });
+      layout.horizontalDividers.forEach((divider) => {
+        appendStrokeLine({
+          x1: divider.x1,
+          y1: divider.y,
+          x2: divider.x2,
+          y2: divider.y,
+        }, minorSeparatorWidth);
+      });
     } else if (kind === "component_group") {
       const headerH = componentGroupHeaderHeight(shape);
       const layout = componentGroupLayout(shape);
@@ -3597,6 +3844,64 @@
       .map((shape) => shape.id);
   }
 
+  function renderGroupDividerHandles(overlayLayer, shape) {
+    if (!shape || !isGroupFormKind(shape.kind)) return;
+    const layout = groupFormLayout(shape);
+    const dividerStroke = "#8ab8ff";
+    layout.verticalDividers.forEach((divider) => {
+      overlayLayer.appendChild(createSvg("line", {
+        x1: divider.x,
+        y1: divider.y1,
+        x2: divider.x,
+        y2: divider.y2,
+        stroke: dividerStroke,
+        "stroke-width": 1.2,
+        "stroke-dasharray": "4 4",
+        opacity: 0.7,
+        "pointer-events": "none",
+      }));
+      const handle = createSvg("rect", {
+        x: divider.x - 7,
+        y: divider.y1,
+        width: 14,
+        height: Math.max(12, divider.y2 - divider.y1),
+        fill: "rgba(0,0,0,0)",
+        style: "cursor:col-resize",
+      });
+      handle.addEventListener("pointerdown", (evt) => {
+        evt.stopPropagation();
+        startGroupDividerResize(evt, shape.id, "x", divider.index);
+      });
+      overlayLayer.appendChild(handle);
+    });
+    layout.horizontalDividers.forEach((divider) => {
+      overlayLayer.appendChild(createSvg("line", {
+        x1: divider.x1,
+        y1: divider.y,
+        x2: divider.x2,
+        y2: divider.y,
+        stroke: dividerStroke,
+        "stroke-width": 1.2,
+        "stroke-dasharray": "4 4",
+        opacity: 0.7,
+        "pointer-events": "none",
+      }));
+      const handle = createSvg("rect", {
+        x: divider.x1,
+        y: divider.y - 7,
+        width: Math.max(12, divider.x2 - divider.x1),
+        height: 14,
+        fill: "rgba(0,0,0,0)",
+        style: "cursor:row-resize",
+      });
+      handle.addEventListener("pointerdown", (evt) => {
+        evt.stopPropagation();
+        startGroupDividerResize(evt, shape.id, "y", divider.index);
+      });
+      overlayLayer.appendChild(handle);
+    });
+  }
+
   function renderSelectionOverlay(overlayLayer) {
     if (state.drag && state.drag.type === "marquee-select") {
       const marquee = rectFromPoints(state.drag.start, state.drag.current || state.drag.start);
@@ -3667,25 +3972,17 @@
         });
         overlayLayer.appendChild(handle);
       });
+      renderGroupDividerHandles(overlayLayer, shape);
       return;
     }
 
     if (state.selected.type === "group_component") {
       const selectedComponent = currentSelectedGroupComponent();
       if (!selectedComponent) return;
-      const layout = componentGroupLayout(selectedComponent.shape);
+      const layout = groupFormLayout(selectedComponent.shape);
       const box = layout.components[selectedComponent.componentIndex];
       if (!box) return;
       const shape = selectedComponent.shape;
-      const roundedRadius = shape.rounded ? Math.max(0, shapeCornerRadius(shape) - 1) : 0;
-      const isFirst = selectedComponent.componentIndex === 0;
-      const isLast = selectedComponent.componentIndex === layout.components.length - 1;
-      const bottomLeftRadius = layout.direction === "horizontal"
-        ? (isFirst ? roundedRadius : 0)
-        : (isLast ? roundedRadius : 0);
-      const bottomRightRadius = layout.direction === "horizontal"
-        ? (isLast ? roundedRadius : 0)
-        : (isLast ? roundedRadius : 0);
       const attrs = {
         fill: "none",
         stroke: "#ffd76b",
@@ -3693,15 +3990,35 @@
         "stroke-dasharray": "8 5",
         "pointer-events": "none",
       };
-      if (bottomLeftRadius || bottomRightRadius) {
-        overlayLayer.appendChild(createSvg("path", Object.assign({
-          d: roundedRectPathSelective(box.x - 2, box.y - 2, box.width + 4, box.height + 4, {
-            tl: 0,
-            tr: 0,
-            br: bottomRightRadius,
-            bl: bottomLeftRadius,
-          }),
-        }, attrs)));
+      if (shape.kind === "component_group") {
+        const roundedRadius = shape.rounded ? Math.max(0, shapeCornerRadius(shape) - 1) : 0;
+        const isFirst = selectedComponent.componentIndex === 0;
+        const isLast = selectedComponent.componentIndex === layout.components.length - 1;
+        const bottomLeftRadius = layout.direction === "horizontal"
+          ? (isFirst ? roundedRadius : 0)
+          : (isLast ? roundedRadius : 0);
+        const bottomRightRadius = layout.direction === "horizontal"
+          ? (isLast ? roundedRadius : 0)
+          : (isLast ? roundedRadius : 0);
+        if (bottomLeftRadius || bottomRightRadius) {
+          overlayLayer.appendChild(createSvg("path", Object.assign({
+            d: roundedRectPathSelective(box.x - 2, box.y - 2, box.width + 4, box.height + 4, {
+              tl: 0,
+              tr: 0,
+              br: bottomRightRadius,
+              bl: bottomLeftRadius,
+            }),
+          }, attrs)));
+        } else {
+          overlayLayer.appendChild(createSvg("rect", Object.assign({
+            x: box.x - 2,
+            y: box.y - 2,
+            width: box.width + 4,
+            height: box.height + 4,
+            rx: 4,
+            ry: 4,
+          }, attrs)));
+        }
       } else {
         overlayLayer.appendChild(createSvg("rect", Object.assign({
           x: box.x - 2,
@@ -3712,6 +4029,7 @@
           ry: 4,
         }, attrs)));
       }
+      renderGroupDividerHandles(overlayLayer, shape);
       return;
     }
 
@@ -3921,13 +4239,14 @@
     }
     if (sel.type === "group_component") {
       const shape = shapeById(sel.shapeId);
-      if (!shape || shape.kind !== "component_group") {
+      if (!shape || !isGroupFormKind(shape.kind)) {
         state.selected = null;
         state.selectedShapeIds = [];
         render();
         return;
       }
-      const maxIndex = Math.max(0, Math.min((shape.components || []).length - 1, Number(sel.componentIndex) || 0));
+      const componentCount = groupFormLayout(shape).components.length;
+      const maxIndex = Math.max(0, Math.min(componentCount - 1, Number(sel.componentIndex) || 0));
       state.selected = {
         type: "group_component",
         shapeId: shape.id,
@@ -3945,8 +4264,9 @@
   function currentSelectedGroupComponent() {
     if (!state.selected || state.selected.type !== "group_component") return null;
     const shape = shapeById(state.selected.shapeId);
-    if (!shape || shape.kind !== "component_group") return null;
-    shape.components = normalizeGroupComponents(shape.components, shape.componentCount, shape);
+    if (!shape || !isGroupFormKind(shape.kind)) return null;
+    const count = groupFormLayout(shape).components.length;
+    shape.components = normalizeGroupComponents(shape.components, count, shape);
     const index = Math.max(0, Math.min(shape.components.length - 1, Number(state.selected.componentIndex) || 0));
     const component = shape.components[index];
     if (!component) return null;
@@ -3959,8 +4279,9 @@
   }
 
   function getGroupComponentAt(shape, componentIndex) {
-    if (!shape || shape.kind !== "component_group") return null;
-    shape.components = normalizeGroupComponents(shape.components, shape.componentCount, shape);
+    if (!shape || !isGroupFormKind(shape.kind)) return null;
+    const count = groupFormLayout(shape).components.length;
+    shape.components = normalizeGroupComponents(shape.components, count, shape);
     const safeIndex = Math.max(0, Math.min(shape.components.length - 1, Number(componentIndex) || 0));
     return shape.components[safeIndex] || null;
   }
@@ -4049,9 +4370,9 @@
 
     const selectedIds = currentSelectedShapeIds();
     const modifier = !!(evt.metaKey || evt.ctrlKey);
-    if (!modifier && shape.kind === "component_group") {
+    if (!modifier && isGroupFormKind(shape.kind)) {
       const point = clientToSvg(evt);
-      const layout = componentGroupLayout(shape);
+      const layout = groupFormLayout(shape);
       const rawIndex = layout.components.findIndex((box) => (
         point.x >= box.x
         && point.x <= box.x + box.width
@@ -4141,6 +4462,41 @@
         height: shape.height,
       },
     };
+  }
+
+  function startGroupDividerResize(evt, shapeId, axis, dividerIndex) {
+    const shape = shapeById(shapeId);
+    if (!shape || !isGroupFormKind(shape.kind)) return;
+    pushHistory();
+    state.drag = {
+      type: "resize-group-divider",
+      shapeId: shapeId,
+      axis: axis,
+      dividerIndex: dividerIndex,
+      start: clientToSvg(evt),
+      before: {
+        componentFractions: Array.isArray(shape.componentFractions) ? shape.componentFractions.slice() : [],
+        rowFractions: Array.isArray(shape.rowFractions) ? shape.rowFractions.slice() : [],
+        colFractions: Array.isArray(shape.colFractions) ? shape.colFractions.slice() : [],
+      },
+    };
+  }
+
+  function adjustDividerFractions(fractions, dividerIndex, targetOffset, totalSize) {
+    const safeFractions = normalizeSegmentFractions(fractions, fractions.length || 1);
+    if (safeFractions.length <= 1) return safeFractions;
+    const total = Math.max(1, Number(totalSize) || 1);
+    const minRatio = Math.min(0.45, 24 / total);
+    const prefix = safeFractions.slice(0, dividerIndex).reduce((sum, value) => sum + value, 0);
+    const pairTotal = safeFractions[dividerIndex] + safeFractions[dividerIndex + 1];
+    const rawBoundary = clamp((Number(targetOffset) || 0) / total, 0, 1);
+    const minBoundary = prefix + minRatio;
+    const maxBoundary = prefix + pairTotal - minRatio;
+    const nextBoundary = clamp(rawBoundary, minBoundary, maxBoundary);
+    const next = safeFractions.slice();
+    next[dividerIndex] = nextBoundary - prefix;
+    next[dividerIndex + 1] = prefix + pairTotal - nextBoundary;
+    return normalizeSegmentFractions(next, next.length);
   }
 
   function startArrowEndpointDrag(evt, arrowId, endpointKey) {
@@ -4266,6 +4622,35 @@
       return;
     }
 
+    if (state.drag.type === "resize-group-divider") {
+      const shape = shapeById(state.drag.shapeId);
+      if (!shape || !isGroupFormKind(shape.kind)) return;
+      if (shape.kind === "table_group") {
+        shape.rowFractions = normalizeSegmentFractions(state.drag.before.rowFractions, shape.tableRows);
+        shape.colFractions = normalizeSegmentFractions(state.drag.before.colFractions, shape.tableCols);
+      } else {
+        shape.componentFractions = normalizeSegmentFractions(state.drag.before.componentFractions, shape.componentCount);
+      }
+      const layout = groupFormLayout(shape);
+      if (state.drag.axis === "x") {
+        const offset = snapToStep(point.x, GRID_MINOR_STEP) - layout.bodyX;
+        if (shape.kind === "table_group") {
+          shape.colFractions = adjustDividerFractions(layout.colFractions, state.drag.dividerIndex, offset, layout.bodyWidth);
+        } else {
+          shape.componentFractions = adjustDividerFractions(layout.componentFractions, state.drag.dividerIndex, offset, layout.bodyWidth);
+        }
+      } else {
+        const offset = snapToStep(point.y, GRID_MINOR_STEP) - layout.bodyY;
+        if (shape.kind === "table_group") {
+          shape.rowFractions = adjustDividerFractions(layout.rowFractions, state.drag.dividerIndex, offset, layout.bodyHeight);
+        } else {
+          shape.componentFractions = adjustDividerFractions(layout.componentFractions, state.drag.dividerIndex, offset, layout.bodyHeight);
+        }
+      }
+      render();
+      return;
+    }
+
     if (state.drag.type === "arrow-endpoint") {
       const arrow = arrowById(state.drag.arrowId);
       if (!arrow) return;
@@ -4325,6 +4710,10 @@
 
     if (drag.type === "resize-shape") {
       syncCanvasRectToContent();
+      render();
+    }
+
+    if (drag.type === "resize-group-divider") {
       render();
     }
 
@@ -4419,6 +4808,7 @@
     const id = uniqueShapeId(deriveShapeId(text, ""), null);
 
     const isContainer = usesContainerPalette(normalizedKind);
+    const isGroupForm = isGroupFormKind(normalizedKind);
     const componentCount = normalizedKind === "component_group" ? 4 : 1;
     const isTextBox = normalizedKind === "text_box";
     const shape = {
@@ -4447,10 +4837,22 @@
       textOffsetLeft: 0,
       textOffsetRight: 0,
       textPadding: 0,
+      groupHeaderSide: normalizedKind === "table_group" ? "top" : "none",
       componentDirection: "horizontal",
       componentCount: componentCount,
-      components: normalizedKind === "component_group"
-        ? normalizeGroupComponents([], componentCount, {
+      componentFractions: normalizedKind === "component_group"
+        ? normalizeSegmentFractions([], componentCount)
+        : undefined,
+      tableRows: normalizedKind === "table_group" ? 2 : undefined,
+      tableCols: normalizedKind === "table_group" ? 2 : undefined,
+      rowFractions: normalizedKind === "table_group"
+        ? normalizeSegmentFractions([], 2)
+        : undefined,
+      colFractions: normalizedKind === "table_group"
+        ? normalizeSegmentFractions([], 2)
+        : undefined,
+      components: isGroupForm
+        ? normalizeGroupComponents([], normalizedKind === "table_group" ? 4 : componentCount, {
           fill: isContainer ? "#0d172a" : "#1c2f4f",
           textColor: "#f4f7ff",
           fontSize: 12,
@@ -5849,9 +6251,14 @@
     );
 
     const colorSwatches = TYPE_COLOR_SWATCHES;
+    const isGroupForm = isGroupFormKind(shape.kind);
     const isComponentGroup = shape.kind === "component_group";
-    if (isComponentGroup) {
-      shape.components = normalizeGroupComponents(shape.components, shape.componentCount, shape);
+    const isTableGroup = shape.kind === "table_group";
+    if (isGroupForm) {
+      const componentTotal = isTableGroup
+        ? (Math.max(1, Math.min(24, Math.round(Number(shape.tableRows) || 2))) * Math.max(1, Math.min(24, Math.round(Number(shape.tableCols) || 2))))
+        : Math.max(1, Math.min(24, Math.round(Number(shape.componentCount) || 4)));
+      shape.components = normalizeGroupComponents(shape.components, componentTotal, shape);
     }
     const textTarget = makeShapeTextTarget(shape);
     const richText = sanitizeRichHtml(shape.richText, shape.text);
@@ -5906,7 +6313,14 @@
         ? '<h3>Group Layout</h3>' +
           '<div><label>Direction</label><select id="ins-group-direction"><option value="horizontal"' + (normalizeComponentDirection(shape.componentDirection) === "horizontal" ? " selected" : "") + '>horizontal</option><option value="vertical"' + (normalizeComponentDirection(shape.componentDirection) === "vertical" ? " selected" : "") + '>vertical</option></select></div>' +
           '<div><label>Components</label><input id="ins-group-count" type="number" min="1" max="24" step="1" value="' + Math.max(1, Math.min(24, Math.round(Number(shape.componentCount) || 4)) ) + '"/></div>'
-        : "",
+        : (isTableGroup
+          ? '<h3>Group Layout</h3>' +
+            '<div><label>Main header</label><select id="ins-group-header-side"><option value="top"' + (normalizeGroupHeaderSide(shape.groupHeaderSide) === "top" ? " selected" : "") + '>top</option><option value="right"' + (normalizeGroupHeaderSide(shape.groupHeaderSide) === "right" ? " selected" : "") + '>right</option><option value="bottom"' + (normalizeGroupHeaderSide(shape.groupHeaderSide) === "bottom" ? " selected" : "") + '>bottom</option><option value="left"' + (normalizeGroupHeaderSide(shape.groupHeaderSide) === "left" ? " selected" : "") + '>left</option><option value="none"' + (normalizeGroupHeaderSide(shape.groupHeaderSide) === "none" ? " selected" : "") + '>none</option></select></div>' +
+            '<div class="grid2">' +
+              '<div class="inline-field"><label for="ins-group-rows">Vertical cells:</label><input id="ins-group-rows" type="number" min="1" max="24" step="1" value="' + Math.max(1, Math.min(24, Math.round(Number(shape.tableRows) || 2))) + '"/></div>' +
+              '<div class="inline-field"><label for="ins-group-cols">Horizontal cells:</label><input id="ins-group-cols" type="number" min="1" max="24" step="1" value="' + Math.max(1, Math.min(24, Math.round(Number(shape.tableCols) || 2))) + '"/></div>' +
+            '</div>'
+          : ""),
       (shape.kind === "text_box"
         ? '<div class="section-heading-row"><h3>Color</h3><label class="inline-toggle"><input id="ins-shape-no-bg" type="checkbox"' + (shape.noBackground ? " checked" : "") + '> No background</label></div>'
         : "<h3>Color</h3>"),
@@ -6147,12 +6561,34 @@
       bindInput("ins-group-direction", "change", (value) => {
         pushHistory();
         shape.componentDirection = normalizeComponentDirection(value);
+        shape.componentFractions = normalizeSegmentFractions(shape.componentFractions, shape.componentCount);
         render();
       });
       bindNumber("ins-group-count", "change", (num) => {
         pushHistory();
         shape.componentCount = Math.max(1, Math.min(24, Math.round(num || 1)));
         shape.components = normalizeGroupComponents(shape.components, shape.componentCount, shape);
+        shape.componentFractions = normalizeSegmentFractions(shape.componentFractions, shape.componentCount);
+        render();
+      });
+    } else if (isTableGroup) {
+      bindInput("ins-group-header-side", "change", (value) => {
+        pushHistory();
+        shape.groupHeaderSide = normalizeGroupHeaderSide(value);
+        render();
+      });
+      bindNumber("ins-group-rows", "change", (num) => {
+        pushHistory();
+        shape.tableRows = Math.max(1, Math.min(24, Math.round(num || 1)));
+        shape.rowFractions = normalizeSegmentFractions(shape.rowFractions, shape.tableRows);
+        shape.components = normalizeGroupComponents(shape.components, shape.tableRows * shape.tableCols, shape);
+        render();
+      });
+      bindNumber("ins-group-cols", "change", (num) => {
+        pushHistory();
+        shape.tableCols = Math.max(1, Math.min(24, Math.round(num || 1)));
+        shape.colFractions = normalizeSegmentFractions(shape.colFractions, shape.tableCols);
+        shape.components = normalizeGroupComponents(shape.components, shape.tableRows * shape.tableCols, shape);
         render();
       });
     }
@@ -6263,11 +6699,12 @@
 
   function renderGroupComponentInspector(shapeId, componentIndex) {
     const shape = shapeById(shapeId);
-    if (!shape || shape.kind !== "component_group") {
+    if (!shape || !isGroupFormKind(shape.kind)) {
       els.inspector.innerHTML = '<div class="empty-state">Component not found.</div>';
       return;
     }
-    shape.components = normalizeGroupComponents(shape.components, shape.componentCount, shape);
+    const layout = groupFormLayout(shape);
+    shape.components = normalizeGroupComponents(shape.components, layout.components.length, shape);
     const safeIndex = Math.max(0, Math.min(shape.components.length - 1, Number(componentIndex) || 0));
     const currentComponent = () => getGroupComponentAt(shape, safeIndex);
     const component = currentComponent();
@@ -6282,13 +6719,22 @@
       .map((option) => '<option value="' + escapeHtml(option.value) + '"' + (selectedFontFamily === option.value ? " selected" : "") + '>' + escapeHtml(option.label) + '</option>')
       .join("");
     const fillValue = effectiveGroupComponentFill(shape, component);
+    const copyTargetOptions = layout.components
+      .filter((box) => box.index !== safeIndex)
+      .map((box) => {
+        const label = shape.kind === "table_group"
+          ? ("Cell " + (box.row + 1) + "," + (box.col + 1))
+          : ("Cell " + (box.index + 1));
+        return '<option value="' + box.index + '">' + escapeHtml(label) + '</option>';
+      })
+      .join("");
 
     state.richTextSelection = null;
     clearPendingRichTextFormat();
 
     els.inspector.innerHTML = [
       "<div>",
-      '<div class="hint">Component <strong>' + (safeIndex + 1) + '</strong> in <strong>' + escapeHtml(shape.text) + "</strong></div>",
+      '<div class="hint">Cell <strong>' + (shape.kind === "table_group" ? ((layout.components[safeIndex].row + 1) + "," + (layout.components[safeIndex].col + 1)) : (safeIndex + 1)) + '</strong> in <strong>' + escapeHtml(shape.text) + "</strong></div>",
       '<div><label id="ins-shape-text-label">Text - ' + component.text.length + '/' + MAX_SHAPE_TEXT_LENGTH + '</label><div id="ins-shape-text-editor" class="rich-text-editor" contenteditable="true" spellcheck="false">' + richText + "</div></div>",
       '<div class="format-row">' +
         '<button id="fmt-bold" type="button" title="Bold"><span class="format-icon"><strong>B</strong></span></button>' +
@@ -6312,6 +6758,9 @@
         '<input id="ins-shape-font-size" class="font-size-input" type="number" min="8" max="1000" step="0.5" title="Font size" value="' + roundNum(component.fontSize || 12) + '"/>' +
       "</div>",
       textSpacingControlsHtml("ins-spacing", component),
+      copyTargetOptions
+        ? '<div><label>Copy to cell</label><div class="row"><select id="ins-group-copy-target">' + copyTargetOptions + '</select><button id="ins-group-copy-btn" type="button">Copy</button></div></div>'
+        : "",
       '<div class="section-heading-row"><h3>Color</h3><label class="inline-toggle"><input id="ins-comp-fill-override" type="checkbox"' + (component.fillOverride ? " checked" : "") + '> Override</label></div>',
       '<div class="palette-block section-offset"><label>Fill palette</label><div class="palette" id="ins-comp-fill-palette"></div></div>',
       '<div class="color-inline-row"><label for="ins-comp-fill">Fill:</label><input id="ins-comp-fill" type="color" value="' + normalizeColor(fillValue, "#0d172a") + '"' + (component.fillOverride ? "" : " disabled") + '/></div>',
@@ -6502,6 +6951,22 @@
       nextComponent.fill = normalizeColor(value, nextComponent.fill || fillValue);
       render();
     });
+
+    const copyBtn = document.getElementById("ins-group-copy-btn");
+    const copyTarget = document.getElementById("ins-group-copy-target");
+    if (copyBtn && copyTarget) {
+      copyBtn.addEventListener("click", () => {
+        const destIndex = Math.max(0, Math.min(shape.components.length - 1, Math.round(Number(copyTarget.value) || 0)));
+        if (destIndex === safeIndex) return;
+        const sourceComponent = currentComponent();
+        const destComponent = getGroupComponentAt(shape, destIndex);
+        if (!sourceComponent || !destComponent) return;
+        pushHistory();
+        Object.keys(destComponent).forEach((key) => delete destComponent[key]);
+        Object.assign(destComponent, deepClone(sourceComponent));
+        render();
+      });
+    }
   }
 
   function setControlPoint(arrow, index, axis, value) {
@@ -6789,7 +7254,7 @@
       els.groupToolsGrid.addEventListener("click", (evt) => {
         const button = evt.target && evt.target.closest("[data-kind]");
         if (!button) return;
-        addShape(button.getAttribute("data-kind") || "component_group");
+        addShape(button.getAttribute("data-kind") || "table_group");
       });
     }
 
