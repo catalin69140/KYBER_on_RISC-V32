@@ -775,6 +775,7 @@
           ? (shape.tableRows * shape.tableCols)
           : shape.componentCount;
         shape.components = normalizeGroupComponents(shape.components, normalizedCount, shape, rawComponentLabels);
+        ensureGroupFormMinimumCellSize(shape);
       } else if (shape.components) {
         delete shape.components;
       }
@@ -1928,6 +1929,15 @@
     if (layout.bodyHeight < minBodyHeight) {
       shape.height = snapToStep(shape.height + (minBodyHeight - layout.bodyHeight), GRID_MINOR_STEP);
     }
+  }
+
+  function ensureGroupFormMinimumCellSize(shape) {
+    if (!shape || !isGroupFormKind(shape.kind)) return;
+    if (shape.kind === "table_group") {
+      ensureTableMinimumCellSize(shape);
+      return;
+    }
+    ensureComponentGroupMinimumCellSize(shape);
   }
 
   function insertTableRow(shape, rowIndex, insertAfter) {
@@ -5012,6 +5022,8 @@
       z: (state.model.shapes.length ? Math.max.apply(null, state.model.shapes.map((s) => s.z || 0)) : 0) + 1,
       parentId: null,
     };
+
+    ensureGroupFormMinimumCellSize(shape);
 
     state.model.shapes.push(shape);
     syncCanvasRectToContent();
