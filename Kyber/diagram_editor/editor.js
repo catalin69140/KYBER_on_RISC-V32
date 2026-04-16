@@ -1912,6 +1912,24 @@
     }
   }
 
+  function ensureComponentGroupMinimumCellSize(shape) {
+    if (!shape || shape.kind !== "component_group") return;
+    const count = Math.max(1, Math.min(24, Math.round(Number(shape.componentCount) || 4)));
+    const layout = groupFormLayout(shape);
+    const direction = normalizeComponentDirection(shape.componentDirection);
+    if (direction === "horizontal") {
+      const minBodyWidth = count * TABLE_MIN_CELL_WIDTH;
+      if (layout.bodyWidth < minBodyWidth) {
+        shape.width = snapToStep(shape.width + (minBodyWidth - layout.bodyWidth), GRID_MINOR_STEP);
+      }
+      return;
+    }
+    const minBodyHeight = count * TABLE_MIN_CELL_HEIGHT;
+    if (layout.bodyHeight < minBodyHeight) {
+      shape.height = snapToStep(shape.height + (minBodyHeight - layout.bodyHeight), GRID_MINOR_STEP);
+    }
+  }
+
   function insertTableRow(shape, rowIndex, insertAfter) {
     if (!shape || shape.kind !== "table_group") return null;
     const rows = Math.max(1, Math.min(24, Math.round(Number(shape.tableRows) || 2)));
@@ -1964,6 +1982,29 @@
     shape.components = next;
     ensureTableMinimumCellSize(shape);
     return clamp(0, 0, rows - 1) * shape.tableCols + insertAt;
+  }
+
+  function insertComponentGroupCell(shape, componentIndex, insertAfter) {
+    if (!shape || shape.kind !== "component_group") return null;
+    const count = Math.max(1, Math.min(24, Math.round(Number(shape.componentCount) || 4)));
+    if (count >= 24) return null;
+    const safeIndex = clamp(Math.round(Number(componentIndex) || 0), 0, count - 1);
+    const insertAt = safeIndex + (insertAfter ? 1 : 0);
+    const current = normalizeGroupComponents(shape.components, count, shape);
+    const next = [];
+    for (let index = 0; index < count + 1; index += 1) {
+      if (index === insertAt) {
+        next.push(defaultGroupComponent(next.length, shape));
+        continue;
+      }
+      const sourceIndex = index > insertAt ? index - 1 : index;
+      next.push(deepClone(current[sourceIndex] || defaultGroupComponent(next.length, shape)));
+    }
+    shape.componentCount = count + 1;
+    shape.componentFractions = normalizeSegmentFractions([], shape.componentCount);
+    shape.components = next;
+    ensureComponentGroupMinimumCellSize(shape);
+    return insertAt;
   }
 
   function componentBoxTextBox(box) {
@@ -6671,6 +6712,8 @@
         pushHistory();
         shape.componentDirection = normalizeComponentDirection(value);
         shape.componentFractions = normalizeSegmentFractions(shape.componentFractions, shape.componentCount);
+        ensureComponentGroupMinimumCellSize(shape);
+        syncCanvasRectToContent();
         render();
       });
       bindNumber("ins-group-count", "change", (num) => {
@@ -6678,6 +6721,8 @@
         shape.componentCount = Math.max(1, Math.min(24, Math.round(num || 1)));
         shape.components = normalizeGroupComponents(shape.components, shape.componentCount, shape);
         shape.componentFractions = normalizeSegmentFractions(shape.componentFractions, shape.componentCount);
+        ensureComponentGroupMinimumCellSize(shape);
+        syncCanvasRectToContent();
         render();
       });
     } else if (isTableGroup) {
@@ -6833,6 +6878,19 @@
       .map((option) => '<option value="' + escapeHtml(option.value) + '"' + (selectedFontFamily === option.value ? " selected" : "") + '>' + escapeHtml(option.label) + '</option>')
       .join("");
     const fillValue = effectiveGroupComponentFill(shape, component);
+    const structureHtml = shape.kind === "table_group"
+      ? '<div class="section-heading-row"><h3>Structure</h3></div>' +
+        '<div class="structure-grid">' +
+          '<button id="ins-row-before" type="button">Row before</button>' +
+          '<button id="ins-row-after" type="button">Row after</button>' +
+          '<button id="ins-col-before" type="button">Column before</button>' +
+          '<button id="ins-col-after" type="button">Column after</button>' +
+        '</div>'
+      : '<div class="section-heading-row"><h3>Structure</h3></div>' +
+        '<div class="structure-grid">' +
+          '<button id="ins-comp-before" type="button">Component before</button>' +
+          '<button id="ins-comp-after" type="button">Component after</button>' +
+        '</div>';
 
     state.richTextSelection = null;
     clearPendingRichTextFormat();
@@ -6863,12 +6921,7 @@
         '<input id="ins-shape-font-size" class="font-size-input" type="number" min="8" max="1000" step="0.5" title="Font size" value="' + roundNum(component.fontSize || 12) + '"/>' +
       "</div>",
       textSpacingControlsHtml("ins-spacing", component),
-      (shape.kind === "table_group"
-        ? '<div><label>Structure</label>' +
-          '<div class="row"><button id="ins-row-before" type="button">Row before</button><button id="ins-row-after" type="button">Row after</button></div>' +
-          '<div class="row"><button id="ins-col-before" type="button">Column before</button><button id="ins-col-after" type="button">Column after</button></div>' +
-          '</div>'
-        : ""),
+      structureHtml,
       '<div class="section-heading-row"><h3>Color</h3><label class="inline-toggle"><input id="ins-comp-fill-override" type="checkbox"' + (component.fillOverride ? " checked" : "") + '> Override</label></div>',
       '<div class="palette-block section-offset"><label>Fill palette</label><div class="palette" id="ins-comp-fill-palette"></div></div>',
       '<div class="color-inline-row"><label for="ins-comp-fill">Fill:</label><input id="ins-comp-fill" type="color" value="' + normalizeColor(fillValue, "#0d172a") + '"' + (component.fillOverride ? "" : " disabled") + '/></div>',
@@ -7060,40 +7113,67 @@
       render();
     });
 
-    if (shape.kind === "table_group" && selectedBox) {
+    if (selectedBox) {
       const bindInsert = (id, handler) => {
         const btn = document.getElementById(id);
         if (!btn) return;
         btn.addEventListener("click", handler);
       };
-      bindInsert("ins-row-before", () => {
-        pushHistory();
-        const insertRow = clamp(selectedBox.row, 0, shape.tableRows - 1);
-        insertTableRow(shape, selectedBox.row, false);
-        syncCanvasRectToContent();
-        setSelected({ type: "group_component", shapeId: shape.id, componentIndex: insertRow * shape.tableCols + selectedBox.col });
-      });
-      bindInsert("ins-row-after", () => {
-        pushHistory();
-        const insertRow = clamp(selectedBox.row + 1, 0, shape.tableRows);
-        insertTableRow(shape, selectedBox.row, true);
-        syncCanvasRectToContent();
-        setSelected({ type: "group_component", shapeId: shape.id, componentIndex: insertRow * shape.tableCols + selectedBox.col });
-      });
-      bindInsert("ins-col-before", () => {
-        pushHistory();
-        const insertCol = clamp(selectedBox.col, 0, shape.tableCols - 1);
-        insertTableColumn(shape, selectedBox.col, false);
-        syncCanvasRectToContent();
-        setSelected({ type: "group_component", shapeId: shape.id, componentIndex: selectedBox.row * shape.tableCols + insertCol });
-      });
-      bindInsert("ins-col-after", () => {
-        pushHistory();
-        const insertCol = clamp(selectedBox.col + 1, 0, shape.tableCols);
-        insertTableColumn(shape, selectedBox.col, true);
-        syncCanvasRectToContent();
-        setSelected({ type: "group_component", shapeId: shape.id, componentIndex: selectedBox.row * shape.tableCols + insertCol });
-      });
+      if (shape.kind === "table_group") {
+        bindInsert("ins-row-before", () => {
+          pushHistory();
+          const originalRow = clamp(selectedBox.row, 0, shape.tableRows - 1);
+          const originalCol = clamp(selectedBox.col, 0, shape.tableCols - 1);
+          const insertedIndex = insertTableRow(shape, originalRow, false);
+          if (insertedIndex == null) return;
+          syncCanvasRectToContent();
+          setSelected({ type: "group_component", shapeId: shape.id, componentIndex: (originalRow + 1) * shape.tableCols + originalCol });
+        });
+        bindInsert("ins-row-after", () => {
+          pushHistory();
+          const originalRow = clamp(selectedBox.row, 0, shape.tableRows - 1);
+          const originalCol = clamp(selectedBox.col, 0, shape.tableCols - 1);
+          const insertedIndex = insertTableRow(shape, originalRow, true);
+          if (insertedIndex == null) return;
+          syncCanvasRectToContent();
+          setSelected({ type: "group_component", shapeId: shape.id, componentIndex: originalRow * shape.tableCols + originalCol });
+        });
+        bindInsert("ins-col-before", () => {
+          pushHistory();
+          const originalRow = clamp(selectedBox.row, 0, shape.tableRows - 1);
+          const originalCol = clamp(selectedBox.col, 0, shape.tableCols - 1);
+          const insertedIndex = insertTableColumn(shape, originalCol, false);
+          if (insertedIndex == null) return;
+          syncCanvasRectToContent();
+          setSelected({ type: "group_component", shapeId: shape.id, componentIndex: originalRow * shape.tableCols + (originalCol + 1) });
+        });
+        bindInsert("ins-col-after", () => {
+          pushHistory();
+          const originalRow = clamp(selectedBox.row, 0, shape.tableRows - 1);
+          const originalCol = clamp(selectedBox.col, 0, shape.tableCols - 1);
+          const insertedIndex = insertTableColumn(shape, originalCol, true);
+          if (insertedIndex == null) return;
+          syncCanvasRectToContent();
+          setSelected({ type: "group_component", shapeId: shape.id, componentIndex: originalRow * shape.tableCols + originalCol });
+        });
+      } else if (shape.kind === "component_group") {
+        bindInsert("ins-comp-before", () => {
+          pushHistory();
+          const originalIndex = clamp(safeIndex, 0, shape.componentCount - 1);
+          const insertedIndex = insertComponentGroupCell(shape, originalIndex, false);
+          if (insertedIndex == null) return;
+          syncCanvasRectToContent();
+          setSelected({ type: "group_component", shapeId: shape.id, componentIndex: originalIndex + 1 });
+        });
+        bindInsert("ins-comp-after", () => {
+          pushHistory();
+          const originalIndex = clamp(safeIndex, 0, shape.componentCount - 1);
+          const insertedIndex = insertComponentGroupCell(shape, originalIndex, true);
+          if (insertedIndex == null) return;
+          syncCanvasRectToContent();
+          setSelected({ type: "group_component", shapeId: shape.id, componentIndex: originalIndex });
+        });
+      }
     }
   }
 
