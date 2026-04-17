@@ -3360,9 +3360,10 @@
         }, minorSeparatorWidth);
       });
     } else if (kind === "component_group") {
-      const headerH = componentGroupHeaderHeight(shape);
       const layout = componentGroupLayout(shape);
       const components = normalizeGroupComponents(shape.components, shape.componentCount, shape);
+      const headerRect = layout.headerRect;
+      const headerH = headerRect ? headerRect.height : componentGroupHeaderHeight(shape);
       shape.components = components;
       group.appendChild(createSvg("rect", Object.assign({
         x: shape.x,
@@ -3373,9 +3374,9 @@
         ry: roundedRadius,
       }, commonStroke)));
       group.appendChild(createSvg("rect", {
-        x: shape.x + 1,
-        y: shape.y + 1,
-        width: Math.max(1, shape.width - 2),
+        x: headerRect ? (headerRect.x + 1) : (shape.x + 1),
+        y: headerRect ? (headerRect.y + 1) : (shape.y + 1),
+        width: headerRect ? Math.max(1, headerRect.width - 2) : Math.max(1, shape.width - 2),
         height: Math.max(1, headerH - 1),
         fill: darken(shape.fill, -14),
         stroke: "none",
@@ -3384,9 +3385,9 @@
       }));
       appendStrokeLine({
         x1: shape.x,
-        y1: shape.y + headerH,
+        y1: headerRect ? (headerRect.y + headerRect.height) : (shape.y + headerH),
         x2: shape.x + shape.width,
-        y2: shape.y + headerH,
+        y2: headerRect ? (headerRect.y + headerRect.height) : (shape.y + headerH),
       }, separatorWidth);
 
       layout.components.forEach((box, idx) => {
