@@ -349,6 +349,13 @@ def _as_group_header_side(value: Any) -> str:
     return "top"
 
 
+def _as_group_header_size(value: Any) -> float:
+    raw = _to_float(value, 0.0)
+    if raw <= 0.0:
+        return 0.0
+    return max(0.0, min(2000.0, raw))
+
+
 def _as_font_family(value: Any) -> str:
     family = str(value or "").strip()
     if family in VALID_FONT_FAMILIES:
@@ -630,6 +637,7 @@ def normalize_model(raw_model: Any, elf_name: str = "") -> Dict[str, Any]:
             "textOffsetRight": _as_text_inset(raw_shape.get("textOffsetRight"), 0.0),
             "textPadding": _as_text_inset(raw_shape.get("textPadding"), 0.0),
             "groupHeaderSide": _as_group_header_side(raw_shape.get("groupHeaderSide", "top")),
+            "groupHeaderSize": _as_group_header_size(raw_shape.get("groupHeaderSize", 0.0)),
             "componentDirection": _as_component_direction(raw_shape.get("componentDirection")),
             "componentCount": component_count,
             "componentFractions": _normalize_fraction_list(raw_shape.get("componentFractions"), component_count),

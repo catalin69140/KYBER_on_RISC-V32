@@ -500,6 +500,12 @@
     return "top";
   }
 
+  function normalizeGroupHeaderSize(raw) {
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0) return 0;
+    return clamp(n, 0, 2000);
+  }
+
   function normalizeFontSize(raw, fallback) {
     const n = Number(raw);
     if (!Number.isFinite(n)) return fallback;
@@ -759,6 +765,7 @@
       shape.textOffsetRight = normalizeTextInset(shape.textOffsetRight, 0);
       shape.textPadding = normalizeTextInset(shape.textPadding, 0);
       shape.groupHeaderSide = normalizeGroupHeaderSide(shape.groupHeaderSide);
+      shape.groupHeaderSize = normalizeGroupHeaderSize(shape.groupHeaderSize);
       shape.componentDirection = normalizeComponentDirection(shape.componentDirection);
       const defaultComponentCount = shape.kind === "component_group" ? 4 : 1;
       shape.componentCount = Math.max(1, Math.min(24, Math.round(Number.isFinite(Number(shape.componentCount)) ? Number(shape.componentCount) : defaultComponentCount)));
@@ -1716,6 +1723,42 @@
     return Math.max(18, Math.min(36, Math.round(shape.height * 0.22)));
   }
 
+  function groupBodyMinimumForHeaderSide(shape, side) {
+    if (!shape) return 48;
+    const normalizedSide = normalizeSide(side || groupHeaderSideForShape(shape));
+    if (shape.kind === "table_group") {
+      const rows = Math.max(1, Math.min(24, Math.round(Number(shape.tableRows) || 2)));
+      const cols = Math.max(1, Math.min(24, Math.round(Number(shape.tableCols) || 2)));
+      return (normalizedSide === "left" || normalizedSide === "right")
+        ? cols * TABLE_MIN_CELL_WIDTH
+        : rows * TABLE_MIN_CELL_HEIGHT;
+    }
+    const count = Math.max(1, Math.min(24, Math.round(Number(shape.componentCount) || 4)));
+    const direction = normalizeComponentDirection(shape.componentDirection);
+    if (normalizedSide === "left" || normalizedSide === "right") {
+      return TABLE_MIN_CELL_WIDTH;
+    }
+    return direction === "vertical"
+      ? count * TABLE_MIN_CELL_HEIGHT
+      : TABLE_MIN_CELL_HEIGHT;
+  }
+
+  function clampGroupHeaderSize(shape, proposed, sideOverride) {
+    if (!shape) return 0;
+    const side = normalizeSide(sideOverride || groupHeaderSideForShape(shape));
+    if (side === "none") return 0;
+    const axisSize = (side === "left" || side === "right") ? shape.width : shape.height;
+    const minThickness = 18;
+    const minBody = groupBodyMinimumForHeaderSide(shape, side);
+    const maxThickness = Math.max(minThickness, axisSize - Math.max(1, minBody));
+    const defaultThickness = shape.kind === "component_group"
+      ? componentGroupHeaderHeight(shape)
+      : Math.max(18, Math.min(36, Math.round(axisSize * 0.22)));
+    const raw = Number(proposed);
+    const next = Number.isFinite(raw) && raw > 0 ? raw : defaultThickness;
+    return clamp(next, minThickness, maxThickness);
+  }
+
   function groupHeaderSideForShape(shape) {
     if (!shape) return "none";
     if (shape.kind === "table_group") return normalizeGroupHeaderSide(shape.groupHeaderSide);
@@ -1727,7 +1770,11 @@
     const side = groupHeaderSideForShape(shape);
     if (side === "none") return 0;
     const axisSize = (side === "left" || side === "right") ? shape.width : shape.height;
-    return Math.max(18, Math.min(36, Math.round(axisSize * 0.22)));
+    const defaultThickness = shape.kind === "component_group"
+      ? componentGroupHeaderHeight(shape)
+      : Math.max(18, Math.min(36, Math.round(axisSize * 0.22)));
+    const explicitThickness = normalizeGroupHeaderSize(shape.groupHeaderSize);
+    return clampGroupHeaderSize(shape, explicitThickness || defaultThickness, side);
   }
 
   function groupHeaderRect(shape) {
@@ -4027,6 +4074,62 @@
     if (!shape || !isGroupFormKind(shape.kind)) return;
     const layout = groupFormLayout(shape);
     const dividerStroke = "#8ab8ff";
+    const headerRect = layout.headerRect;
+    if (headerRect) {
+      if (headerRect.side === "top" || headerRect.side === "bottom") {
+        const lineY = headerRect.side === "top" ? (headerRect.y + headerRect.height) : headerRect.y;
+        overlayLayer.appendChild(createSvg("line", {
+          x1: shape.x,
+          y1: lineY,
+          x2: shape.x + shape.width,
+          y2: lineY,
+          stroke: dividerStroke,
+          "stroke-width": 1.2,
+          "stroke-dasharray": "4 4",
+          opacity: 0.7,
+          "pointer-events": "none",
+        }));
+        const handle = createSvg("rect", {
+          x: shape.x,
+          y: lineY - 7,
+          width: Math.max(12, shape.width),
+          height: 14,
+          fill: "rgba(0,0,0,0)",
+          style: "cursor:row-resize",
+        });
+        handle.addEventListener("pointerdown", (evt) => {
+          evt.stopPropagation();
+          startGroupHeaderResize(evt, shape.id);
+        });
+        overlayLayer.appendChild(handle);
+      } else {
+        const lineX = headerRect.side === "left" ? (headerRect.x + headerRect.width) : headerRect.x;
+        overlayLayer.appendChild(createSvg("line", {
+          x1: lineX,
+          y1: shape.y,
+          x2: lineX,
+          y2: shape.y + shape.height,
+          stroke: dividerStroke,
+          "stroke-width": 1.2,
+          "stroke-dasharray": "4 4",
+          opacity: 0.7,
+          "pointer-events": "none",
+        }));
+        const handle = createSvg("rect", {
+          x: lineX - 7,
+          y: shape.y,
+          width: 14,
+          height: Math.max(12, shape.height),
+          fill: "rgba(0,0,0,0)",
+          style: "cursor:col-resize",
+        });
+        handle.addEventListener("pointerdown", (evt) => {
+          evt.stopPropagation();
+          startGroupHeaderResize(evt, shape.id);
+        });
+        overlayLayer.appendChild(handle);
+      }
+    }
     layout.verticalDividers.forEach((divider) => {
       overlayLayer.appendChild(createSvg("line", {
         x1: divider.x,
@@ -4642,6 +4745,23 @@
     };
   }
 
+  function startGroupHeaderResize(evt, shapeId) {
+    const shape = shapeById(shapeId);
+    if (!shape || !isGroupFormKind(shape.kind)) return;
+    const header = groupHeaderRect(shape);
+    if (!header) return;
+    pushHistory();
+    state.drag = {
+      type: "resize-group-header",
+      shapeId: shapeId,
+      side: header.side,
+      start: clientToSvg(evt),
+      before: {
+        groupHeaderSize: normalizeGroupHeaderSize(shape.groupHeaderSize),
+      },
+    };
+  }
+
   function adjustDividerFractions(fractions, dividerIndex, targetOffset, totalSize) {
     const safeFractions = normalizeSegmentFractions(fractions, fractions.length || 1);
     if (safeFractions.length <= 1) return safeFractions;
@@ -4811,6 +4931,27 @@
       return;
     }
 
+    if (state.drag.type === "resize-group-header") {
+      const shape = shapeById(state.drag.shapeId);
+      if (!shape || !isGroupFormKind(shape.kind)) return;
+      const side = normalizeSide(state.drag.side || groupHeaderSideForShape(shape));
+      let proposed = groupHeaderThickness(shape);
+      if (side === "top") {
+        proposed = snapToStep(point.y - shape.y, GRID_MINOR_STEP);
+      } else if (side === "bottom") {
+        proposed = snapToStep((shape.y + shape.height) - point.y, GRID_MINOR_STEP);
+      } else if (side === "left") {
+        proposed = snapToStep(point.x - shape.x, GRID_MINOR_STEP);
+      } else if (side === "right") {
+        proposed = snapToStep((shape.x + shape.width) - point.x, GRID_MINOR_STEP);
+      }
+      shape.groupHeaderSize = clampGroupHeaderSize(shape, proposed, side);
+      ensureGroupFormMinimumCellSize(shape);
+      updateCanvasDuringInteraction(shapeBounds(shape));
+      render();
+      return;
+    }
+
     if (state.drag.type === "arrow-endpoint") {
       const arrow = arrowById(state.drag.arrowId);
       if (!arrow) return;
@@ -4874,6 +5015,12 @@
     }
 
     if (drag.type === "resize-group-divider") {
+      syncCanvasRectToContent();
+      render();
+    }
+
+    if (drag.type === "resize-group-header") {
+      syncCanvasRectToContent();
       render();
     }
 
@@ -4998,6 +5145,7 @@
       textOffsetRight: 0,
       textPadding: 0,
       groupHeaderSide: normalizedKind === "table_group" ? "top" : "none",
+      groupHeaderSize: 0,
       componentDirection: "horizontal",
       componentCount: componentCount,
       componentFractions: normalizedKind === "component_group"
@@ -6723,7 +6871,7 @@
       bindInput("ins-group-direction", "change", (value) => {
         pushHistory();
         shape.componentDirection = normalizeComponentDirection(value);
-        shape.componentFractions = normalizeSegmentFractions(shape.componentFractions, shape.componentCount);
+        shape.componentFractions = normalizeSegmentFractions([], shape.componentCount);
         ensureComponentGroupMinimumCellSize(shape);
         syncCanvasRectToContent();
         render();
@@ -6732,7 +6880,7 @@
         pushHistory();
         shape.componentCount = Math.max(1, Math.min(24, Math.round(num || 1)));
         shape.components = normalizeGroupComponents(shape.components, shape.componentCount, shape);
-        shape.componentFractions = normalizeSegmentFractions(shape.componentFractions, shape.componentCount);
+        shape.componentFractions = normalizeSegmentFractions([], shape.componentCount);
         ensureComponentGroupMinimumCellSize(shape);
         syncCanvasRectToContent();
         render();
@@ -6741,6 +6889,8 @@
       bindInput("ins-group-header-side", "change", (value) => {
         pushHistory();
         shape.groupHeaderSide = normalizeGroupHeaderSide(value);
+        ensureTableMinimumCellSize(shape);
+        syncCanvasRectToContent();
         render();
       });
       bindNumber("ins-group-rows", "change", (num) => {
