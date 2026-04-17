@@ -2522,7 +2522,7 @@ def write_html_animation(
     }
 
     function refComponentGroupHeaderHeight(spec) {
-        return Math.max(18, Math.min(36, Math.round(spec.h * 0.22)));
+        return Math.max(20, Math.min(36, Math.round(spec.h * 0.22)));
     }
 
     function refNormalizeGroupHeaderSize(value) {
@@ -2557,35 +2557,39 @@ def write_html_animation(
             const rows = Math.max(1, Math.min(24, Number(spec.tableRows) || 2));
             const cols = Math.max(1, Math.min(24, Number(spec.tableCols) || 2));
             return (normalizedSide === "left" || normalizedSide === "right")
-                ? cols * 72
-                : rows * 48;
+                ? cols * 70
+                : rows * 40;
+        }
+        if (String(spec.kind || "") === "header_container") {
+            return (normalizedSide === "left" || normalizedSide === "right") ? 70 : 40;
         }
         const count = Math.max(1, Math.min(24, Number(spec.componentCount) || 4));
         const direction = String(spec.componentDirection || "horizontal").toLowerCase() === "vertical" ? "vertical" : "horizontal";
-        if (normalizedSide === "left" || normalizedSide === "right") return 72;
-        return direction === "vertical" ? count * 48 : 48;
+        if (normalizedSide === "left" || normalizedSide === "right") return 70;
+        return direction === "vertical" ? count * 40 : 40;
     }
 
     function refClampGroupHeaderSize(spec, proposed, side) {
         const normalizedSide = String(side || "").toLowerCase().trim();
         if (normalizedSide === "none") return 0;
         const axisSize = (normalizedSide === "left" || normalizedSide === "right") ? spec.w : spec.h;
-        const minThickness = 18;
+        const minThickness = 20;
         const minBody = refGroupBodyMinimumForHeaderSide(spec, normalizedSide);
         const maxThickness = Math.max(minThickness, axisSize - Math.max(1, minBody));
         const defaultThickness = String(spec.kind || "") === "component_group"
             ? refComponentGroupHeaderHeight(spec)
-            : Math.max(18, Math.min(36, Math.round(axisSize * 0.22)));
+            : Math.max(20, Math.min(36, Math.round(axisSize * 0.22)));
         const raw = Number(proposed);
         const next = Number.isFinite(raw) && raw > 0 ? raw : defaultThickness;
         return Math.max(minThickness, Math.min(maxThickness, next));
     }
 
     function refGroupHeaderRect(spec) {
-        if (String(spec.kind || "") !== "table_group") {
+        if (String(spec.kind || "") === "component_group" || String(spec.kind || "") === "header_container") {
             const thickness = refClampGroupHeaderSize(spec, refNormalizeGroupHeaderSize(spec.groupHeaderSize) || refComponentGroupHeaderHeight(spec), "top");
             return { side: "top", thickness: thickness, x: spec.x, y: spec.y, width: spec.w, height: thickness };
         }
+        if (String(spec.kind || "") !== "table_group") return null;
         const side = refNormalizeGroupHeaderSide(spec.groupHeaderSide);
         if (side === "none") return null;
         const axisSize = (side === "left" || side === "right") ? spec.w : spec.h;
@@ -2831,8 +2835,9 @@ def write_html_animation(
 
     function refShapeTextBox(spec, kind) {
         if (kind === "header_container") {
-            const headerH = refComponentGroupHeaderHeight(spec);
-            return refApplyTextBoxAdjustments({ x: spec.x + 8, y: spec.y + 2, width: Math.max(24, spec.w - 16), height: Math.max(14, headerH - 4) }, spec, { x: spec.x, y: spec.y, width: spec.w, height: headerH });
+            const headerRect = refGroupHeaderRect(spec);
+            const headerH = headerRect ? headerRect.height : refComponentGroupHeaderHeight(spec);
+            return refApplyTextBoxAdjustments({ x: (headerRect ? headerRect.x : spec.x) + 8, y: (headerRect ? headerRect.y : spec.y) + 2, width: Math.max(24, (headerRect ? headerRect.width : spec.w) - 16), height: Math.max(14, headerH - 4) }, spec, { x: headerRect ? headerRect.x : spec.x, y: headerRect ? headerRect.y : spec.y, width: headerRect ? headerRect.width : spec.w, height: headerH });
         }
         if (kind === "component_group") {
             const headerRect = refGroupHeaderRect(spec);
@@ -3337,15 +3342,16 @@ def write_html_animation(
                 ]);
             }
         } else if (shapeKind === "header_container") {
-            const headerH = Math.max(18, Math.min(36, Math.round(spec.h * 0.22)));
+            const headerRect = refGroupHeaderRect(spec);
+            const headerH = headerRect ? headerRect.height : refComponentGroupHeaderHeight(spec);
             appendShapeEl("rect", {
                 x: spec.x, y: spec.y, width: spec.w, height: spec.h,
                 rx: rounded, ry: rounded
             });
             g.appendChild(createSvgEl("rect", {
-                x: spec.x + 1,
-                y: spec.y + 1,
-                width: Math.max(1, spec.w - 2),
+                x: headerRect ? (headerRect.x + 1) : (spec.x + 1),
+                y: headerRect ? (headerRect.y + 1) : (spec.y + 1),
+                width: headerRect ? Math.max(1, headerRect.width - 2) : Math.max(1, spec.w - 2),
                 height: Math.max(1, headerH - 1),
                 fill: refDarkenHex(fill, -16),
                 stroke: "none",
@@ -3354,9 +3360,9 @@ def write_html_animation(
             }));
             const sep = createSvgEl("line", {
                 x1: spec.x,
-                y1: spec.y + headerH,
+                y1: headerRect ? (headerRect.y + headerRect.height) : (spec.y + headerH),
                 x2: spec.x + spec.w,
-                y2: spec.y + headerH
+                y2: headerRect ? (headerRect.y + headerRect.height) : (spec.y + headerH)
             });
             if (showBorder) {
                 sep.setAttribute("stroke", stroke);
