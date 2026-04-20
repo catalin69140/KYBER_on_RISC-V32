@@ -4636,14 +4636,14 @@
       return;
     }
 
-    state.selected = null;
-    state.selectedShapeIds = [];
     state.drag = {
       type: "pan-canvas",
       startClientX: evt.clientX,
       startClientY: evt.clientY,
       startScrollLeft: els.canvasScroll.scrollLeft,
       startScrollTop: els.canvasScroll.scrollTop,
+      moved: false,
+      clearSelectionOnClick: evt.button === 0,
     };
     els.canvasScroll.classList.add("panning");
     render();
@@ -4873,6 +4873,9 @@
     if (state.drag.type === "pan-canvas") {
       const dx = evt.clientX - state.drag.startClientX;
       const dy = evt.clientY - state.drag.startClientY;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+        state.drag.moved = true;
+      }
       els.canvasScroll.scrollLeft = state.drag.startScrollLeft - dx;
       els.canvasScroll.scrollTop = state.drag.startScrollTop - dy;
       return;
@@ -5097,6 +5100,11 @@
 
     if (drag.type === "pan-canvas") {
       els.canvasScroll.classList.remove("panning");
+      if (drag.clearSelectionOnClick && !drag.moved) {
+        state.selected = null;
+        state.selectedShapeIds = [];
+        render();
+      }
     }
   }
 
