@@ -13,44 +13,32 @@ def _fmt_num(value: Any) -> float | int:
     return round(n, 3)
 
 
-def _anchor_fraction(stops: List[float], anchor_count: int, anchor_index: int) -> float:
-    if stops and 0 <= anchor_index < len(stops):
-        return float(stops[anchor_index])
-    if anchor_count <= 1:
-        return 0.5
-    return float(anchor_index) / float(anchor_count - 1)
-
-
 def _endpoint_codegen(endpoint: Dict[str, Any], shape_map: Dict[str, Dict[str, Any]], stops: List[float], anchor_count: int) -> Dict[str, Any]:
-    shape = shape_map[endpoint["shapeId"]]
-    side = endpoint.get("side") or "right"
-    anchor_index = int(endpoint.get("anchorIndex", anchor_count // 2))
-    anchor_index = max(0, min(anchor_count - 1, anchor_index))
-    frac = _anchor_fraction(stops, anchor_count, anchor_index)
-    dx = 0.0
-    dy = 0.0
-    if side in ("top", "bottom"):
-        dx = (frac - 0.5) * float(shape["width"])
-    else:
-        dy = (frac - 0.5) * float(shape["height"])
+    shape_id = endpoint.get("shapeId")
+    if shape_id in shape_map:
+        side = endpoint.get("side") or "right"
+        frac = float(endpoint.get("anchorFraction", 0.5))
+        frac = max(0.0, min(1.0, frac))
+        return {
+            "id": shape_id,
+            "side": side,
+            "fraction": _fmt_num(frac),
+        }
     return {
-        "id": endpoint["shapeId"],
-        "side": side,
-        "dx": _fmt_num(dx),
-        "dy": _fmt_num(dy),
+        "x": _fmt_num(endpoint.get("x", 0)),
+        "y": _fmt_num(endpoint.get("y", 0)),
     }
 
 
 def _sorted_shapes(model: Dict[str, Any]) -> List[Dict[str, Any]]:
-    container_kinds = {"container", "header_container"}
     return sorted(
         model.get("shapes", []),
-        key=lambda s: (int(s.get("z", 0)), s.get("kind") not in container_kinds, s.get("id", "")),
+        key=lambda s: (int(s.get("z", 0)), s.get("id", "")),
     )
 
 
 def _sorted_arrows(model: Dict[str, Any]) -> List[Dict[str, Any]]:
-    return sorted(model.get("arrows", []), key=lambda a: a.get("id", ""))
+    return sorted(model.get("arrows", []), key=lambda a: (int(a.get("z", 0)), a.get("id", "")))
 
 
 def _build_codegen_payload(model: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
@@ -70,6 +58,7 @@ def _build_codegen_payload(model: Dict[str, Any]) -> Tuple[List[Dict[str, Any]],
             {
                 "id": shape["id"],
                 "kind": shape.get("kind", "square"),
+                "z": int(shape.get("z", 0)),
                 "x": _fmt_num(shape.get("x", 0)),
                 "y": _fmt_num(shape.get("y", 0)),
                 "w": _fmt_num(shape.get("width", 100)),
@@ -128,7 +117,11 @@ def _build_codegen_payload(model: Dict[str, Any]) -> Tuple[List[Dict[str, Any]],
     for arrow in _sorted_arrows(model):
         from_ep = arrow.get("from") if isinstance(arrow.get("from"), dict) else {}
         to_ep = arrow.get("to") if isinstance(arrow.get("to"), dict) else {}
-        if from_ep.get("shapeId") not in shape_map or to_ep.get("shapeId") not in shape_map:
+        from_connected = from_ep.get("shapeId") in shape_map
+        to_connected = to_ep.get("shapeId") in shape_map
+        from_free = from_ep.get("shapeId") in (None, "") and "x" in from_ep and "y" in from_ep
+        to_free = to_ep.get("shapeId") in (None, "") and "x" in to_ep and "y" in to_ep
+        if not (from_connected or from_free) or not (to_connected or to_free):
             continue
         from_spec = _endpoint_codegen(from_ep, shape_map, stops, anchor_count)
         to_spec = _endpoint_codegen(to_ep, shape_map, stops, anchor_count)
@@ -156,6 +149,7 @@ def _build_codegen_payload(model: Dict[str, Any]) -> Tuple[List[Dict[str, Any]],
         connector_specs.append(
             {
                 "id": arrow["id"],
+                "z": int(arrow.get("z", 0)),
                 "from": from_spec,
                 "to": to_spec,
                 "opts": opts,
@@ -236,17 +230,35 @@ function generatedRenderPrimaryReferenceDiagram() {{
     }}));
 
     const generatedShapes = {shape_json};
+    const generatedShapeEls = Object.create(null);
     generatedShapes.forEach((shapeSpec) => {{
         addGeneratedRefShape(svg, shapeSpec);
+        generatedShapeEls[shapeSpec.id] = primaryRefNodeEls[shapeSpec.id] || null;
     }});
 
-    primaryRefConnectorBuffer = [];
     const generatedConnectors = {connector_json};
+    const generatedConnectorEls = Object.create(null);
     generatedConnectors.forEach((connSpec) => {{
-        addRefConnector(svg, connSpec.from, connSpec.to, connSpec.opts || {{}});
+        generatedConnectorEls[connSpec.id] = drawRefConnectorInternal(svg, connSpec.from, connSpec.to, connSpec.opts || {{}});
     }});
 
-    flushRefConnectors(svg);
+    generatedShapes
+        .map((shapeSpec) => ({{ type: "shape", id: shapeSpec.id, z: Number(shapeSpec.z) || 0 }}))
+        .concat(generatedConnectors.map((connSpec) => ({{ type: "connector", id: connSpec.id, z: Number(connSpec.z) || 0 }})))
+        .sort((a, b) => {{
+            if (a.z !== b.z) return a.z - b.z;
+            if (a.type !== b.type) return a.type === "connector" ? -1 : 1;
+            return String(a.id || "").localeCompare(String(b.id || ""));
+        }})
+        .forEach((entry) => {{
+            const el = entry.type === "shape"
+                ? generatedShapeEls[entry.id]
+                : generatedConnectorEls[entry.id];
+            if (el && el.parentNode === svg) {{
+                svg.appendChild(el);
+            }}
+        }});
+
     container.appendChild(svg);
     setupPrimaryReferenceNodeMap(svg);
 }}

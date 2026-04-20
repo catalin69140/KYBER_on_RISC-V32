@@ -3585,6 +3585,21 @@ def write_html_animation(
         return fallback;
     }
 
+    const REF_FRAME_ANCHOR_EXCEPTION_KINDS = new Set([
+        "actor",
+        "cloud",
+        "cloud_callout",
+        "card",
+        "note",
+        "mail",
+        "message",
+    ]);
+
+    function refNormalizeFraction(value, fallback = 0.5) {
+        const num = Number.isFinite(Number(value)) ? Number(value) : fallback;
+        return Math.max(0, Math.min(1, num));
+    }
+
     function addRefArrow(svg, from, to, opts = {}) {
         const connectionType = normalizeRefConnectionType(
             opts.connectionType,
@@ -3781,6 +3796,106 @@ def write_html_animation(
         return g;
     }
 
+    function refAnchorAtFraction(nodeId, side, fraction = 0.5) {
+        const b = primaryRefNodeBoxes[nodeId];
+        if (!b) return { x: 0, y: 0 };
+        if (b.anchors && b.anchors[side]) {
+            return { x: b.anchors[side].x, y: b.anchors[side].y };
+        }
+        const kind = String(b.kind || "");
+        const x0 = b.x;
+        const y0 = b.y;
+        const w = b.w;
+        const h = b.h;
+        const cx = x0 + w / 2;
+        const cy = y0 + h / 2;
+        const frac = refNormalizeFraction(fraction, 0.5);
+        if (REF_FRAME_ANCHOR_EXCEPTION_KINDS.has(kind)) {
+            if (side === "left") return { x: x0, y: y0 + h * frac };
+            if (side === "right") return { x: x0 + w, y: y0 + h * frac };
+            if (side === "top") return { x: x0 + w * frac, y: y0 };
+            return { x: x0 + w * frac, y: y0 + h };
+        }
+        if (kind === "circle" || kind === "oval") {
+            const rx = Math.max(0.01, w / 2);
+            const ry = Math.max(0.01, h / 2);
+            if (side === "left" || side === "right") {
+                const targetY = y0 + h * frac;
+                const ny = (targetY - cy) / ry;
+                const k = Math.sqrt(Math.max(0, 1 - ny * ny));
+                const x = cx + ((side === "left") ? -rx : rx) * k;
+                return { x, y: targetY };
+            }
+            const targetX = x0 + w * frac;
+            const nx = (targetX - cx) / rx;
+            const k = Math.sqrt(Math.max(0, 1 - nx * nx));
+            const y = cy + ((side === "top") ? -ry : ry) * k;
+            return { x: targetX, y };
+        }
+        if (kind === "triangle") {
+            const top = { x: cx, y: y0 };
+            const bl = { x: x0, y: y0 + h };
+            const br = { x: x0 + w, y: y0 + h };
+            if (side === "left") return refLerpPoint(top, bl, frac);
+            if (side === "right") return refLerpPoint(top, br, frac);
+            if (side === "bottom") return { x: x0 + w * frac, y: y0 + h };
+            if (frac <= 0.5) {
+                return refLerpPoint(bl, top, frac / 0.5);
+            }
+            return refLerpPoint(top, br, (frac - 0.5) / 0.5);
+        }
+        if (kind === "cone") {
+            const rx = w * 0.32;
+            const ry = Math.max(8, Math.min(14, h * 0.11));
+            const apex = { x: cx, y: y0 + 4 };
+            const baseCy = y0 + h - ry - 2;
+            const leftBase = { x: cx - rx, y: baseCy };
+            const rightBase = { x: cx + rx, y: baseCy };
+            if (side === "left") return refLerpPoint(apex, leftBase, frac);
+            if (side === "right") return refLerpPoint(apex, rightBase, frac);
+            if (side === "bottom") {
+                const targetX = cx - rx + rx * 2 * frac;
+                const nx = (targetX - cx) / Math.max(0.01, rx);
+                const k = Math.sqrt(Math.max(0, 1 - nx * nx));
+                return { x: targetX, y: baseCy + ry * k };
+            }
+            if (frac <= 0.5) {
+                return refLerpPoint(leftBase, apex, frac / 0.5);
+            }
+            return refLerpPoint(apex, rightBase, (frac - 0.5) / 0.5);
+        }
+        const polygon = refPolygonVertices({ x: x0, y: y0, w, h }, kind);
+        if (polygon) {
+            const target = side === "left"
+                ? { x: x0, y: y0 + h * frac }
+                : side === "right"
+                    ? { x: x0 + w, y: y0 + h * frac }
+                    : side === "top"
+                        ? { x: x0 + w * frac, y: y0 }
+                        : { x: x0 + w * frac, y: y0 + h };
+            const projected = refClosestPointOnPolygon(target, polygon);
+            if (projected) return projected;
+        }
+        if (kind === "cylinder") {
+            const rx = Math.max(0.01, w / 2);
+            const ry = Math.max(8, Math.min(16, h * 0.12));
+            const topCy = y0 + ry + 2;
+            const bottomCy = y0 + h - ry - 2;
+            if (side === "left") return { x: x0, y: topCy + (bottomCy - topCy) * frac };
+            if (side === "right") return { x: x0 + w, y: topCy + (bottomCy - topCy) * frac };
+            const targetX = x0 + w * frac;
+            const nx = (targetX - cx) / rx;
+            const k = Math.sqrt(Math.max(0, 1 - nx * nx));
+            const targetCy = side === "top" ? topCy : bottomCy;
+            return { x: targetX, y: targetCy + (side === "top" ? -ry : ry) * k };
+        }
+        if (side === "left")   return { x: x0, y: y0 + h * frac };
+        if (side === "right")  return { x: x0 + w, y: y0 + h * frac };
+        if (side === "top")    return { x: x0 + w * frac, y: y0 };
+        if (side === "bottom") return { x: x0 + w * frac, y: y0 + h };
+        return { x: cx, y: cy };
+    }
+
     function refAnchor(nodeId, side, dx = 0, dy = 0) {
         const b = primaryRefNodeBoxes[nodeId];
         if (!b) return { x: 0, y: 0 };
@@ -3854,6 +3969,24 @@ def write_html_animation(
         if (side === "top")    return { x: cx + dx, y: y0 };
         if (side === "bottom") return { x: cx + dx, y: y0 + h };
         return { x: cx + dx, y: cy + dy };
+    }
+
+    function refEndpointPoint(spec, fallbackSide) {
+        if (!spec || typeof spec !== "object") return { x: 0, y: 0 };
+        if ((!spec.id && !spec.shapeId) && Number.isFinite(Number(spec.x)) && Number.isFinite(Number(spec.y))) {
+            return { x: Number(spec.x), y: Number(spec.y) };
+        }
+        const nodeId = spec.id || spec.shapeId;
+        if (!nodeId) return { x: Number(spec.x) || 0, y: Number(spec.y) || 0 };
+        const rawSide = spec.side || fallbackSide || "right";
+        const side = isCustomNamedRefAnchor(nodeId, rawSide)
+            ? rawSide
+            : (canonicalRefBorderSide(rawSide) || rawSide || "right");
+        const base = refAnchorAtFraction(nodeId, side, refNormalizeFraction(spec.fraction != null ? spec.fraction : spec.anchorFraction, 0.5));
+        return {
+            x: base.x + (Number(spec.dx) || 0),
+            y: base.y + (Number(spec.dy) || 0),
+        };
     }
 
     function canonicalRefBorderSide(side) {
@@ -4200,8 +4333,10 @@ def write_html_animation(
         const toRawSide = toSpec.side || "left";
         const fromSide = canonicalRefBorderSide(fromRawSide) || "right";
         const toSide = canonicalRefBorderSide(toRawSide) || "left";
-        const a = refAnchor(fromSpec.id, fromSpec.side || "right", fromSpec.dx || 0, fromSpec.dy || 0);
-        const b = refAnchor(toSpec.id, toSpec.side || "left", toSpec.dx || 0, toSpec.dy || 0);
+        const fromId = fromSpec.id || fromSpec.shapeId || "";
+        const toId = toSpec.id || toSpec.shapeId || "";
+        const a = refEndpointPoint(fromSpec, "right");
+        const b = refEndpointPoint(toSpec, "left");
         const connectionType = normalizeRefConnectionType(
             opts.connectionType,
             (opts.arrowHead === false) ? "line" : "directional_connector"
@@ -4234,7 +4369,7 @@ def write_html_animation(
             } else {
                 let polyline = buildRefConnectorPolyline(a, b, fromSide, toSide, opts || {});
                 if (REF_ENABLE_OBSTACLE_AVOID) {
-                    polyline = refAvoidObstaclesInPolyline(polyline, [fromSpec.id, toSpec.id], {
+                    polyline = refAvoidObstaclesInPolyline(polyline, [fromId, toId].filter(Boolean), {
                         obstaclePad: (opts.obstaclePad != null) ? opts.obstaclePad : 6,
                         lanePad: (opts.lanePad != null) ? opts.lanePad : 12
                     });
@@ -4253,10 +4388,11 @@ def write_html_animation(
                 dashed: !!opts.dashed,
                 color: opts.color,
                 width: opts.width,
+                lineStyle: opts.lineStyle,
                 connectionType
             });
         } catch (e) {
-            console.warn("Connector routing fallback:", fromSpec.id, "->", toSpec.id, e);
+            console.warn("Connector routing fallback:", fromId, "->", toId, e);
             // Safe fallback: simple orthogonal connector with no obstacle/crossing enhancements.
             const d = (toSide === "left" || toSide === "right")
                 ? `M ${a.x} ${a.y} L ${a.x} ${b.y} L ${b.x} ${b.y}`
@@ -4266,6 +4402,7 @@ def write_html_animation(
                 dashed: !!opts.dashed,
                 color: opts.color,
                 width: opts.width,
+                lineStyle: opts.lineStyle,
                 connectionType
             });
         }

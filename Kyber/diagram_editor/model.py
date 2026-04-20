@@ -517,6 +517,18 @@ def _normalize_anchor_stops(raw_stops: Any) -> List[float]:
     return unique
 
 
+def _anchor_fraction_for_index(stops: List[float], anchor_count: int, anchor_index: int) -> float:
+    if stops and 0 <= anchor_index < len(stops):
+        return float(stops[anchor_index])
+    if anchor_count <= 1:
+        return 0.5
+    return float(anchor_index) / float(anchor_count - 1)
+
+
+def _as_anchor_fraction(value: Any, fallback: float = 0.5) -> float:
+    return max(0.0, min(1.0, _to_float(value, fallback)))
+
+
 def normalize_model(raw_model: Any, elf_name: str = "") -> Dict[str, Any]:
     model = default_model(elf_name=elf_name)
     if not isinstance(raw_model, dict):
@@ -677,6 +689,7 @@ def normalize_model(raw_model: Any, elf_name: str = "") -> Dict[str, Any]:
 
     normalized_arrows: List[Dict[str, Any]] = []
     used_arrow_ids: List[str] = []
+    max_shape_z = max((int(shape.get("z", 0)) for shape in normalized_shapes), default=0)
     for idx, raw_arrow in enumerate(raw_arrows):
         if not isinstance(raw_arrow, dict):
             continue
@@ -684,8 +697,8 @@ def normalize_model(raw_model: Any, elf_name: str = "") -> Dict[str, Any]:
         to_spec = raw_arrow.get("to") if isinstance(raw_arrow.get("to"), dict) else {}
         from_shape = str(from_spec.get("shapeId") or "")
         to_shape = str(to_spec.get("shapeId") or "")
-        if from_shape not in all_shape_ids or to_shape not in all_shape_ids:
-            continue
+        from_connected = from_shape in all_shape_ids
+        to_connected = to_shape in all_shape_ids
 
         raw_arrow_id = raw_arrow.get("id")
         desired_id = sanitize_id(raw_arrow_id) if str(raw_arrow_id or "").strip() else sanitize_id(f"arrow_{idx + 1}")
@@ -695,6 +708,24 @@ def normalize_model(raw_model: Any, elf_name: str = "") -> Dict[str, Any]:
         anchor_count = max(2, model["anchors"]["countPerEdge"])
         raw_from_anchor = _to_int(from_spec.get("anchorIndex"), anchor_count // 2)
         raw_to_anchor = _to_int(to_spec.get("anchorIndex"), anchor_count // 2)
+        from_anchor_index = max(0, min(anchor_count - 1, raw_from_anchor))
+        to_anchor_index = max(0, min(anchor_count - 1, raw_to_anchor))
+        from_fraction = _as_anchor_fraction(
+            from_spec.get("anchorFraction"),
+            _anchor_fraction_for_index(stops, anchor_count, from_anchor_index),
+        )
+        to_fraction = _as_anchor_fraction(
+            to_spec.get("anchorFraction"),
+            _anchor_fraction_for_index(stops, anchor_count, to_anchor_index),
+        )
+        from_x = _to_float(from_spec.get("x"), 0.0)
+        from_y = _to_float(from_spec.get("y"), 0.0)
+        to_x = _to_float(to_spec.get("x"), 0.0)
+        to_y = _to_float(to_spec.get("y"), 0.0)
+        from_valid = from_connected or all(k in from_spec for k in ("x", "y"))
+        to_valid = to_connected or all(k in to_spec for k in ("x", "y"))
+        if not from_valid or not to_valid:
+            continue
 
         waypoints = []
         for p in raw_arrow.get("waypoints") or []:
@@ -713,29 +744,34 @@ def normalize_model(raw_model: Any, elf_name: str = "") -> Dict[str, Any]:
         arrow = {
             "id": aid,
             "from": {
-                "shapeId": from_shape,
+                "shapeId": from_shape if from_connected else "",
                 "side": _as_side(from_spec.get("side"), "right"),
-                "anchorIndex": max(0, min(anchor_count - 1, raw_from_anchor)),
+                "anchorIndex": from_anchor_index,
+                "anchorFraction": from_fraction,
+                "x": from_x,
+                "y": from_y,
             },
             "to": {
-                "shapeId": to_shape,
+                "shapeId": to_shape if to_connected else "",
                 "side": _as_side(to_spec.get("side"), "left"),
-                "anchorIndex": max(0, min(anchor_count - 1, raw_to_anchor)),
+                "anchorIndex": to_anchor_index,
+                "anchorFraction": to_fraction,
+                "x": to_x,
+                "y": to_y,
             },
             "lineStyle": _as_line_style(raw_arrow.get("lineStyle")),
             "routing": _as_routing(raw_arrow.get("routing")),
             "connectionType": _as_connection_type(raw_arrow.get("connectionType"), raw_arrow.get("arrowHead")),
             "stroke": str(raw_arrow.get("stroke") or DEFAULT_ARROW_STROKE),
             "width": max(0.5, _to_float(raw_arrow.get("width"), DEFAULT_ARROW_WIDTH)),
+            "z": _to_int(raw_arrow.get("z"), max_shape_z + idx + 1),
             "waypoints": waypoints,
             "controlPoints": control_points,
         }
         normalized_arrows.append(arrow)
 
-    normalized_shapes.sort(
-        key=lambda s: (s.get("z", 0), s["kind"] not in VALID_CONTAINER_KINDS, s["id"])
-    )
-    normalized_arrows.sort(key=lambda a: a["id"])
+    normalized_shapes.sort(key=lambda s: (s.get("z", 0), s["id"]))
+    normalized_arrows.sort(key=lambda a: (a.get("z", 0), a["id"]))
 
     model["shapes"] = normalized_shapes
     model["arrows"] = normalized_arrows

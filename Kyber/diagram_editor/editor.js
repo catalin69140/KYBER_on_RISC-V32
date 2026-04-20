@@ -77,6 +77,8 @@
   const TABLE_MIN_CELL_WIDTH = 70;
   const TABLE_MIN_CELL_HEIGHT = 40;
   const HEADER_MIN_THICKNESS = 20;
+  const FREE_ENDPOINT_SNAP_DISTANCE = 42;
+  const CONTAINER_FREE_ENDPOINT_MARGIN = 20;
   const HANDLE_SIZE = 8;
   const MIN_SHAPE_SIZE = 24;
   const HISTORY_LIMIT = 120;
@@ -132,6 +134,15 @@
 
   const CONTAINER_KINDS = new Set(["container", "header_container"]);
   const GROUP_FORM_KINDS = new Set(["table_group", "component_group"]);
+  const FRAME_ANCHOR_EXCEPTION_KINDS = new Set([
+    "actor",
+    "cloud",
+    "cloud_callout",
+    "card",
+    "note",
+    "mail",
+    "message",
+  ]);
   const SHAPE_KINDS = new Set([
     "square",
     "cube",
@@ -171,6 +182,7 @@
     mode: "select",
     selected: null, // {type: "shape" | "arrow", id: "..."}
     connectSourceId: null,
+    connectSourceEndpoint: null,
     drag: null,
     arrowRenderCache: {},
     history: [],
@@ -336,6 +348,12 @@
     return clamp(idx, 0, maxIndex);
   }
 
+  function normalizeAnchorFraction(raw, fallback) {
+    const value = Number(raw);
+    if (!Number.isFinite(value)) return clamp(Number(fallback), 0, 1);
+    return clamp(value, 0, 1);
+  }
+
   function anchorFractionForIndex(index) {
     const stops = getAnchorStops();
     const count = anchorCount();
@@ -398,7 +416,6 @@
   function sortedShapes() {
     return (state.model.shapes || []).slice().sort((a, b) => {
       if ((a.z || 0) !== (b.z || 0)) return (a.z || 0) - (b.z || 0);
-      if (isContainerKind(a.kind) !== isContainerKind(b.kind)) return isContainerKind(a.kind) ? -1 : 1;
       return a.id.localeCompare(b.id);
     });
   }
@@ -414,7 +431,37 @@
   }
 
   function sortedArrows() {
-    return (state.model.arrows || []).slice().sort((a, b) => a.id.localeCompare(b.id));
+    return (state.model.arrows || []).slice().sort((a, b) => {
+      if ((a.z || 0) !== (b.z || 0)) return (a.z || 0) - (b.z || 0);
+      return a.id.localeCompare(b.id);
+    });
+  }
+
+  function sortedRenderableItems() {
+    return []
+      .concat((state.model.shapes || []).map((shape) => ({ type: "shape", item: shape })))
+      .concat((state.model.arrows || []).map((arrow) => ({ type: "arrow", item: arrow })))
+      .sort((a, b) => {
+        const az = a.item.z || 0;
+        const bz = b.item.z || 0;
+        if (az !== bz) return az - bz;
+        if (a.type !== b.type) return a.type === "arrow" ? -1 : 1;
+        return String(a.item.id || "").localeCompare(String(b.item.id || ""));
+      });
+  }
+
+  function isArrowEntity(item) {
+    return !!(item && typeof item === "object" && item.from && item.to);
+  }
+
+  function compareRenderableEntities(a, b) {
+    const az = Number(a && a.z) || 0;
+    const bz = Number(b && b.z) || 0;
+    if (az !== bz) return az - bz;
+    const aArrow = isArrowEntity(a);
+    const bArrow = isArrowEntity(b);
+    if (aArrow !== bArrow) return aArrow ? -1 : 1;
+    return String((a && a.id) || "").localeCompare(String((b && b.id) || ""));
   }
 
   function clamp(v, min, max) {
@@ -805,23 +852,41 @@
       }
     });
 
+    const maxShapeZ = state.model.shapes.length
+      ? Math.max.apply(null, state.model.shapes.map((shape) => shape.z || 0))
+      : 0;
+
     state.model.arrows.forEach((arrow, idx) => {
       arrow.id = sanitizeId(arrow.id || ("arrow_" + (idx + 1)));
       arrow.from = arrow.from && typeof arrow.from === "object" ? arrow.from : {};
       arrow.to = arrow.to && typeof arrow.to === "object" ? arrow.to : {};
-      arrow.from.shapeId = String(arrow.from.shapeId || "");
-      arrow.to.shapeId = String(arrow.to.shapeId || "");
+      arrow.from.shapeId = shapeById(String(arrow.from.shapeId || "")) ? String(arrow.from.shapeId || "") : "";
+      arrow.to.shapeId = shapeById(String(arrow.to.shapeId || "")) ? String(arrow.to.shapeId || "") : "";
       arrow.from.side = normalizeSide(arrow.from.side || "right");
       arrow.to.side = normalizeSide(arrow.to.side || "left");
       const maxAnchor = Math.max(1, anchorCount() - 1);
       const fallbackAnchor = Math.floor(maxAnchor / 2);
       arrow.from.anchorIndex = normalizeAnchorIndex(arrow.from.anchorIndex, maxAnchor, fallbackAnchor);
       arrow.to.anchorIndex = normalizeAnchorIndex(arrow.to.anchorIndex, maxAnchor, fallbackAnchor);
+      arrow.from.anchorFraction = normalizeAnchorFraction(
+        arrow.from.anchorFraction,
+        anchorFractionForIndex(arrow.from.anchorIndex)
+      );
+      arrow.to.anchorFraction = normalizeAnchorFraction(
+        arrow.to.anchorFraction,
+        anchorFractionForIndex(arrow.to.anchorIndex)
+      );
+      arrow.from.x = Number.isFinite(Number(arrow.from.x)) ? Number(arrow.from.x) : 0;
+      arrow.from.y = Number.isFinite(Number(arrow.from.y)) ? Number(arrow.from.y) : 0;
+      arrow.to.x = Number.isFinite(Number(arrow.to.x)) ? Number(arrow.to.x) : 0;
+      arrow.to.y = Number.isFinite(Number(arrow.to.y)) ? Number(arrow.to.y) : 0;
       arrow.lineStyle = normalizeLineStyle(arrow.lineStyle);
       arrow.routing = normalizeRouting(arrow.routing);
       arrow.connectionType = normalizeConnectionType(arrow.connectionType);
       arrow.stroke = normalizeColor(arrow.stroke, "#e8efff");
       arrow.width = Math.max(0.5, Number(arrow.width) || 1.7);
+      arrow.z = Number(arrow.z);
+      if (!Number.isFinite(arrow.z)) arrow.z = maxShapeZ + idx + 1;
       if (!Array.isArray(arrow.waypoints)) arrow.waypoints = [];
       if (!Array.isArray(arrow.controlPoints)) arrow.controlPoints = [];
       arrow.waypoints = arrow.waypoints.map((p) => ({ x: Number(p.x) || 0, y: Number(p.y) || 0 }));
@@ -830,7 +895,11 @@
 
     dedupeShapeIds();
     dedupeArrowIds();
-    state.model.arrows = state.model.arrows.filter((a) => shapeById(a.from.shapeId) && shapeById(a.to.shapeId));
+    state.model.arrows = state.model.arrows.filter((arrow) => {
+      const fromValid = (arrow.from.shapeId && shapeById(arrow.from.shapeId)) || (!arrow.from.shapeId && Number.isFinite(arrow.from.x) && Number.isFinite(arrow.from.y));
+      const toValid = (arrow.to.shapeId && shapeById(arrow.to.shapeId)) || (!arrow.to.shapeId && Number.isFinite(arrow.to.x) && Number.isFinite(arrow.to.y));
+      return !!(fromValid && toValid);
+    });
   }
 
   function dedupeShapeIds() {
@@ -1116,6 +1185,70 @@
     if (!skipRender) render();
   }
 
+  function renderableItems() {
+    return []
+      .concat(state.model.shapes || [])
+      .concat(state.model.arrows || []);
+  }
+
+  function minRenderableZ() {
+    const items = renderableItems();
+    return items.length ? Math.min.apply(null, items.map((item) => item.z || 0)) : 0;
+  }
+
+  function maxRenderableZ() {
+    const items = renderableItems();
+    return items.length ? Math.max.apply(null, items.map((item) => item.z || 0)) : 0;
+  }
+
+  function bringRenderableItemsToFront(items) {
+    const ordered = (items || []).filter(Boolean).slice().sort(compareRenderableEntities);
+    if (!ordered.length) return;
+    let nextZ = maxRenderableZ();
+    ordered.forEach((item) => {
+      nextZ += 1;
+      item.z = nextZ;
+    });
+  }
+
+  function sendRenderableItemsToBack(items) {
+    const ordered = (items || []).filter(Boolean).slice().sort(compareRenderableEntities);
+    if (!ordered.length) return;
+    let nextZ = minRenderableZ() - ordered.length;
+    ordered.forEach((item) => {
+      item.z = nextZ;
+      nextZ += 1;
+    });
+  }
+
+  function detachShapeIfBehindParent(shape) {
+    if (!shape || !shape.parentId) return;
+    const parent = shapeById(shape.parentId);
+    if (!parent || !isContainerKind(parent.kind)) return;
+    if ((shape.z || 0) > (parent.z || 0)) return;
+    const prevParent = shape.parentId;
+    shape.parentId = null;
+    if (!shape.idManual) {
+      updateAutoId(shape, prevParent);
+    }
+  }
+
+  function detachShapesBehindParents(shapes) {
+    (shapes || []).forEach((shape) => detachShapeIfBehindParent(shape));
+  }
+
+  function containerFrontZ(container, excludeShapeId) {
+    if (!container) return 0;
+    let maxZ = Number(container.z) || 0;
+    (state.model.shapes || []).forEach((shape) => {
+      if (!shape || shape.id === container.id || shape.id === excludeShapeId) return;
+      if (shape.parentId === container.id) {
+        maxZ = Math.max(maxZ, Number(shape.z) || 0);
+      }
+    });
+    return maxZ;
+  }
+
   function moveShapeIdsForSelection(ids) {
     const rootIds = topLevelShapeIds(ids);
     const moveIds = [];
@@ -1147,6 +1280,9 @@
       if (!moved) return;
       const prevParent = moved.parentId;
       const parent = pickContainerForShape(moved);
+      if (parent) {
+        moved.z = Math.max(Number(moved.z) || 0, containerFrontZ(parent, moved.id) + 1);
+      }
       moved.parentId = parent ? parent.id : null;
       if (moved.parentId !== prevParent) {
         updateAutoId(moved, prevParent);
@@ -3616,11 +3752,41 @@
       : DEFAULT_ANCHOR_STOPS;
   }
 
+  function endpointFraction(endpoint) {
+    if (endpoint && Number.isFinite(Number(endpoint.anchorFraction))) {
+      return normalizeAnchorFraction(endpoint.anchorFraction, 0.5);
+    }
+    return anchorFractionForIndex(endpoint && endpoint.anchorIndex);
+  }
+
+  function endpointPoint(endpoint) {
+    if (endpoint && endpoint.shapeId && shapeById(endpoint.shapeId)) {
+      return getAnchorPoint(endpoint);
+    }
+    return {
+      x: Number(endpoint && endpoint.x) || 0,
+      y: Number(endpoint && endpoint.y) || 0,
+    };
+  }
+
+  function describeEndpoint(endpoint) {
+    const point = endpointPoint(endpoint || {});
+    if (endpoint && endpoint.shapeId && shapeById(endpoint.shapeId)) {
+      const fractionPct = Math.round(endpointFraction(endpoint) * 100);
+      return escapeHtml(endpoint.shapeId) + " (" + normalizeSide(endpoint.side) + " " + fractionPct + "%)";
+    }
+    return "Free point (" + roundNum(point.x) + ", " + roundNum(point.y) + ")";
+  }
+
   function getAnchorPoint(endpoint) {
     const shape = shapeById(endpoint.shapeId);
-    if (!shape) return { x: 0, y: 0 };
-    const idx = normalizeAnchorIndex(endpoint.anchorIndex, anchorCount() - 1, 0);
-    const frac = anchorFractionForIndex(idx);
+    if (!shape) {
+      return {
+        x: Number(endpoint && endpoint.x) || 0,
+        y: Number(endpoint && endpoint.y) || 0,
+      };
+    }
+    const frac = endpointFraction(endpoint);
     const side = normalizeSide(endpoint.side);
     const x0 = shape.x;
     const y0 = shape.y;
@@ -3628,6 +3794,13 @@
     const h = shape.height;
     const cx = x0 + w / 2;
     const cy = y0 + h / 2;
+
+    if (FRAME_ANCHOR_EXCEPTION_KINDS.has(shape.kind)) {
+      if (side === "left") return { x: x0, y: y0 + h * frac };
+      if (side === "right") return { x: x0 + w, y: y0 + h * frac };
+      if (side === "top") return { x: x0 + w * frac, y: y0 };
+      return { x: x0 + w * frac, y: y0 + h };
+    }
 
     if (shape.kind === "circle" || shape.kind === "oval") {
       const rx = Math.max(0.01, w / 2);
@@ -3675,6 +3848,27 @@
         x: top.x + (br.x - top.x) * u,
         y: top.y + (br.y - top.y) * u,
       };
+    }
+
+    if (shape.kind === "cone") {
+      const rx = w * 0.32;
+      const ry = Math.max(8, Math.min(14, h * 0.11));
+      const apex = { x: cx, y: y0 + 4 };
+      const baseCy = y0 + h - ry - 2;
+      const leftBase = { x: cx - rx, y: baseCy };
+      const rightBase = { x: cx + rx, y: baseCy };
+      if (side === "left") return lerpPoint(apex, leftBase, frac);
+      if (side === "right") return lerpPoint(apex, rightBase, frac);
+      if (side === "bottom") {
+        const targetX = cx - rx + rx * 2 * frac;
+        const nx = (targetX - cx) / Math.max(0.01, rx);
+        const k = Math.sqrt(Math.max(0, 1 - nx * nx));
+        return { x: targetX, y: baseCy + ry * k };
+      }
+      if (frac <= 0.5) {
+        return lerpPoint(leftBase, apex, frac / 0.5);
+      }
+      return lerpPoint(apex, rightBase, (frac - 0.5) / 0.5);
     }
 
     const polygonVertices = polygonVerticesForShape(shape);
@@ -3785,12 +3979,11 @@
   }
 
   function buildAnchorCandidate(shape, side, frac, point) {
-    const anchorIndex = anchorIndexForFraction(frac);
-    const anchor = getAnchorPoint({ shapeId: shape.id, side: side, anchorIndex: anchorIndex });
+    const anchor = getAnchorPoint({ shapeId: shape.id, side: side, anchorFraction: frac });
     return {
       shapeId: shape.id,
       side: side,
-      anchorIndex: anchorIndex,
+      anchorFraction: normalizeAnchorFraction(frac, 0.5),
       x: anchor.x,
       y: anchor.y,
       d2: distance2(point, anchor),
@@ -3833,7 +4026,7 @@
       candidates.push(buildAnchorCandidate(shape, "right", clamp((point.y - y0) / h, 0, 1), point));
       candidates.push(buildAnchorCandidate(shape, "top", clamp((point.x - x0) / w, 0, 1), point));
       candidates.push(buildAnchorCandidate(shape, "bottom", clamp((point.x - x0) / w, 0, 1), point));
-    } else if (shape.kind === "cylinder" || shape.kind === "cloud" || shape.kind === "cloud_callout" || polygonVerticesForShape(shape)) {
+    } else if (shape.kind === "cone" || shape.kind === "cylinder" || polygonVerticesForShape(shape)) {
       const h = Math.max(0.01, shape.height);
       const w = Math.max(0.01, shape.width);
       candidates.push(buildAnchorCandidate(shape, "left", clamp((point.y - y0) / h, 0, 1), point));
@@ -3871,13 +4064,13 @@
     });
 
     if (!best) return null;
-    if (best.score > (220 * 220) && preferredShape) {
-      return nearestAnchorForShape(preferredShape, point);
+    if (best.score > (FREE_ENDPOINT_SNAP_DISTANCE * FREE_ENDPOINT_SNAP_DISTANCE)) {
+      return null;
     }
     return {
       shapeId: best.shapeId,
       side: best.side,
-      anchorIndex: best.anchorIndex,
+      anchorFraction: best.anchorFraction,
       x: best.x,
       y: best.y,
     };
@@ -3930,8 +4123,8 @@
   }
 
   function buildArrowGeometry(arrow) {
-    const from = getAnchorPoint(arrow.from);
-    const to = getAnchorPoint(arrow.to);
+    const from = endpointPoint(arrow.from);
+    const to = endpointPoint(arrow.to);
     const routing = normalizeRouting(arrow.routing);
     const geom = {
       from: from,
@@ -4618,18 +4811,21 @@
     }));
 
     const tileLayer = createSvg("g");
-    const shapeLayer = createSvg("g");
-    const arrowLayer = createSvg("g");
+    const contentLayer = createSvg("g");
     const overlayLayer = createSvg("g");
 
     els.svg.appendChild(tileLayer);
-    els.svg.appendChild(shapeLayer);
-    els.svg.appendChild(arrowLayer);
+    els.svg.appendChild(contentLayer);
     els.svg.appendChild(overlayLayer);
 
     renderCanvasTiles(tileLayer, canvas);
-    sortedShapes().forEach((shape) => renderShape(shapeLayer, shape));
-    sortedArrows().forEach((arrow) => renderArrow(arrowLayer, arrow));
+    sortedRenderableItems().forEach((entry) => {
+      if (entry.type === "shape") {
+        renderShape(contentLayer, entry.item);
+      } else {
+        renderArrow(contentLayer, entry.item);
+      }
+    });
 
     renderSelectionOverlay(overlayLayer);
     applyPendingViewportScroll();
@@ -4741,10 +4937,64 @@
     return { x: canvas.x + canvas.width / 2, y: canvas.y + canvas.height / 2 };
   }
 
+  function freeEndpointAt(point) {
+    return {
+      shapeId: "",
+      side: "right",
+      anchorFraction: 0.5,
+      x: point.x,
+      y: point.y,
+    };
+  }
+
+  function pointDistanceToShapeFrame(point, shape) {
+    if (!shape) return Infinity;
+    return Math.min(
+      Math.abs(point.x - shape.x),
+      Math.abs(point.x - (shape.x + shape.width)),
+      Math.abs(point.y - shape.y),
+      Math.abs(point.y - (shape.y + shape.height))
+    );
+  }
+
+  function endpointForShapePointer(shape, point) {
+    if (!shape) return freeEndpointAt(point);
+    if ((isContainerKind(shape.kind) || isGroupFormKind(shape.kind)) && pointDistanceToShapeFrame(point, shape) > CONTAINER_FREE_ENDPOINT_MARGIN) {
+      return freeEndpointAt(point);
+    }
+    const anchor = nearestAnchorForShape(shape, point);
+    if (!anchor) return freeEndpointAt(point);
+    return {
+      shapeId: shape.id,
+      side: anchor.side,
+      anchorFraction: anchor.anchorFraction,
+    };
+  }
+
+  function beginConnection(endpoint) {
+    state.connectSourceEndpoint = endpoint ? Object.assign({}, endpoint) : null;
+    state.connectSourceId = endpoint && endpoint.shapeId ? endpoint.shapeId : null;
+  }
+
   function onBackgroundPointerDown(evt) {
     if (evt.button !== 0 && evt.button !== 1) return;
     evt.preventDefault();
+    if (state.mode !== "select" && evt.button === 0 && !evt.altKey) {
+      const point = clientToSvg(evt);
+      const endpoint = freeEndpointAt(point);
+      if (!state.connectSourceEndpoint) {
+        beginConnection(endpoint);
+        setStatus("Connection mode: source point selected. Click target shape or canvas point.", "ok");
+        render();
+        return;
+      }
+      createArrowBetweenEndpoints(state.connectSourceEndpoint, endpoint, CONNECT_MODES[state.mode] || "directional_connector");
+      beginConnection(null);
+      return;
+    }
+
     state.connectSourceId = null;
+    state.connectSourceEndpoint = null;
     const multiSelectModifier = !!(evt.metaKey || evt.ctrlKey);
     if (state.mode === "select" && evt.button === 0 && multiSelectModifier && !evt.altKey) {
       const start = clientToSvg(evt);
@@ -4786,20 +5036,22 @@
     if (!shape) return;
 
     if (state.mode !== "select") {
-      if (!state.connectSourceId) {
-        state.connectSourceId = shapeId;
-        setStatus("Connection mode: source selected " + shapeId + ". Click target shape.", "ok");
+      const point = clientToSvg(evt);
+      const endpoint = endpointForShapePointer(shape, point);
+      if (!state.connectSourceEndpoint) {
+        beginConnection(endpoint);
+        setStatus("Connection mode: source selected " + (endpoint.shapeId || "free point") + ". Click target shape or canvas point.", "ok");
         render();
         return;
       }
-      if (state.connectSourceId === shapeId) {
-        state.connectSourceId = null;
+      if (state.connectSourceEndpoint.shapeId && state.connectSourceEndpoint.shapeId === shapeId && endpoint.shapeId === shapeId) {
+        beginConnection(null);
         setStatus("Connection source deselected.");
         render();
         return;
       }
-      createArrow(state.connectSourceId, shapeId, CONNECT_MODES[state.mode] || "directional_connector");
-      state.connectSourceId = null;
+      createArrowBetweenEndpoints(state.connectSourceEndpoint, endpoint, CONNECT_MODES[state.mode] || "directional_connector");
+      beginConnection(null);
       return;
     }
 
@@ -5006,7 +5258,7 @@
       const areaA = a.width * a.height;
       const areaB = b.width * b.height;
       if (areaA !== areaB) return areaA - areaB;
-      return (b.z || 0) - (a.z || 0);
+      return (a.z || 0) - (b.z || 0);
     });
     return candidates[0];
   }
@@ -5150,12 +5402,14 @@
       if (!arrow) return;
       const currentEndpoint = arrow[state.drag.endpointKey] || {};
       const anchor = nearestAnchor(point, currentEndpoint.shapeId || "");
-      if (!anchor) return;
-      arrow[state.drag.endpointKey] = {
-        shapeId: anchor.shapeId,
-        side: anchor.side,
-        anchorIndex: anchor.anchorIndex,
-      };
+      arrow[state.drag.endpointKey] = anchor
+        ? {
+            shapeId: anchor.shapeId,
+            side: anchor.side,
+            anchorFraction: anchor.anchorFraction,
+          }
+        : freeEndpointAt(point);
+      updateCanvasDuringInteraction(contentBounds());
       render();
       return;
     }
@@ -5217,6 +5471,11 @@
       render();
     }
 
+    if (drag.type === "arrow-endpoint") {
+      syncCanvasRectToContent();
+      render();
+    }
+
     if (drag.type === "arrow-waypoint" || drag.type === "arrow-control") {
       syncCanvasRectToContent();
       render();
@@ -5271,37 +5530,44 @@
         ? (isFromEndpoint ? "bottom" : "top")
         : (isFromEndpoint ? "top" : "bottom");
     }
-    const anchorIndex = Math.floor((anchorCount() - 1) / 2);
     return {
       shapeId: isFromEndpoint ? fromShape.id : toShape.id,
       side: side,
-      anchorIndex: anchorIndex,
+      anchorFraction: 0.5,
     };
   }
 
-  function createArrow(fromShapeId, toShapeId, connectionType) {
-    const fromShape = shapeById(fromShapeId);
-    const toShape = shapeById(toShapeId);
-    if (!fromShape || !toShape) return;
-
+  function createArrowBetweenEndpoints(fromEndpoint, toEndpoint, connectionType) {
     pushHistory();
 
     const id = uniqueArrowId("arrow_" + (state.model.arrows.length + 1), null);
     const arrow = {
       id: id,
-      from: chooseEndpointForNewArrow(fromShape, toShape, true),
-      to: chooseEndpointForNewArrow(fromShape, toShape, false),
+      from: Object.assign({}, fromEndpoint || freeEndpointAt({ x: 0, y: 0 })),
+      to: Object.assign({}, toEndpoint || freeEndpointAt({ x: 0, y: 0 })),
       lineStyle: "solid",
       routing: "angled",
       connectionType: normalizeConnectionType(connectionType),
       stroke: "#e8efff",
       width: 1.7,
+      z: maxRenderableZ() + 1,
       waypoints: [],
       controlPoints: [],
     };
     state.model.arrows.push(arrow);
     setSelected({ type: "arrow", id: id });
     setStatus("Created " + connectionTypeLabel(arrow.connectionType) + " " + id + ".", "ok");
+  }
+
+  function createArrow(fromShapeId, toShapeId, connectionType) {
+    const fromShape = shapeById(fromShapeId);
+    const toShape = shapeById(toShapeId);
+    if (!fromShape || !toShape) return;
+    createArrowBetweenEndpoints(
+      chooseEndpointForNewArrow(fromShape, toShape, true),
+      chooseEndpointForNewArrow(fromShape, toShape, false),
+      connectionType
+    );
   }
 
   function addShape(kind) {
@@ -7220,21 +7486,14 @@
       const selected = normalizeSelectionIds(shapes.map((shape) => shape.id))
         .map((id) => shapeById(id))
         .filter(Boolean)
-        .sort((a, b) => ((a.z || 0) - (b.z || 0)) || a.id.localeCompare(b.id));
+        .sort(compareRenderableEntities);
       if (!selected.length) return;
       pushHistory();
       if (direction === "back") {
-        let nextZ = Math.min.apply(null, state.model.shapes.map((shape) => shape.z || 0)) - selected.length;
-        selected.forEach((shape) => {
-          shape.z = nextZ;
-          nextZ += 1;
-        });
+        sendRenderableItemsToBack(selected);
+        detachShapesBehindParents(selected);
       } else {
-        let nextZ = Math.max.apply(null, state.model.shapes.map((shape) => shape.z || 0)) + 1;
-        selected.forEach((shape) => {
-          shape.z = nextZ;
-          nextZ += 1;
-        });
+        bringRenderableItemsToFront(selected);
       }
       render();
     };
@@ -7416,6 +7675,8 @@
       '<div><label>Routing</label><select id="ins-arrow-routing">' + mixedOptionHtml(commonRouting) + '<option value="angled"' + (commonRouting === "angled" ? " selected" : "") + '>angled/orthogonal</option><option value="straight"' + (commonRouting === "straight" ? " selected" : "") + '>straight</option><option value="curved"' + (commonRouting === "curved" ? " selected" : "") + '>curved</option></select></div>',
       '<div><label>Color</label><input id="ins-arrow-color" type="color" value="' + normalizeColor(commonColor || "#e8efff", "#e8efff") + '"/></div>',
       '<div><label>Width</label><input id="ins-arrow-width" type="number" min="0.5" step="0.1" value="' + roundNum(minWidth) + '"/></div>',
+      "<h3>Z-Order</h3>",
+      '<div class="row"><button id="ins-z-back">Send Back</button><button id="ins-z-front">Bring Front</button></div>',
       "</div>",
     ].join("");
 
@@ -7460,6 +7721,23 @@
     bindMultiAbsoluteNumberInput("ins-arrow-width", arrows, (arrow) => Math.max(0.5, Number(arrow.width) || 0.5), (arrow, value) => {
       arrow.width = Math.max(0.5, value);
     }, (value) => clamp(Number(value) || 0.5, 0.5, 24), 0.5, false);
+
+    const zBack = document.getElementById("ins-z-back");
+    const zFront = document.getElementById("ins-z-front");
+    if (zBack) {
+      zBack.addEventListener("click", () => {
+        pushHistory();
+        sendRenderableItemsToBack(arrows);
+        render();
+      });
+    }
+    if (zFront) {
+      zFront.addEventListener("click", () => {
+        pushHistory();
+        bringRenderableItemsToFront(arrows);
+        render();
+      });
+    }
   }
 
   function renderShapeInspector(shapeId) {
@@ -7902,16 +8180,15 @@
     if (zBack) {
       zBack.addEventListener("click", () => {
         pushHistory();
-        const minZ = Math.min.apply(null, state.model.shapes.map((s) => s.z || 0));
-        shape.z = minZ - 1;
+        sendRenderableItemsToBack([shape]);
+        detachShapeIfBehindParent(shape);
         render();
       });
     }
     if (zFront) {
       zFront.addEventListener("click", () => {
         pushHistory();
-        const maxZ = Math.max.apply(null, state.model.shapes.map((s) => s.z || 0));
-        shape.z = maxZ + 1;
+        bringRenderableItemsToFront([shape]);
         render();
       });
     }
@@ -8266,8 +8543,6 @@
       return;
     }
 
-    const fromShape = shapeById(arrow.from.shapeId);
-    const toShape = shapeById(arrow.to.shapeId);
     const cp1 = arrow.controlPoints[0] || { x: 0, y: 0 };
     const cp2 = arrow.controlPoints[1] || { x: 0, y: 0 };
     const connectionType = normalizeConnectionType(arrow.connectionType);
@@ -8283,8 +8558,8 @@
     els.inspector.innerHTML = [
       "<div>",
       '<div><label>ID</label><input id="ins-arrow-id" type="text" value="' + escapeHtml(arrow.id) + '"/></div>',
-      '<div class="hint">From: <strong>' + escapeHtml(fromShape ? fromShape.id : arrow.from.shapeId) + '</strong> (' + arrow.from.side + ':' + arrow.from.anchorIndex + ')</div>',
-      '<div class="hint">To: <strong>' + escapeHtml(toShape ? toShape.id : arrow.to.shapeId) + '</strong> (' + arrow.to.side + ':' + arrow.to.anchorIndex + ')</div>',
+      '<div class="hint">From: <strong>' + describeEndpoint(arrow.from) + '</strong></div>',
+      '<div class="hint">To: <strong>' + describeEndpoint(arrow.to) + '</strong></div>',
       "<h3>Style</h3>",
       '<div><label>Type</label><select id="ins-arrow-type"><option value="directional_connector"' + (connectionType === "directional_connector" ? " selected" : "") + '>Directional Connector</option><option value="bidirectional_connector"' + (connectionType === "bidirectional_connector" ? " selected" : "") + '>Bi-directional Connector</option><option value="line"' + (connectionType === "line" ? " selected" : "") + '>Line</option></select></div>',
       '<div><label>Line style</label><select id="ins-arrow-line"><option value="solid"' + (arrow.lineStyle === "solid" ? " selected" : "") + '>solid</option><option value="dashed"' + (arrow.lineStyle === "dashed" ? " selected" : "") + '>dashed</option><option value="dotted"' + (arrow.lineStyle === "dotted" ? " selected" : "") + '>dotted</option></select></div>',
@@ -8303,6 +8578,8 @@
       arrow.routing === "angled"
         ? '<h3>Waypoints</h3>' + (waypointRows || '<div class="hint">No waypoints. Add one to bend manually.</div>') + '<div class="row"><button id="ins-waypoint-add">Add waypoint</button></div>'
         : "",
+      "<h3>Z-Order</h3>",
+      '<div class="row"><button id="ins-z-back">Send Back</button><button id="ins-z-front">Bring Front</button></div>',
       "</div>",
     ].join("");
 
@@ -8348,6 +8625,23 @@
       arrow.width = Math.max(0.5, num);
       render();
     });
+
+    const zBack = document.getElementById("ins-z-back");
+    const zFront = document.getElementById("ins-z-front");
+    if (zBack) {
+      zBack.addEventListener("click", () => {
+        pushHistory();
+        sendRenderableItemsToBack([arrow]);
+        render();
+      });
+    }
+    if (zFront) {
+      zFront.addEventListener("click", () => {
+        pushHistory();
+        bringRenderableItemsToFront([arrow]);
+        render();
+      });
+    }
 
     if (arrow.routing === "curved") {
       bindNumber("ins-cp1x", "input", (num) => {
