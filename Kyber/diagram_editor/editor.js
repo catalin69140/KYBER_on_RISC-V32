@@ -191,6 +191,7 @@
     selectedShapeIds: [],
     selectedArrowIds: [],
     selectedGroupComponents: [],
+    connectPreview: null,
     richTextSelection: null,
     richTextPendingFormat: null,
     richTextPendingSticky: false,
@@ -1311,6 +1312,34 @@
       shape.y += axisDy;
     });
     finalizeMovedRoots(movePlan.rootIds);
+    syncCanvasRectToContent();
+    render();
+    return true;
+  }
+
+  function moveSelectedArrowsBy(dx, dy) {
+    const arrows = currentSelectedArrowIds()
+      .map((id) => arrowById(id))
+      .filter((arrow) => arrow && arrowIsMovable(arrow));
+    if (!arrows.length) return false;
+    const primary = arrows[0];
+    const referenceX = !primary.from.shapeId
+      ? primary.from.x
+      : (!primary.to.shapeId ? primary.to.x : (primary.waypoints[0] ? primary.waypoints[0].x : primary.controlPoints[0] && primary.controlPoints[0].x));
+    const referenceY = !primary.from.shapeId
+      ? primary.from.y
+      : (!primary.to.shapeId ? primary.to.y : (primary.waypoints[0] ? primary.waypoints[0].y : primary.controlPoints[0] && primary.controlPoints[0].y));
+    const axisDx = dx
+      ? (nudgeFromCurrent(referenceX || 0, Math.sign(dx), KEYBOARD_NUDGE_STEP) - (referenceX || 0))
+      : 0;
+    const axisDy = dy
+      ? (nudgeFromCurrent(referenceY || 0, Math.sign(dy), KEYBOARD_NUDGE_STEP) - (referenceY || 0))
+      : 0;
+    if (!axisDx && !axisDy) return false;
+    pushHistory();
+    arrows.forEach((arrow) => {
+      translateArrowBy(arrow, snapshotArrowForMove(arrow), axisDx, axisDy);
+    });
     syncCanvasRectToContent();
     render();
     return true;
@@ -3778,6 +3807,48 @@
     return "Free point (" + roundNum(point.x) + ", " + roundNum(point.y) + ")";
   }
 
+  function shapePerimeterPreviewPath(shape) {
+    if (!shape) return "";
+    const samples = [];
+    const sampleCount = 12;
+    for (let i = 0; i <= sampleCount; i += 1) {
+      samples.push(getAnchorPoint({ shapeId: shape.id, side: "top", anchorFraction: i / sampleCount }));
+    }
+    for (let i = 1; i <= sampleCount; i += 1) {
+      samples.push(getAnchorPoint({ shapeId: shape.id, side: "right", anchorFraction: i / sampleCount }));
+    }
+    for (let i = sampleCount - 1; i >= 0; i -= 1) {
+      samples.push(getAnchorPoint({ shapeId: shape.id, side: "bottom", anchorFraction: i / sampleCount }));
+    }
+    for (let i = sampleCount - 1; i >= 1; i -= 1) {
+      samples.push(getAnchorPoint({ shapeId: shape.id, side: "left", anchorFraction: i / sampleCount }));
+    }
+    if (!samples.length) return "";
+    const d = ["M " + samples[0].x + " " + samples[0].y];
+    for (let i = 1; i < samples.length; i += 1) {
+      d.push("L " + samples[i].x + " " + samples[i].y);
+    }
+    d.push("Z");
+    return d.join(" ");
+  }
+
+  function sameConnectPreview(a, b) {
+    if (!a && !b) return true;
+    if (!a || !b) return false;
+    return a.shapeId === b.shapeId;
+  }
+
+  function updateConnectPreview(point, preferredShapeId, skipRender) {
+    let nextPreview = null;
+    const anchor = point ? nearestAnchor(point, preferredShapeId || "") : null;
+    if (anchor && anchor.shapeId) {
+      nextPreview = { shapeId: anchor.shapeId };
+    }
+    if (sameConnectPreview(state.connectPreview, nextPreview)) return;
+    state.connectPreview = nextPreview;
+    if (!skipRender) render(true);
+  }
+
   function getAnchorPoint(endpoint) {
     const shape = shapeById(endpoint.shapeId);
     if (!shape) {
@@ -4205,8 +4276,20 @@
       attrs["marker-end"] = "url(#editor-arrow-head)";
     }
 
-    const path = createSvg("path", attrs);
-    path.addEventListener("pointerdown", (evt) => {
+    const interactionPath = createSvg("path", {
+      d: geom.path,
+      fill: "none",
+      stroke: "rgba(0,0,0,0)",
+      "stroke-width": Math.max(14, width + 12),
+      "stroke-linecap": "round",
+      "stroke-linejoin": "round",
+      "pointer-events": "stroke",
+      style: "cursor:pointer",
+      "data-arrow-id": arrow.id,
+    });
+    const path = createSvg("path", Object.assign({ "pointer-events": "none" }, attrs));
+
+    const onArrowPointerDown = (evt) => {
       evt.stopPropagation();
       if (evt.metaKey || evt.ctrlKey) {
         const selectedIds = currentSelectedArrowIds();
@@ -4220,8 +4303,18 @@
         setArrowSelection(nextIds, arrow.id);
         return;
       }
-      setSelected({ type: "arrow", id: arrow.id });
-    });
+      const currentIds = currentSelectedArrowIds();
+      const selectionIds = currentIds.indexOf(arrow.id) >= 0 ? currentIds : [arrow.id];
+      setArrowSelection(selectionIds, arrow.id, true);
+      if (state.mode === "select" && evt.button === 0 && arrowIsMovable(arrow)) {
+        startArrowMoveDrag(evt, arrow.id);
+      } else {
+        render();
+      }
+    };
+
+    interactionPath.addEventListener("pointerdown", onArrowPointerDown);
+    arrowLayer.appendChild(interactionPath);
     arrowLayer.appendChild(path);
   }
 
@@ -4527,6 +4620,21 @@
   }
 
   function renderSelectionOverlay(overlayLayer) {
+    if (state.connectPreview && state.connectPreview.shapeId) {
+      const previewShape = shapeById(state.connectPreview.shapeId);
+      const previewPath = previewShape ? shapePerimeterPreviewPath(previewShape) : "";
+      if (previewPath) {
+        overlayLayer.appendChild(createSvg("path", {
+          d: previewPath,
+          fill: "rgba(104, 186, 255, 0.08)",
+          stroke: "#68baff",
+          "stroke-width": 2.2,
+          "stroke-dasharray": "6 4",
+          "pointer-events": "none",
+        }));
+      }
+    }
+
     if (state.drag && state.drag.type === "marquee-select") {
       const marquee = rectFromPoints(state.drag.start, state.drag.current || state.drag.start);
       overlayLayer.appendChild(createSvg("rect", {
@@ -5226,6 +5334,58 @@
     };
   }
 
+  function arrowIsMovable(arrow) {
+    return !!(arrow && (!arrow.from.shapeId || !arrow.to.shapeId));
+  }
+
+  function snapshotArrowForMove(arrow) {
+    return {
+      from: Object.assign({}, arrow.from),
+      to: Object.assign({}, arrow.to),
+      waypoints: Array.isArray(arrow.waypoints) ? arrow.waypoints.map((point) => ({ x: point.x, y: point.y })) : [],
+      controlPoints: Array.isArray(arrow.controlPoints) ? arrow.controlPoints.map((point) => ({ x: point.x, y: point.y })) : [],
+    };
+  }
+
+  function translateArrowBy(arrow, before, dx, dy) {
+    if (!arrow || !before) return;
+    if (!before.from.shapeId) {
+      arrow.from.x = (Number(before.from.x) || 0) + dx;
+      arrow.from.y = (Number(before.from.y) || 0) + dy;
+    }
+    if (!before.to.shapeId) {
+      arrow.to.x = (Number(before.to.x) || 0) + dx;
+      arrow.to.y = (Number(before.to.y) || 0) + dy;
+    }
+    arrow.waypoints = before.waypoints.map((point) => ({ x: point.x + dx, y: point.y + dy }));
+    arrow.controlPoints = before.controlPoints.map((point) => ({ x: point.x + dx, y: point.y + dy }));
+  }
+
+  function startArrowMoveDrag(evt, arrowId) {
+    const selected = currentSelectedArrowIds()
+      .map((id) => arrowById(id))
+      .filter((arrow) => arrow && arrowIsMovable(arrow));
+    const fallbackArrow = arrowById(arrowId);
+    const arrows = selected.length
+      ? selected
+      : (fallbackArrow && arrowIsMovable(fallbackArrow) ? [fallbackArrow] : []);
+    if (!arrows.length) {
+      render();
+      return;
+    }
+    pushHistory();
+    const before = {};
+    arrows.forEach((arrow) => {
+      before[arrow.id] = snapshotArrowForMove(arrow);
+    });
+    state.drag = {
+      type: "move-arrows",
+      arrowIds: arrows.map((arrow) => arrow.id),
+      before: before,
+      start: clientToSvg(evt),
+    };
+  }
+
   function startArrowWaypointDrag(evt, arrowId, waypointIndex) {
     pushHistory();
     state.drag = {
@@ -5264,7 +5424,12 @@
   }
 
   function handlePointerMove(evt) {
-    if (!state.drag) return;
+    if (!state.drag) {
+      if (state.mode !== "select") {
+        updateConnectPreview(clientToSvg(evt), state.connectSourceId || "");
+      }
+      return;
+    }
 
     if (state.drag.type === "pan-canvas") {
       const dx = evt.clientX - state.drag.startClientX;
@@ -5290,6 +5455,19 @@
       });
       const movedBounds = selectionBounds(state.drag.rootShapeIds || state.drag.movedShapeIds);
       updateCanvasDuringInteraction(movedBounds);
+      render();
+      return;
+    }
+
+    if (state.drag.type === "move-arrows") {
+      const dx = snapToStep(point.x - state.drag.start.x, GRID_MINOR_STEP);
+      const dy = snapToStep(point.y - state.drag.start.y, GRID_MINOR_STEP);
+      (state.drag.arrowIds || []).forEach((id) => {
+        const arrow = arrowById(id);
+        if (!arrow) return;
+        translateArrowBy(arrow, state.drag.before[id], dx, dy);
+      });
+      updateCanvasDuringInteraction(contentBounds());
       render();
       return;
     }
@@ -5402,6 +5580,7 @@
       if (!arrow) return;
       const currentEndpoint = arrow[state.drag.endpointKey] || {};
       const anchor = nearestAnchor(point, currentEndpoint.shapeId || "");
+      updateConnectPreview(anchor ? point : null, anchor ? anchor.shapeId : "");
       arrow[state.drag.endpointKey] = anchor
         ? {
             shapeId: anchor.shapeId,
@@ -5439,6 +5618,7 @@
     if (!state.drag) return;
     const shouldRender = state.drag.type === "marquee-select";
     state.drag = null;
+    updateConnectPreview(null, "", true);
     els.canvasScroll.classList.remove("panning");
     if (shouldRender) {
       render();
@@ -5452,6 +5632,11 @@
 
     if (drag.type === "move-shapes") {
       finalizeMovedRoots(drag.rootShapeIds);
+      syncCanvasRectToContent();
+      render();
+    }
+
+    if (drag.type === "move-arrows") {
       syncCanvasRectToContent();
       render();
     }
@@ -5472,6 +5657,7 @@
     }
 
     if (drag.type === "arrow-endpoint") {
+      updateConnectPreview(null, "", true);
       syncCanvasRectToContent();
       render();
     }
@@ -5686,7 +5872,11 @@
 
   function setMode(mode) {
     state.mode = mode;
-    if (mode === "select") state.connectSourceId = null;
+    if (mode === "select") {
+      state.connectSourceId = null;
+      state.connectSourceEndpoint = null;
+      state.connectPreview = null;
+    }
     render();
   }
 
@@ -5801,6 +5991,89 @@
         el.blur();
       }
     });
+  }
+
+  function bindSmoothNumberElement(el, getter, setter, options) {
+    if (!el) return;
+    const opts = options || {};
+    const step = Number.isFinite(Number(opts.step)) ? Number(opts.step) : 1;
+    const renderFully = !!opts.renderFully;
+    const syncCanvas = opts.syncCanvas !== false;
+    const normalize = typeof opts.normalize === "function" ? opts.normalize : (value) => value;
+    let pushed = false;
+
+    const apply = (rawValue) => {
+      const next = normalize(rawValue, getter());
+      if (!Number.isFinite(next)) return;
+      setter(next);
+      if (syncCanvas) syncCanvasRectToContent();
+      if (renderFully) render();
+      else render(true);
+    };
+
+    const ensureHistory = () => {
+      if (!pushed) {
+        pushHistory();
+        pushed = true;
+      }
+    };
+
+    const commit = () => {
+      const value = String(el.value || "").trim();
+      if (!value) {
+        pushed = false;
+        el.value = roundNum(getter());
+        return;
+      }
+      const num = Number(value);
+      if (!Number.isFinite(num)) return;
+      ensureHistory();
+      apply(num);
+      pushed = false;
+    };
+
+    el.addEventListener("focus", () => {
+      pushed = false;
+      el.value = roundNum(getter());
+    });
+    el.addEventListener("blur", () => {
+      pushed = false;
+    });
+    el.addEventListener("input", () => {
+      const value = String(el.value || "").trim();
+      if (!value) return;
+      const num = Number(value);
+      if (!Number.isFinite(num)) return;
+      ensureHistory();
+      apply(num);
+    });
+    el.addEventListener("change", commit);
+    el.addEventListener("keydown", (evt) => {
+      if (evt.key === "Enter") {
+        evt.preventDefault();
+        commit();
+        el.blur();
+        return;
+      }
+      if (evt.key !== "ArrowUp" && evt.key !== "ArrowDown") return;
+      evt.preventDefault();
+      ensureHistory();
+      apply(nudgeFromCurrent(getter(), evt.key === "ArrowUp" ? 1 : -1, step));
+      el.value = roundNum(getter());
+    });
+  }
+
+  function bindSmoothNumberInput(id, getter, setter, options) {
+    bindSmoothNumberElement(document.getElementById(id), getter, setter, options);
+  }
+
+  function bindSmoothNumberByAttr(attr, index, getter, setter, options) {
+    bindSmoothNumberElement(
+      document.querySelector("[" + attr + '="' + index + '"]'),
+      getter,
+      setter,
+      options
+    );
   }
 
   function syncShapeGeometryInputs(shape) {
@@ -8620,11 +8893,17 @@
       render();
     });
 
-    bindNumber("ins-arrow-width", "input", (num) => {
-      pushHistory();
-      arrow.width = Math.max(0.5, num);
-      render();
-    });
+    bindSmoothNumberInput(
+      "ins-arrow-width",
+      () => Math.max(0.5, Number(arrow.width) || 0.5),
+      (num) => {
+        arrow.width = Math.max(0.5, num);
+      },
+      {
+        step: 0.1,
+        syncCanvas: false,
+      }
+    );
 
     const zBack = document.getElementById("ins-z-back");
     const zFront = document.getElementById("ins-z-front");
@@ -8644,30 +8923,30 @@
     }
 
     if (arrow.routing === "curved") {
-      bindNumber("ins-cp1x", "input", (num) => {
-        pushHistory();
-        setControlPoint(arrow, 0, "x", num);
-        syncCanvasRectToContent();
-        render();
-      });
-      bindNumber("ins-cp1y", "input", (num) => {
-        pushHistory();
-        setControlPoint(arrow, 0, "y", num);
-        syncCanvasRectToContent();
-        render();
-      });
-      bindNumber("ins-cp2x", "input", (num) => {
-        pushHistory();
-        setControlPoint(arrow, 1, "x", num);
-        syncCanvasRectToContent();
-        render();
-      });
-      bindNumber("ins-cp2y", "input", (num) => {
-        pushHistory();
-        setControlPoint(arrow, 1, "y", num);
-        syncCanvasRectToContent();
-        render();
-      });
+      bindSmoothNumberInput(
+        "ins-cp1x",
+        () => ((arrow.controlPoints[0] && arrow.controlPoints[0].x) || 0),
+        (num) => setControlPoint(arrow, 0, "x", num),
+        { step: 1, syncCanvas: true }
+      );
+      bindSmoothNumberInput(
+        "ins-cp1y",
+        () => ((arrow.controlPoints[0] && arrow.controlPoints[0].y) || 0),
+        (num) => setControlPoint(arrow, 0, "y", num),
+        { step: 1, syncCanvas: true }
+      );
+      bindSmoothNumberInput(
+        "ins-cp2x",
+        () => ((arrow.controlPoints[1] && arrow.controlPoints[1].x) || 0),
+        (num) => setControlPoint(arrow, 1, "x", num),
+        { step: 1, syncCanvas: true }
+      );
+      bindSmoothNumberInput(
+        "ins-cp2y",
+        () => ((arrow.controlPoints[1] && arrow.controlPoints[1].y) || 0),
+        (num) => setControlPoint(arrow, 1, "y", num),
+        { step: 1, syncCanvas: true }
+      );
     }
 
     if (arrow.routing === "angled") {
@@ -8683,18 +8962,26 @@
       }
 
       (arrow.waypoints || []).forEach((_, idx) => {
-        bindNumberByAttr("data-waypoint-x", idx, (num) => {
-          pushHistory();
-          arrow.waypoints[idx].x = num;
-          syncCanvasRectToContent();
-          render();
-        });
-        bindNumberByAttr("data-waypoint-y", idx, (num) => {
-          pushHistory();
-          arrow.waypoints[idx].y = num;
-          syncCanvasRectToContent();
-          render();
-        });
+        bindSmoothNumberByAttr(
+          "data-waypoint-x",
+          idx,
+          () => (arrow.waypoints[idx] ? arrow.waypoints[idx].x : 0),
+          (num) => {
+            if (!arrow.waypoints[idx]) return;
+            arrow.waypoints[idx].x = num;
+          },
+          { step: 1, syncCanvas: true }
+        );
+        bindSmoothNumberByAttr(
+          "data-waypoint-y",
+          idx,
+          () => (arrow.waypoints[idx] ? arrow.waypoints[idx].y : 0),
+          (num) => {
+            if (!arrow.waypoints[idx]) return;
+            arrow.waypoints[idx].y = num;
+          },
+          { step: 1, syncCanvas: true }
+        );
 
         const removeBtn = document.querySelector('[data-waypoint-remove="' + idx + '"]');
         if (removeBtn) {
@@ -8992,7 +9279,7 @@
           d: { x: KEYBOARD_NUDGE_STEP, y: 0 },
         };
         const delta = deltas[moveKey];
-        if (delta && moveSelectedShapesBy(delta.x, delta.y)) {
+        if (delta && (moveSelectedShapesBy(delta.x, delta.y) || moveSelectedArrowsBy(delta.x, delta.y))) {
           evt.preventDefault();
         }
         return;
