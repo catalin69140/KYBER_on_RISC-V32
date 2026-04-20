@@ -3163,9 +3163,9 @@
       const capHeight = Math.max(12, Math.min(22, shape.height * 0.18));
       const prismHeight = Math.max(18, shape.height - capHeight);
       const top = polygonVerticesForShape({
-        x: shape.x + shape.width * 0.12,
+        x: shape.x,
         y: shape.y,
-        width: shape.width * 0.76,
+        width: shape.width,
         height: capHeight,
         kind: "hexagon",
       });

@@ -3285,7 +3285,7 @@ def write_html_animation(
         } else if (shapeKind === "hexagonal_prism") {
             const capHeight = Math.max(12, Math.min(22, spec.h * 0.18));
             const prismHeight = Math.max(18, spec.h - capHeight);
-            const top = refPolygonVertices({ x: spec.x + spec.w * 0.12, y: spec.y, w: spec.w * 0.76, h: capHeight }, "hexagon");
+            const top = refPolygonVertices({ x: spec.x, y: spec.y, w: spec.w, h: capHeight }, "hexagon");
             const bottom = top.map((point) => ({ x: point.x, y: point.y + prismHeight }));
             appendFacePolygon([top[5], top[0], bottom[0], bottom[5]], refDarkenHex(fill, -12));
             appendFacePolygon([top[0], top[1], bottom[1], bottom[0]], refDarkenHex(fill, -18));
