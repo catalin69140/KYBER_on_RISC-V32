@@ -341,6 +341,20 @@
       gap: 8px;
     }
 
+    .waypoint-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 8px;
+      align-items: end;
+      margin-bottom: 10px;
+    }
+
+    .waypoint-remove {
+      grid-column: 1 / -1;
+      width: 100%;
+      margin: 0;
+    }
+
     label {
       display: block;
       font-size: 12px;

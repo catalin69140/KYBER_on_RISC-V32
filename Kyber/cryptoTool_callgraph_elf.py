@@ -2779,7 +2779,14 @@ def write_html_animation(
         if (kind === "pentagon") {
             return [{ x: cx, y: y }, { x: x + w, y: y + h * 0.38 }, { x: x + w * 0.82, y: y + h }, { x: x + w * 0.18, y: y + h }, { x: x, y: y + h * 0.38 }];
         }
-        if (kind === "hexagon" || kind === "hexagonal_prism") {
+        if (kind === "hexagonal_prism") {
+            const capHeight = Math.max(12, Math.min(22, h * 0.18));
+            const prismHeight = Math.max(18, h - capHeight);
+            const top = refPolygonVertices({ x, y, w, h: capHeight }, "hexagon");
+            const bottom = top.map((point) => ({ x: point.x, y: point.y + prismHeight }));
+            return [top[0], top[1], top[2], bottom[2], bottom[3], bottom[4], bottom[5], top[5]];
+        }
+        if (kind === "hexagon") {
             return [{ x: x + w * 0.18, y: y }, { x: x + w * 0.82, y: y }, { x: x + w, y: y + h / 2 }, { x: x + w * 0.82, y: y + h }, { x: x + w * 0.18, y: y + h }, { x: x, y: y + h / 2 }];
         }
         if (kind === "octagon") {
@@ -2795,9 +2802,15 @@ def write_html_animation(
             return [{ x: x, y: y }, { x: x + w * 0.8, y: y }, { x: x + w, y: y + h * 0.2 }, { x: x + w, y: y + h }, { x: x, y: y + h }];
         }
         if (kind === "cube" || kind === "cuboid") {
-            const offX = Math.min(w * 0.22, 24);
-            const offY = Math.min(h * 0.2, 20);
-            return [{ x: x + offX, y: y }, { x: x + w - offX * 0.2, y: y }, { x: x + w, y: y + offY }, { x: x + w, y: y + h }, { x: x + offX, y: y + h }, { x: x, y: y + h - offY }, { x: x, y: y + offY }];
+            const offX = Math.min(w * (kind === "cube" ? 0.22 : 0.26), 26);
+            const offY = Math.min(h * 0.18, 18);
+            return [{ x, y }, { x: x + w - offX, y }, { x: x + w, y: y + offY }, { x: x + w, y: y + h }, { x: x + offX, y: y + h }, { x, y: y + h - offY }];
+        }
+        if (kind === "and") {
+            return [{ x, y }, { x: x + w * 0.5, y }, { x: x + w * 0.78, y: y + h * 0.04 }, { x: x + w * 0.96, y: y + h * 0.28 }, { x: x + w, y: y + h * 0.5 }, { x: x + w * 0.96, y: y + h * 0.72 }, { x: x + w * 0.78, y: y + h * 0.96 }, { x: x + w * 0.5, y: y + h }, { x, y: y + h }];
+        }
+        if (kind === "or") {
+            return [{ x: x + w * 0.1, y }, { x: x + w * 0.6, y }, { x: x + w * 0.9, y: y + h * 0.24 }, { x: x + w, y: y + h * 0.5 }, { x: x + w * 0.9, y: y + h * 0.76 }, { x: x + w * 0.6, y: y + h }, { x: x + w * 0.1, y: y + h }, { x: x + w * 0.24, y: y + h * 0.5 }];
         }
         return null;
     }
@@ -3126,6 +3139,16 @@ def write_html_animation(
             return appendPolygonShape(points, fillOverride);
         }
 
+        function appendFilledPolygon(points, fillOverride) {
+            const polygon = createSvgEl("polygon", {
+                points: points.map(refPointStr).join(" "),
+                fill: fillOverride !== undefined ? fillOverride : baseFill,
+                stroke: "none"
+            });
+            g.appendChild(polygon);
+            return polygon;
+        }
+
         function appendStrokeLine(attrs, widthOverride) {
             if (!showBorder) return null;
             const line = createSvgEl("line", attrs);
@@ -3135,6 +3158,18 @@ def write_html_animation(
             if (strokeLinecap) line.setAttribute("stroke-linecap", strokeLinecap);
             g.appendChild(line);
             return line;
+        }
+
+        function appendStrokePath(d, widthOverride) {
+            if (!showBorder) return null;
+            const path = createSvgEl("path", { d, fill: "none" });
+            path.setAttribute("stroke", stroke);
+            path.setAttribute("stroke-width", String(widthOverride || borderWidth));
+            path.setAttribute("stroke-linejoin", "round");
+            if (dash) path.setAttribute("stroke-dasharray", dash);
+            if (strokeLinecap) path.setAttribute("stroke-linecap", strokeLinecap);
+            g.appendChild(path);
+            return path;
         }
 
         if (["triangle", "diamond", "parallelogram", "trapezoid", "pentagon", "hexagon", "octagon", "message", "card", "note"].includes(shapeKind)) {
@@ -3203,11 +3238,11 @@ def write_html_animation(
                 appendStrokeLine({ x1: x, y1: topCy, x2: x, y2: bottomCy }, borderWidth);
             });
         } else if (shapeKind === "cone") {
-            const rx = spec.w * 0.32;
+            const rx = spec.w / 2;
             const ry = Math.max(8, Math.min(14, spec.h * 0.11));
             const cx = spec.x + spec.w / 2;
-            const apexY = spec.y + 4;
-            const baseCy = spec.y + spec.h - ry - 2;
+            const apexY = spec.y;
+            const baseCy = spec.y + spec.h - ry;
             appendPathShape([
                 `M ${cx} ${apexY}`,
                 `L ${cx + rx} ${baseCy}`,
@@ -3223,80 +3258,41 @@ def write_html_animation(
         } else if (shapeKind === "cube" || shapeKind === "cuboid") {
             const offX = Math.min(spec.w * (shapeKind === "cube" ? 0.22 : 0.26), 26);
             const offY = Math.min(spec.h * 0.18, 18);
-            const backRect = {
-                x: spec.x,
-                y: spec.y,
-                width: Math.max(10, spec.w - offX),
-                height: Math.max(10, spec.h - offY)
-            };
-            const frontRect = {
-                x: spec.x + offX,
-                y: spec.y + offY,
-                width: Math.max(10, spec.w - offX),
-                height: Math.max(10, spec.h - offY)
-            };
-            appendFacePolygon([
-                { x: backRect.x, y: backRect.y },
-                { x: backRect.x + backRect.width, y: backRect.y },
-                { x: frontRect.x + frontRect.width, y: frontRect.y },
-                { x: frontRect.x, y: frontRect.y }
-            ], refDarkenHex(fill, -18));
-            appendFacePolygon([
-                { x: backRect.x + backRect.width, y: backRect.y },
-                { x: backRect.x + backRect.width, y: backRect.y + backRect.height },
-                { x: frontRect.x + frontRect.width, y: frontRect.y + frontRect.height },
-                { x: frontRect.x + frontRect.width, y: frontRect.y }
-            ], refDarkenHex(fill, -10));
-            appendShapeEl("rect", {
-                x: backRect.x,
-                y: backRect.y,
-                width: backRect.width,
-                height: backRect.height,
-                rx: 0,
-                ry: 0
-            }, refDarkenHex(fill, -16));
-            [
-                [spec.x, spec.y, spec.x + offX, spec.y + offY],
-                [spec.x + spec.w - offX, spec.y, spec.x + spec.w, spec.y + offY],
-                [spec.x + spec.w - offX, spec.y + spec.h - offY, spec.x + spec.w, spec.y + spec.h]
-            ].forEach(([x1, y1, x2, y2]) => {
-                appendStrokeLine({ x1, y1, x2, y2 }, minorSeparatorWidth);
-            });
-            appendFacePolygon([
-                { x: backRect.x, y: backRect.y + backRect.height },
-                { x: backRect.x + backRect.width, y: backRect.y + backRect.height },
-                { x: frontRect.x + frontRect.width, y: frontRect.y + frontRect.height },
-                { x: frontRect.x, y: frontRect.y + frontRect.height }
-            ], refDarkenHex(fill, -14));
-            appendStrokeLine({
-                x1: spec.x,
-                y1: spec.y + spec.h - offY,
-                x2: spec.x + offX,
-                y2: spec.y + spec.h
-            }, minorSeparatorWidth);
-            appendShapeEl("rect", {
-                x: frontRect.x,
-                y: frontRect.y,
-                width: frontRect.width,
-                height: frontRect.height,
-                rx: 0,
-                ry: 0
+            const a = { x: spec.x, y: spec.y };
+            const b = { x: spec.x + spec.w - offX, y: spec.y };
+            const c = { x: spec.x + spec.w, y: spec.y + offY };
+            const d = { x: spec.x + spec.w, y: spec.y + spec.h };
+            const e = { x: spec.x + offX, y: spec.y + spec.h };
+            const f = { x: spec.x, y: spec.y + spec.h - offY };
+            const gFront = { x: spec.x + offX, y: spec.y + offY };
+            const hBack = { x: spec.x + spec.w - offX, y: spec.y + spec.h - offY };
+            appendFilledPolygon([a, b, c, gFront], refDarkenHex(fill, -18));
+            appendFilledPolygon([b, hBack, d, c], refDarkenHex(fill, -10));
+            appendFilledPolygon([f, hBack, d, e], refDarkenHex(fill, -14));
+            appendFilledPolygon([gFront, c, d, e], baseFill);
+            [[a, b], [b, c], [c, d], [d, e], [e, f], [f, a], [a, gFront], [b, hBack], [hBack, d], [f, e], [gFront, c], [gFront, e]].forEach(([p1, p2]) => {
+                appendStrokeLine({ x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y }, minorSeparatorWidth);
             });
         } else if (shapeKind === "hexagonal_prism") {
             const capHeight = Math.max(12, Math.min(22, spec.h * 0.18));
             const prismHeight = Math.max(18, spec.h - capHeight);
             const top = refPolygonVertices({ x: spec.x, y: spec.y, w: spec.w, h: capHeight }, "hexagon");
             const bottom = top.map((point) => ({ x: point.x, y: point.y + prismHeight }));
-            appendFacePolygon([top[5], top[0], bottom[0], bottom[5]], refDarkenHex(fill, -12));
-            appendFacePolygon([top[0], top[1], bottom[1], bottom[0]], refDarkenHex(fill, -18));
-            appendFacePolygon([top[1], top[2], bottom[2], bottom[1]], refDarkenHex(fill, -8));
-            appendPolygonShape(top, refDarkenHex(fill, -20));
-            appendPolygonShape(bottom);
-            [0, 1, 2, 3, 4, 5].forEach((idx) => {
+            appendFilledPolygon([top[5], top[0], bottom[0], bottom[5]], refDarkenHex(fill, -12));
+            appendFilledPolygon([top[0], top[1], bottom[1], bottom[0]], refDarkenHex(fill, -18));
+            appendFilledPolygon([top[1], top[2], bottom[2], bottom[1]], refDarkenHex(fill, -8));
+            appendFilledPolygon([top[0], top[1], top[2], top[3], top[4], top[5]], refDarkenHex(fill, -20));
+            appendFilledPolygon([bottom[0], bottom[1], bottom[2], bottom[3], bottom[4], bottom[5]], baseFill);
+            const outline = [top[0], top[1], top[2], bottom[2], bottom[3], bottom[4], bottom[5], top[5], top[0]];
+            appendStrokePath("M " + outline.map(refPointStr).join(" L ") + " Z", borderWidth);
+            [0, 1, 2, 5].forEach((idx) => {
                 appendStrokeLine({ x1: top[idx].x, y1: top[idx].y, x2: bottom[idx].x, y2: bottom[idx].y }, minorSeparatorWidth);
             });
+            appendStrokeLine({ x1: top[5].x, y1: top[5].y, x2: top[0].x, y2: top[0].y }, minorSeparatorWidth);
+            appendStrokeLine({ x1: top[0].x, y1: top[0].y, x2: top[1].x, y2: top[1].y }, minorSeparatorWidth);
+            appendStrokeLine({ x1: top[1].x, y1: top[1].y, x2: top[2].x, y2: top[2].y }, minorSeparatorWidth);
         } else if (shapeKind === "and") {
-            appendPathShape(`M ${spec.x} ${spec.y} L ${spec.x + spec.w * 0.56} ${spec.y} Q ${spec.x + spec.w} ${spec.y + spec.h / 2} ${spec.x + spec.w * 0.56} ${spec.y + spec.h} L ${spec.x} ${spec.y + spec.h} Z`);
+            appendPathShape(`M ${spec.x} ${spec.y} L ${spec.x + spec.w * 0.5} ${spec.y} C ${spec.x + spec.w * 0.78} ${spec.y} ${spec.x + spec.w} ${spec.y + spec.h * 0.22} ${spec.x + spec.w} ${spec.y + spec.h / 2} C ${spec.x + spec.w} ${spec.y + spec.h * 0.78} ${spec.x + spec.w * 0.78} ${spec.y + spec.h} ${spec.x + spec.w * 0.5} ${spec.y + spec.h} L ${spec.x} ${spec.y + spec.h} Z`);
         } else if (shapeKind === "or") {
             appendPathShape(`M ${spec.x + spec.w * 0.1} ${spec.y} Q ${spec.x + spec.w * 0.62} ${spec.y} ${spec.x + spec.w} ${spec.y + spec.h / 2} Q ${spec.x + spec.w * 0.62} ${spec.y + spec.h} ${spec.x + spec.w * 0.1} ${spec.y + spec.h} Q ${spec.x + spec.w * 0.26} ${spec.y + spec.h / 2} ${spec.x + spec.w * 0.1} ${spec.y} Z`);
         } else if (shapeKind === "actor") {
@@ -3845,10 +3841,10 @@ def write_html_animation(
             return refLerpPoint(top, br, (frac - 0.5) / 0.5);
         }
         if (kind === "cone") {
-            const rx = w * 0.32;
+            const rx = w / 2;
             const ry = Math.max(8, Math.min(14, h * 0.11));
-            const apex = { x: cx, y: y0 + 4 };
-            const baseCy = y0 + h - ry - 2;
+            const apex = { x: cx, y: y0 };
+            const baseCy = y0 + h - ry;
             const leftBase = { x: cx - rx, y: baseCy };
             const rightBase = { x: cx + rx, y: baseCy };
             if (side === "left") return refLerpPoint(apex, leftBase, frac);

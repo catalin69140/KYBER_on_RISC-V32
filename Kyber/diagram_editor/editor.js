@@ -2474,7 +2474,14 @@
         { x: x, y: y + h * 0.38 },
       ];
     }
-    if (kind === "hexagon" || kind === "hexagonal_prism") {
+    if (kind === "hexagonal_prism") {
+      const capHeight = Math.max(12, Math.min(22, h * 0.18));
+      const prismHeight = Math.max(18, h - capHeight);
+      const top = polygonVerticesForShape({ kind: "hexagon", x: x, y: y, width: w, height: capHeight });
+      const bottom = top.map((point) => ({ x: point.x, y: point.y + prismHeight }));
+      return [top[0], top[1], top[2], bottom[2], bottom[3], bottom[4], bottom[5], top[5]];
+    }
+    if (kind === "hexagon") {
       return [
         { x: x + w * 0.18, y: y },
         { x: x + w * 0.82, y: y },
@@ -2526,16 +2533,40 @@
       ];
     }
     if (kind === "cube" || kind === "cuboid") {
-      const offX = Math.min(w * 0.22, 24);
-      const offY = Math.min(h * 0.2, 20);
+      const offX = Math.min(w * (kind === "cube" ? 0.22 : 0.26), 26);
+      const offY = Math.min(h * 0.18, 18);
       return [
-        { x: x + offX, y: y },
-        { x: x + w - offX * 0.2, y: y },
+        { x: x, y: y },
+        { x: x + w - offX, y: y },
         { x: x + w, y: y + offY },
         { x: x + w, y: y + h },
         { x: x + offX, y: y + h },
         { x: x, y: y + h - offY },
-        { x: x, y: y + offY },
+      ];
+    }
+    if (kind === "and") {
+      return [
+        { x: x, y: y },
+        { x: x + w * 0.5, y: y },
+        { x: x + w * 0.78, y: y + h * 0.04 },
+        { x: x + w * 0.96, y: y + h * 0.28 },
+        { x: x + w, y: y + h * 0.5 },
+        { x: x + w * 0.96, y: y + h * 0.72 },
+        { x: x + w * 0.78, y: y + h * 0.96 },
+        { x: x + w * 0.5, y: y + h },
+        { x: x, y: y + h },
+      ];
+    }
+    if (kind === "or") {
+      return [
+        { x: x + w * 0.1, y: y },
+        { x: x + w * 0.6, y: y },
+        { x: x + w * 0.9, y: y + h * 0.24 },
+        { x: x + w, y: y + h * 0.5 },
+        { x: x + w * 0.9, y: y + h * 0.76 },
+        { x: x + w * 0.6, y: y + h },
+        { x: x + w * 0.1, y: y + h },
+        { x: x + w * 0.24, y: y + h * 0.5 },
       ];
     }
     return null;
@@ -2719,8 +2750,8 @@
     }
 
     if (kind === "cone") {
-      addPath("M 24 9 L 36 30 A 12 4.8 0 1 1 12 30 Z");
-      const base = appendToolIconEl(svg, "ellipse", { cx: 24, cy: 30, rx: 12, ry: 4.8, fill: "none", stroke, "stroke-width": 1.3 });
+      addPath("M 24 8 L 39 31 A 15 5 0 1 1 9 31 Z");
+      const base = appendToolIconEl(svg, "ellipse", { cx: 24, cy: 31, rx: 15, ry: 5, fill: "none", stroke, "stroke-width": 1.3 });
       if (dash) base.setAttribute("stroke-dasharray", dash);
       return svg;
     }
@@ -2738,7 +2769,7 @@
     }
 
     if (kind === "and") {
-      addPath("M 11 10 L 27 10 Q 39 22 27 34 L 11 34 Z");
+      addPath("M 9 10 L 24 10 C 33 10 39 15 39 22 C 39 29 33 34 24 34 L 9 34 Z");
       return svg;
     }
 
@@ -3208,6 +3239,16 @@
       return appendPolygonShape(points, fillOverride);
     }
 
+    function appendFilledPolygon(points, fillOverride) {
+      const polygon = createSvg("polygon", {
+        points: points.map(pointStr).join(" "),
+        fill: fillOverride !== undefined ? fillOverride : baseFill,
+        stroke: "none",
+      });
+      group.appendChild(polygon);
+      return polygon;
+    }
+
     function appendStrokeLine(attrs, widthOverride) {
       if (structuralStyle === "none") return null;
       const line = createSvg("line", attrs);
@@ -3217,6 +3258,21 @@
       if (structuralLinecap) line.setAttribute("stroke-linecap", structuralLinecap);
       group.appendChild(line);
       return line;
+    }
+
+    function appendStrokePath(d, widthOverride) {
+      if (structuralStyle === "none") return null;
+      const path = createSvg("path", {
+        d: d,
+        fill: "none",
+        stroke: strokeColor,
+        "stroke-width": widthOverride || strokeWidth,
+        "stroke-linejoin": "round",
+      });
+      if (structuralDash) path.setAttribute("stroke-dasharray", structuralDash);
+      if (structuralLinecap) path.setAttribute("stroke-linecap", structuralLinecap);
+      group.appendChild(path);
+      return path;
     }
 
     if (kind === "text_box" && shape.noBackground) {
@@ -3318,11 +3374,11 @@
         y2: bottomCy,
       }, strokeWidth);
     } else if (kind === "cone") {
-      const rx = shape.width * 0.32;
+      const rx = shape.width / 2;
       const ry = Math.max(8, Math.min(14, shape.height * 0.11));
       const cx = shape.x + shape.width / 2;
-      const apexY = shape.y + 4;
-      const baseCy = shape.y + shape.height - ry - 2;
+      const apexY = shape.y;
+      const baseCy = shape.y + shape.height - ry;
       const bodyPath = [
         "M " + cx + " " + apexY,
         "L " + (cx + rx) + " " + baseCy,
@@ -3349,75 +3405,23 @@
     } else if (kind === "cube" || kind === "cuboid") {
       const offX = Math.min(shape.width * (kind === "cube" ? 0.22 : 0.26), 26);
       const offY = Math.min(shape.height * 0.18, 18);
-      const backRect = {
-        x: shape.x,
-        y: shape.y,
-        width: Math.max(10, shape.width - offX),
-        height: Math.max(10, shape.height - offY),
-      };
-      const frontRect = {
-        x: shape.x + offX,
-        y: shape.y + offY,
-        width: Math.max(10, shape.width - offX),
-        height: Math.max(10, shape.height - offY),
-      };
-      appendFacePolygon([
-        { x: backRect.x, y: backRect.y },
-        { x: backRect.x + backRect.width, y: backRect.y },
-        { x: frontRect.x + frontRect.width, y: frontRect.y },
-        { x: frontRect.x, y: frontRect.y },
-      ], darken(shape.fill, -18));
-      appendFacePolygon([
-        { x: backRect.x + backRect.width, y: backRect.y },
-        { x: backRect.x + backRect.width, y: backRect.y + backRect.height },
-        { x: frontRect.x + frontRect.width, y: frontRect.y + frontRect.height },
-        { x: frontRect.x + frontRect.width, y: frontRect.y },
-      ], darken(shape.fill, -10));
-      appendShapeEl("rect", {
-        x: backRect.x,
-        y: backRect.y,
-        width: backRect.width,
-        height: backRect.height,
-        rx: 0,
-        ry: 0,
-      }, darken(shape.fill, -16));
-      appendStrokeLine({
-        x1: shape.x,
-        y1: shape.y,
-        x2: shape.x + offX,
-        y2: shape.y + offY,
-      }, minorSeparatorWidth);
-      appendStrokeLine({
-        x1: shape.x + shape.width - offX,
-        y1: shape.y,
-        x2: shape.x + shape.width,
-        y2: shape.y + offY,
-      }, minorSeparatorWidth);
-      appendStrokeLine({
-        x1: shape.x + shape.width - offX,
-        y1: shape.y + shape.height - offY,
-        x2: shape.x + shape.width,
-        y2: shape.y + shape.height,
-      }, minorSeparatorWidth);
-      appendFacePolygon([
-        { x: backRect.x, y: backRect.y + backRect.height },
-        { x: backRect.x + backRect.width, y: backRect.y + backRect.height },
-        { x: frontRect.x + frontRect.width, y: frontRect.y + frontRect.height },
-        { x: frontRect.x, y: frontRect.y + frontRect.height },
-      ], darken(shape.fill, -14));
-      appendStrokeLine({
-        x1: shape.x,
-        y1: shape.y + shape.height - offY,
-        x2: shape.x + offX,
-        y2: shape.y + shape.height,
-      }, minorSeparatorWidth);
-      appendShapeEl("rect", {
-        x: frontRect.x,
-        y: frontRect.y,
-        width: frontRect.width,
-        height: frontRect.height,
-        rx: 0,
-        ry: 0,
+      const a = { x: shape.x, y: shape.y };
+      const b = { x: shape.x + shape.width - offX, y: shape.y };
+      const c = { x: shape.x + shape.width, y: shape.y + offY };
+      const d = { x: shape.x + shape.width, y: shape.y + shape.height };
+      const e = { x: shape.x + offX, y: shape.y + shape.height };
+      const f = { x: shape.x, y: shape.y + shape.height - offY };
+      const g = { x: shape.x + offX, y: shape.y + offY };
+      const h = { x: shape.x + shape.width - offX, y: shape.y + shape.height - offY };
+      appendFilledPolygon([a, b, c, g], darken(shape.fill, -18));
+      appendFilledPolygon([b, h, d, c], darken(shape.fill, -10));
+      appendFilledPolygon([f, h, d, e], darken(shape.fill, -14));
+      appendFilledPolygon([g, c, d, e], baseFill);
+      [
+        [a, b], [b, c], [c, d], [d, e], [e, f], [f, a],
+        [a, g], [b, h], [h, d], [f, e], [g, c], [g, e],
+      ].forEach(([p1, p2]) => {
+        appendStrokeLine({ x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y }, minorSeparatorWidth);
       });
     } else if (kind === "hexagonal_prism") {
       const capHeight = Math.max(12, Math.min(22, shape.height * 0.18));
@@ -3430,12 +3434,14 @@
         kind: "hexagon",
       });
       const bottom = top.map((point) => ({ x: point.x, y: point.y + prismHeight }));
-      appendFacePolygon([top[5], top[0], bottom[0], bottom[5]], darken(shape.fill, -12));
-      appendFacePolygon([top[0], top[1], bottom[1], bottom[0]], darken(shape.fill, -18));
-      appendFacePolygon([top[1], top[2], bottom[2], bottom[1]], darken(shape.fill, -8));
-      appendPolygonShape(top, darken(shape.fill, -20));
-      appendPolygonShape(bottom);
-      [0, 1, 2, 3, 4, 5].forEach((idx) => {
+      appendFilledPolygon([top[5], top[0], bottom[0], bottom[5]], darken(shape.fill, -12));
+      appendFilledPolygon([top[0], top[1], bottom[1], bottom[0]], darken(shape.fill, -18));
+      appendFilledPolygon([top[1], top[2], bottom[2], bottom[1]], darken(shape.fill, -8));
+      appendFilledPolygon([top[0], top[1], top[2], top[3], top[4], top[5]], darken(shape.fill, -20));
+      appendFilledPolygon([bottom[0], bottom[1], bottom[2], bottom[3], bottom[4], bottom[5]], baseFill);
+      const outline = [top[0], top[1], top[2], bottom[2], bottom[3], bottom[4], bottom[5], top[5], top[0]];
+      appendStrokePath(polylinePath(outline) + " Z", strokeWidth);
+      [0, 1, 2, 5].forEach((idx) => {
         appendStrokeLine({
           x1: top[idx].x,
           y1: top[idx].y,
@@ -3443,6 +3449,9 @@
           y2: bottom[idx].y,
         }, minorSeparatorWidth);
       });
+      appendStrokeLine({ x1: top[5].x, y1: top[5].y, x2: top[0].x, y2: top[0].y }, minorSeparatorWidth);
+      appendStrokeLine({ x1: top[0].x, y1: top[0].y, x2: top[1].x, y2: top[1].y }, minorSeparatorWidth);
+      appendStrokeLine({ x1: top[1].x, y1: top[1].y, x2: top[2].x, y2: top[2].y }, minorSeparatorWidth);
     } else if (kind === "and") {
       const x0 = shape.x;
       const y0 = shape.y;
@@ -3450,8 +3459,9 @@
       const h = shape.height;
       const d = [
         "M " + x0 + " " + y0,
-        "L " + (x0 + w * 0.56) + " " + y0,
-        "Q " + (x0 + w) + " " + (y0 + h / 2) + " " + (x0 + w * 0.56) + " " + (y0 + h),
+        "L " + (x0 + w * 0.5) + " " + y0,
+        "C " + (x0 + w * 0.78) + " " + y0 + " " + (x0 + w) + " " + (y0 + h * 0.22) + " " + (x0 + w) + " " + (y0 + h / 2),
+        "C " + (x0 + w) + " " + (y0 + h * 0.78) + " " + (x0 + w * 0.78) + " " + (y0 + h) + " " + (x0 + w * 0.5) + " " + (y0 + h),
         "L " + x0 + " " + (y0 + h),
         "Z",
       ].join(" ");
@@ -3810,7 +3820,7 @@
   function shapePerimeterPreviewPath(shape) {
     if (!shape) return "";
     const samples = [];
-    const sampleCount = 12;
+    const sampleCount = 40;
     for (let i = 0; i <= sampleCount; i += 1) {
       samples.push(getAnchorPoint({ shapeId: shape.id, side: "top", anchorFraction: i / sampleCount }));
     }
@@ -3832,15 +3842,54 @@
     return d.join(" ");
   }
 
+  function appendPerimeterPreviewStroke(layer, tag, attrs) {
+    const halo = createSvg(tag, Object.assign({}, attrs, {
+      fill: "none",
+      stroke: "#eef7ff",
+      "stroke-width": 6,
+      opacity: 0.68,
+      "vector-effect": "non-scaling-stroke",
+      "pointer-events": "none",
+    }));
+    const line = createSvg(tag, Object.assign({}, attrs, {
+      fill: "none",
+      stroke: "#36a3ff",
+      "stroke-width": 2.4,
+      "stroke-dasharray": "7 4",
+      "stroke-linecap": "round",
+      "stroke-linejoin": "round",
+      "vector-effect": "non-scaling-stroke",
+      "pointer-events": "none",
+    }));
+    layer.appendChild(halo);
+    layer.appendChild(line);
+  }
+
+  function renderConnectPerimeterPreview(layer, shape) {
+    if (!shape) return;
+    if (shape.kind === "circle" || shape.kind === "oval") {
+      appendPerimeterPreviewStroke(layer, "ellipse", {
+        cx: shape.x + shape.width / 2,
+        cy: shape.y + shape.height / 2,
+        rx: shape.width / 2,
+        ry: shape.height / 2,
+      });
+      return;
+    }
+    const d = shapePerimeterPreviewPath(shape);
+    if (!d) return;
+    appendPerimeterPreviewStroke(layer, "path", { d: d });
+  }
+
   function sameConnectPreview(a, b) {
     if (!a && !b) return true;
     if (!a || !b) return false;
     return a.shapeId === b.shapeId;
   }
 
-  function updateConnectPreview(point, preferredShapeId, skipRender) {
+  function updateConnectPreview(point, preferredShapeId, skipRender, referencePoint) {
     let nextPreview = null;
-    const anchor = point ? nearestAnchor(point, preferredShapeId || "") : null;
+    const anchor = point ? nearestAnchor(point, preferredShapeId || "", referencePoint) : null;
     if (anchor && anchor.shapeId) {
       nextPreview = { shapeId: anchor.shapeId };
     }
@@ -3922,10 +3971,10 @@
     }
 
     if (shape.kind === "cone") {
-      const rx = w * 0.32;
+      const rx = w / 2;
       const ry = Math.max(8, Math.min(14, h * 0.11));
-      const apex = { x: cx, y: y0 + 4 };
-      const baseCy = y0 + h - ry - 2;
+      const apex = { x: cx, y: y0 };
+      const baseCy = y0 + h - ry;
       const leftBase = { x: cx - rx, y: baseCy };
       const rightBase = { x: cx + rx, y: baseCy };
       if (side === "left") return lerpPoint(apex, leftBase, frac);
@@ -4061,8 +4110,47 @@
     };
   }
 
-  function nearestAnchorForShape(shape, point) {
+  function sampledDirectionalAnchorForShape(shape, referencePoint, fallbackPoint) {
+    if (!shape || !referencePoint) return null;
+    const center = shapeCenter(shape);
+    const vx = referencePoint.x - center.x;
+    const vy = referencePoint.y - center.y;
+    const vLen = Math.sqrt(vx * vx + vy * vy);
+    if (!(vLen > 0.001)) return null;
+    const ux = vx / vLen;
+    const uy = vy / vLen;
+    const sampleCount = 64;
+    let best = null;
+    ["top", "right", "bottom", "left"].forEach((side) => {
+      for (let i = 0; i <= sampleCount; i += 1) {
+        const frac = i / sampleCount;
+        const anchor = getAnchorPoint({ shapeId: shape.id, side: side, anchorFraction: frac });
+        const ax = anchor.x - center.x;
+        const ay = anchor.y - center.y;
+        const aLen = Math.sqrt(ax * ax + ay * ay) || 1;
+        const dot = (ax / aLen) * ux + (ay / aLen) * uy;
+        const cursorPenalty = fallbackPoint ? Math.sqrt(distance2(fallbackPoint, anchor)) * 0.0005 : 0;
+        const score = dot - cursorPenalty;
+        if (!best || score > best.score) {
+          best = {
+            shapeId: shape.id,
+            side: side,
+            anchorFraction: normalizeAnchorFraction(frac, 0.5),
+            x: anchor.x,
+            y: anchor.y,
+            d2: fallbackPoint ? distance2(fallbackPoint, anchor) : 0,
+            score: score,
+          };
+        }
+      }
+    });
+    return best;
+  }
+
+  function nearestAnchorForShape(shape, point, referencePoint) {
     if (!shape) return null;
+    const directional = referencePoint ? sampledDirectionalAnchorForShape(shape, referencePoint, point) : null;
+    if (directional) return directional;
     const x0 = shape.x;
     const y0 = shape.y;
     const x1 = shape.x + shape.width;
@@ -4120,14 +4208,18 @@
     return best;
   }
 
-  function nearestAnchor(point, preferredShapeId) {
+  function nearestAnchor(point, preferredShapeId, referencePoint) {
     const preferredShape = preferredShapeId ? shapeById(preferredShapeId) : null;
     let best = null;
 
     state.model.shapes.forEach((shape) => {
-      const candidate = nearestAnchorForShape(shape, point);
+      const proximityCandidate = nearestAnchorForShape(shape, point);
+      if (!proximityCandidate) return;
+      const candidate = referencePoint
+        ? (nearestAnchorForShape(shape, point, referencePoint) || proximityCandidate)
+        : proximityCandidate;
       if (!candidate) return;
-      let score = candidate.d2;
+      let score = proximityCandidate.d2;
       if (preferredShape && preferredShape.id === shape.id) score -= 64;
       if (!best || score < best.score) {
         best = Object.assign({ score: score }, candidate);
@@ -4622,17 +4714,7 @@
   function renderSelectionOverlay(overlayLayer) {
     if (state.connectPreview && state.connectPreview.shapeId) {
       const previewShape = shapeById(state.connectPreview.shapeId);
-      const previewPath = previewShape ? shapePerimeterPreviewPath(previewShape) : "";
-      if (previewPath) {
-        overlayLayer.appendChild(createSvg("path", {
-          d: previewPath,
-          fill: "rgba(104, 186, 255, 0.08)",
-          stroke: "#68baff",
-          "stroke-width": 2.2,
-          "stroke-dasharray": "6 4",
-          "pointer-events": "none",
-        }));
-      }
+      renderConnectPerimeterPreview(overlayLayer, previewShape);
     }
 
     if (state.drag && state.drag.type === "marquee-select") {
@@ -5065,12 +5147,12 @@
     );
   }
 
-  function endpointForShapePointer(shape, point) {
+  function endpointForShapePointer(shape, point, referencePoint) {
     if (!shape) return freeEndpointAt(point);
     if ((isContainerKind(shape.kind) || isGroupFormKind(shape.kind)) && pointDistanceToShapeFrame(point, shape) > CONTAINER_FREE_ENDPOINT_MARGIN) {
       return freeEndpointAt(point);
     }
-    const anchor = nearestAnchorForShape(shape, point);
+    const anchor = nearestAnchorForShape(shape, point, referencePoint);
     if (!anchor) return freeEndpointAt(point);
     return {
       shapeId: shape.id,
@@ -5145,7 +5227,8 @@
 
     if (state.mode !== "select") {
       const point = clientToSvg(evt);
-      const endpoint = endpointForShapePointer(shape, point);
+      const referencePoint = state.connectSourceEndpoint ? endpointPoint(state.connectSourceEndpoint) : null;
+      const endpoint = endpointForShapePointer(shape, point, referencePoint);
       if (!state.connectSourceEndpoint) {
         beginConnection(endpoint);
         setStatus("Connection mode: source selected " + (endpoint.shapeId || "free point") + ". Click target shape or canvas point.", "ok");
@@ -5426,7 +5509,12 @@
   function handlePointerMove(evt) {
     if (!state.drag) {
       if (state.mode !== "select") {
-        updateConnectPreview(clientToSvg(evt), state.connectSourceId || "");
+        updateConnectPreview(
+          clientToSvg(evt),
+          state.connectSourceId || "",
+          false,
+          state.connectSourceEndpoint ? endpointPoint(state.connectSourceEndpoint) : null
+        );
       }
       return;
     }
@@ -5579,8 +5667,10 @@
       const arrow = arrowById(state.drag.arrowId);
       if (!arrow) return;
       const currentEndpoint = arrow[state.drag.endpointKey] || {};
-      const anchor = nearestAnchor(point, currentEndpoint.shapeId || "");
-      updateConnectPreview(anchor ? point : null, anchor ? anchor.shapeId : "");
+      const otherEndpoint = state.drag.endpointKey === "from" ? arrow.to : arrow.from;
+      const referencePoint = endpointPoint(otherEndpoint);
+      const anchor = nearestAnchor(point, currentEndpoint.shapeId || "", referencePoint);
+      updateConnectPreview(anchor ? point : null, anchor ? anchor.shapeId : "", false, referencePoint);
       arrow[state.drag.endpointKey] = anchor
         ? {
             shapeId: anchor.shapeId,
@@ -8821,10 +8911,10 @@
     const connectionType = normalizeConnectionType(arrow.connectionType);
 
     const waypointRows = (arrow.waypoints || []).map((wp, idx) => {
-      return '<div class="grid2">' +
+      return '<div class="waypoint-grid">' +
         '<div><label>x</label><input data-waypoint-x="' + idx + '" type="number" step="1" value="' + roundNum(wp.x) + '"/></div>' +
         '<div><label>y</label><input data-waypoint-y="' + idx + '" type="number" step="1" value="' + roundNum(wp.y) + '"/></div>' +
-        '<div class="row"><button data-waypoint-remove="' + idx + '" class="danger">Remove waypoint</button></div>' +
+        '<button data-waypoint-remove="' + idx + '" class="danger waypoint-remove">Remove waypoint</button>' +
       '</div>';
     }).join("");
 
