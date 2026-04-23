@@ -699,6 +699,8 @@ def normalize_model(raw_model: Any, elf_name: str = "") -> Dict[str, Any]:
         to_shape = str(to_spec.get("shapeId") or "")
         from_connected = from_shape in all_shape_ids
         to_connected = to_shape in all_shape_ids
+        parent_raw = raw_arrow.get("parentId")
+        parent_id = str(parent_raw).strip() if parent_raw else None
 
         raw_arrow_id = raw_arrow.get("id")
         desired_id = sanitize_id(raw_arrow_id) if str(raw_arrow_id or "").strip() else sanitize_id(f"arrow_{idx + 1}")
@@ -765,6 +767,7 @@ def normalize_model(raw_model: Any, elf_name: str = "") -> Dict[str, Any]:
             "stroke": str(raw_arrow.get("stroke") or DEFAULT_ARROW_STROKE),
             "width": max(0.5, _to_float(raw_arrow.get("width"), DEFAULT_ARROW_WIDTH)),
             "z": _to_int(raw_arrow.get("z"), max_shape_z + idx + 1),
+            "parentId": parent_id if parent_id in container_ids and not from_connected and not to_connected else None,
             "waypoints": waypoints,
             "controlPoints": control_points,
         }

@@ -112,6 +112,27 @@
       grid-template-columns: repeat(3, minmax(0, 1fr));
     }
 
+    .tool-pager {
+      display: grid;
+      grid-template-columns: 34px minmax(0, 1fr) 34px;
+      gap: 6px;
+      align-items: center;
+      margin-top: 2px;
+    }
+
+    .tool-pager button {
+      min-height: 30px;
+      padding: 4px 0;
+      font-weight: 700;
+    }
+
+    .tool-pager input {
+      min-width: 0;
+      height: 30px;
+      padding: 4px 6px;
+      text-align: center;
+    }
+
     .tool-icon-button {
       display: inline-flex;
       align-items: center;
@@ -797,6 +818,11 @@
         <div class="tool-group">
           <h3>Shape Tools</h3>
           <div id="shape-tools-grid" class="tool-icon-grid shape-tool-grid"></div>
+          <div id="shape-tool-pager" class="tool-pager" aria-label="Shape tool pages">
+            <button id="shape-page-prev" type="button" title="Previous shape tools page" aria-label="Previous shape tools page">&lt;</button>
+            <input id="shape-page-input" type="number" min="1" value="1" aria-label="Shape tools page" />
+            <button id="shape-page-next" type="button" title="Next shape tools page" aria-label="Next shape tools page">&gt;</button>
+          </div>
         </div>
 
         <div class="tool-group">

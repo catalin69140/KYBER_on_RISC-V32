@@ -79,6 +79,7 @@
   const HEADER_MIN_THICKNESS = 20;
   const FREE_ENDPOINT_SNAP_DISTANCE = 8;
   const CONTAINER_FREE_ENDPOINT_MARGIN = 8;
+  const SHAPE_TOOLS_PER_PAGE = 24;
   const HANDLE_SIZE = 8;
   const MIN_SHAPE_SIZE = 24;
   const HISTORY_LIMIT = 120;
@@ -191,6 +192,7 @@
     selectedShapeIds: [],
     selectedArrowIds: [],
     selectedGroupComponents: [],
+    shapeToolPage: 0,
     connectPreview: null,
     richTextSelection: null,
     richTextPendingFormat: null,
@@ -212,6 +214,9 @@
     toolSelectBtn: document.getElementById("tool-select"),
     connectionToolsGrid: document.getElementById("connection-tools-grid"),
     shapeToolsGrid: document.getElementById("shape-tools-grid"),
+    shapePagePrev: document.getElementById("shape-page-prev"),
+    shapePageInput: document.getElementById("shape-page-input"),
+    shapePageNext: document.getElementById("shape-page-next"),
     containerToolsGrid: document.getElementById("container-tools-grid"),
     groupToolsGrid: document.getElementById("group-tools-grid"),
     deleteBtn: document.getElementById("delete-btn"),
@@ -888,6 +893,7 @@
       arrow.width = Math.max(0.5, Number(arrow.width) || 1.7);
       arrow.z = Number(arrow.z);
       if (!Number.isFinite(arrow.z)) arrow.z = maxShapeZ + idx + 1;
+      arrow.parentId = arrow.parentId ? String(arrow.parentId) : null;
       if (!Array.isArray(arrow.waypoints)) arrow.waypoints = [];
       if (!Array.isArray(arrow.controlPoints)) arrow.controlPoints = [];
       arrow.waypoints = arrow.waypoints.map((p) => ({ x: Number(p.x) || 0, y: Number(p.y) || 0 }));
@@ -896,10 +902,16 @@
 
     dedupeShapeIds();
     dedupeArrowIds();
+    const currentContainerIds = new Set(state.model.shapes.filter((s) => isContainerKind(s.kind)).map((s) => s.id));
     state.model.arrows = state.model.arrows.filter((arrow) => {
       const fromValid = (arrow.from.shapeId && shapeById(arrow.from.shapeId)) || (!arrow.from.shapeId && Number.isFinite(arrow.from.x) && Number.isFinite(arrow.from.y));
       const toValid = (arrow.to.shapeId && shapeById(arrow.to.shapeId)) || (!arrow.to.shapeId && Number.isFinite(arrow.to.x) && Number.isFinite(arrow.to.y));
       return !!(fromValid && toValid);
+    });
+    state.model.arrows.forEach((arrow) => {
+      if (!arrow.parentId || !currentContainerIds.has(arrow.parentId) || !arrowIsFullyFree(arrow)) {
+        arrow.parentId = null;
+      }
     });
   }
 
@@ -995,6 +1007,7 @@
     state.model.arrows.forEach((arrow) => {
       if (arrow.from.shapeId === oldId) arrow.from.shapeId = nextId;
       if (arrow.to.shapeId === oldId) arrow.to.shapeId = nextId;
+      if (arrow.parentId === oldId) arrow.parentId = nextId;
     });
     if (state.selected && state.selected.type === "shape" && state.selected.id === oldId) {
       state.selected.id = nextId;
@@ -1222,20 +1235,139 @@
     });
   }
 
-  function detachShapeIfBehindParent(shape) {
-    if (!shape || !shape.parentId) return;
-    const parent = shapeById(shape.parentId);
-    if (!parent || !isContainerKind(parent.kind)) return;
-    if ((shape.z || 0) > (parent.z || 0)) return;
-    const prevParent = shape.parentId;
-    shape.parentId = null;
+  function moveRenderableItemsInZ(items, direction) {
+    if (direction === "back") {
+      sendRenderableItemsToBack(items);
+    } else {
+      bringRenderableItemsToFront(items);
+    }
+    syncStackContainment();
+  }
+
+  function pointInShapeFrame(point, shape) {
+    return !!(point && shape
+      && point.x >= shape.x
+      && point.x <= shape.x + shape.width
+      && point.y >= shape.y
+      && point.y <= shape.y + shape.height);
+  }
+
+  function rectInsideShapeFrame(rect, shape) {
+    return !!(rect && shape
+      && rect.x >= shape.x
+      && rect.y >= shape.y
+      && rect.x + rect.width <= shape.x + shape.width
+      && rect.y + rect.height <= shape.y + shape.height);
+  }
+
+  function candidateContainersForPoint(point, itemZ, excludeShapeId) {
+    return (state.model.shapes || []).filter((shape) => {
+      if (!isContainerKind(shape.kind)) return false;
+      if (shape.id === excludeShapeId) return false;
+      if (excludeShapeId && isDescendant(shape.id, excludeShapeId)) return false;
+      if ((Number(itemZ) || 0) <= (Number(shape.z) || 0)) return false;
+      return pointInShapeFrame(point, shape);
+    }).sort((a, b) => {
+      const areaA = a.width * a.height;
+      const areaB = b.width * b.height;
+      if (areaA !== areaB) return areaA - areaB;
+      return (Number(b.z) || 0) - (Number(a.z) || 0);
+    });
+  }
+
+  function pickStackContainerForShape(shape) {
+    if (!shape) return null;
+    return candidateContainersForPoint(shapeCenter(shape), shape.z, shape.id)[0] || null;
+  }
+
+  function arrowIsFullyFree(arrow) {
+    return !!(arrow && arrow.from && arrow.to && !arrow.from.shapeId && !arrow.to.shapeId);
+  }
+
+  function arrowParentingPoints(arrow) {
+    if (!arrowIsFullyFree(arrow)) return [];
+    const points = [
+      { x: Number(arrow.from.x) || 0, y: Number(arrow.from.y) || 0 },
+      { x: Number(arrow.to.x) || 0, y: Number(arrow.to.y) || 0 },
+    ];
+    (arrow.waypoints || []).forEach((point) => {
+      points.push({ x: Number(point.x) || 0, y: Number(point.y) || 0 });
+    });
+    (arrow.controlPoints || []).forEach((point) => {
+      points.push({ x: Number(point.x) || 0, y: Number(point.y) || 0 });
+    });
+    return points;
+  }
+
+  function arrowParentingBounds(arrow) {
+    const points = arrowParentingPoints(arrow);
+    if (!points.length) return null;
+    const xs = points.map((point) => point.x);
+    const ys = points.map((point) => point.y);
+    const minX = Math.min.apply(null, xs);
+    const maxX = Math.max.apply(null, xs);
+    const minY = Math.min.apply(null, ys);
+    const maxY = Math.max.apply(null, ys);
+    return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+  }
+
+  function pickContainerForFreeArrow(arrow, requireAboveContainer) {
+    if (!arrowIsFullyFree(arrow)) return null;
+    const bounds = arrowParentingBounds(arrow);
+    if (!bounds) return null;
+    const candidates = (state.model.shapes || []).filter((shape) => {
+      if (!isContainerKind(shape.kind)) return false;
+      if (requireAboveContainer && (Number(arrow.z) || 0) <= (Number(shape.z) || 0)) return false;
+      return rectInsideShapeFrame(bounds, shape);
+    }).sort((a, b) => {
+      const areaA = a.width * a.height;
+      const areaB = b.width * b.height;
+      if (areaA !== areaB) return areaA - areaB;
+      return (Number(b.z) || 0) - (Number(a.z) || 0);
+    });
+    return candidates[0] || null;
+  }
+
+  function pickStackContainerForArrow(arrow) {
+    return pickContainerForFreeArrow(arrow, true);
+  }
+
+  function syncShapeStackContainment(shape) {
+    if (!shape) return;
+    const prevParent = shape.parentId || null;
+    const parent = pickStackContainerForShape(shape);
+    const nextParent = parent ? parent.id : null;
+    if (prevParent === nextParent) return;
+    shape.parentId = nextParent;
     if (!shape.idManual) {
       updateAutoId(shape, prevParent);
     }
   }
 
-  function detachShapesBehindParents(shapes) {
-    (shapes || []).forEach((shape) => detachShapeIfBehindParent(shape));
+  function syncArrowContainerAttachment(arrow) {
+    if (!arrow) return;
+    const parent = pickStackContainerForArrow(arrow);
+    arrow.parentId = parent ? parent.id : null;
+  }
+
+  function finalizeMovedArrowContainment(arrow) {
+    if (!arrow) return;
+    if (!arrowIsFullyFree(arrow)) {
+      arrow.parentId = null;
+      return;
+    }
+    const parent = pickContainerForFreeArrow(arrow, false);
+    if (!parent) {
+      arrow.parentId = null;
+      return;
+    }
+    arrow.z = Math.max(Number(arrow.z) || 0, containerFrontZ(parent) + 1);
+    arrow.parentId = parent.id;
+  }
+
+  function syncStackContainment() {
+    (state.model.shapes || []).forEach((shape) => syncShapeStackContainment(shape));
+    (state.model.arrows || []).forEach((arrow) => syncArrowContainerAttachment(arrow));
   }
 
   function containerFrontZ(container, excludeShapeId) {
@@ -1247,13 +1379,20 @@
         maxZ = Math.max(maxZ, Number(shape.z) || 0);
       }
     });
+    (state.model.arrows || []).forEach((arrow) => {
+      if (arrow.parentId === container.id) {
+        maxZ = Math.max(maxZ, Number(arrow.z) || 0);
+      }
+    });
     return maxZ;
   }
 
   function moveShapeIdsForSelection(ids) {
     const rootIds = topLevelShapeIds(ids);
     const moveIds = [];
+    const arrowIds = [];
     const seen = new Set();
+    const seenArrows = new Set();
     rootIds.forEach((id) => {
       if (!seen.has(id)) {
         seen.add(id);
@@ -1269,9 +1408,19 @@
         });
       }
     });
+    moveIds.forEach((id) => {
+      const shape = shapeById(id);
+      if (!shape || !isContainerKind(shape.kind)) return;
+      (state.model.arrows || []).forEach((arrow) => {
+        if (arrow.parentId !== id || seenArrows.has(arrow.id)) return;
+        seenArrows.add(arrow.id);
+        arrowIds.push(arrow.id);
+      });
+    });
     return {
       rootIds: rootIds,
       moveIds: moveIds,
+      arrowIds: arrowIds,
     };
   }
 
@@ -1311,7 +1460,13 @@
       shape.x += axisDx;
       shape.y += axisDy;
     });
+    movePlan.arrowIds.forEach((id) => {
+      const arrow = arrowById(id);
+      if (!arrow) return;
+      translateArrowBy(arrow, snapshotArrowForMove(arrow), axisDx, axisDy);
+    });
     finalizeMovedRoots(movePlan.rootIds);
+    syncStackContainment();
     syncCanvasRectToContent();
     render();
     return true;
@@ -1340,6 +1495,7 @@
     arrows.forEach((arrow) => {
       translateArrowBy(arrow, snapshotArrowForMove(arrow), axisDx, axisDy);
     });
+    arrows.forEach((arrow) => finalizeMovedArrowContainment(arrow));
     syncCanvasRectToContent();
     render();
     return true;
@@ -2905,6 +3061,41 @@
     return svg;
   }
 
+  function shapeToolPageCount() {
+    return Math.max(1, Math.ceil(SHAPE_TOOL_DEFS.length / SHAPE_TOOLS_PER_PAGE));
+  }
+
+  function clampShapeToolPage(page) {
+    return clamp(Math.round(Number(page) || 0), 0, shapeToolPageCount() - 1);
+  }
+
+  function renderShapeToolPager() {
+    const pageCount = shapeToolPageCount();
+    state.shapeToolPage = clampShapeToolPage(state.shapeToolPage);
+    if (els.shapePageInput) {
+      els.shapePageInput.min = "1";
+      els.shapePageInput.max = String(pageCount);
+      els.shapePageInput.value = String(state.shapeToolPage + 1);
+      els.shapePageInput.title = "Shape tool page " + (state.shapeToolPage + 1) + " of " + pageCount;
+    }
+    if (els.shapePagePrev) {
+      els.shapePagePrev.disabled = pageCount <= 1 || state.shapeToolPage <= 0;
+    }
+    if (els.shapePageNext) {
+      els.shapePageNext.disabled = pageCount <= 1 || state.shapeToolPage >= pageCount - 1;
+    }
+  }
+
+  function setShapeToolPage(page) {
+    const nextPage = clampShapeToolPage(page);
+    if (nextPage === state.shapeToolPage) {
+      renderShapeToolPager();
+      return;
+    }
+    state.shapeToolPage = nextPage;
+    renderToolButtons();
+  }
+
   function renderToolButtons() {
     if (els.connectionToolsGrid) {
       els.connectionToolsGrid.innerHTML = "";
@@ -2921,7 +3112,9 @@
     }
     if (els.shapeToolsGrid) {
       els.shapeToolsGrid.innerHTML = "";
-      SHAPE_TOOL_DEFS.forEach((tool) => {
+      state.shapeToolPage = clampShapeToolPage(state.shapeToolPage);
+      const start = state.shapeToolPage * SHAPE_TOOLS_PER_PAGE;
+      SHAPE_TOOL_DEFS.slice(start, start + SHAPE_TOOLS_PER_PAGE).forEach((tool) => {
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "tool-icon-button";
@@ -2931,6 +3124,7 @@
         btn.appendChild(createShapeToolIcon(tool.kind, tool.label));
         els.shapeToolsGrid.appendChild(btn);
       });
+      renderShapeToolPager();
     }
     if (els.containerToolsGrid) {
       els.containerToolsGrid.innerHTML = "";
@@ -5286,13 +5480,20 @@
       const s = shapeById(id);
       before[id] = { x: s.x, y: s.y };
     });
+    const arrowBefore = {};
+    movePlan.arrowIds.forEach((id) => {
+      const arrow = arrowById(id);
+      if (arrow) arrowBefore[id] = snapshotArrowForMove(arrow);
+    });
 
     state.drag = {
       type: "move-shapes",
       shapeId: shapeId,
       rootShapeIds: movePlan.rootIds,
       movedShapeIds: movePlan.moveIds,
+      movedArrowIds: movePlan.arrowIds,
       before: before,
+      arrowBefore: arrowBefore,
       start: start,
     };
   }
@@ -5496,6 +5697,11 @@
         shape.x = before.x + dx;
         shape.y = before.y + dy;
       });
+      (state.drag.movedArrowIds || []).forEach((id) => {
+        const arrow = arrowById(id);
+        if (!arrow) return;
+        translateArrowBy(arrow, state.drag.arrowBefore[id], dx, dy);
+      });
       const movedBounds = selectionBounds(state.drag.rootShapeIds || state.drag.movedShapeIds);
       updateCanvasDuringInteraction(movedBounds);
       render();
@@ -5675,11 +5881,14 @@
 
     if (drag.type === "move-shapes") {
       finalizeMovedRoots(drag.rootShapeIds);
+      (drag.movedArrowIds || []).forEach((id) => finalizeMovedArrowContainment(arrowById(id)));
+      syncStackContainment();
       syncCanvasRectToContent();
       render();
     }
 
     if (drag.type === "move-arrows") {
+      (drag.arrowIds || []).forEach((id) => finalizeMovedArrowContainment(arrowById(id)));
       syncCanvasRectToContent();
       render();
     }
@@ -5701,11 +5910,13 @@
 
     if (drag.type === "arrow-endpoint") {
       updateConnectPreview(null, "", true);
+      finalizeMovedArrowContainment(arrowById(drag.arrowId));
       syncCanvasRectToContent();
       render();
     }
 
     if (drag.type === "arrow-waypoint" || drag.type === "arrow-control") {
+      finalizeMovedArrowContainment(arrowById(drag.arrowId));
       syncCanvasRectToContent();
       render();
     }
@@ -5780,10 +5991,12 @@
       stroke: "#e8efff",
       width: 1.7,
       z: maxRenderableZ() + 1,
+      parentId: null,
       waypoints: [],
       controlPoints: [],
     };
     state.model.arrows.push(arrow);
+    finalizeMovedArrowContainment(arrow);
     setSelected({ type: "arrow", id: id });
     setStatus("Created " + connectionTypeLabel(arrow.connectionType) + " " + id + ".", "ok");
   }
@@ -7805,12 +8018,7 @@
         .sort(compareRenderableEntities);
       if (!selected.length) return;
       pushHistory();
-      if (direction === "back") {
-        sendRenderableItemsToBack(selected);
-        detachShapesBehindParents(selected);
-      } else {
-        bringRenderableItemsToFront(selected);
-      }
+      moveRenderableItemsInZ(selected, direction);
       render();
     };
     const zBack = document.getElementById("ins-z-back");
@@ -8043,14 +8251,14 @@
     if (zBack) {
       zBack.addEventListener("click", () => {
         pushHistory();
-        sendRenderableItemsToBack(arrows);
+        moveRenderableItemsInZ(arrows, "back");
         render();
       });
     }
     if (zFront) {
       zFront.addEventListener("click", () => {
         pushHistory();
-        bringRenderableItemsToFront(arrows);
+        moveRenderableItemsInZ(arrows, "front");
         render();
       });
     }
@@ -8496,15 +8704,14 @@
     if (zBack) {
       zBack.addEventListener("click", () => {
         pushHistory();
-        sendRenderableItemsToBack([shape]);
-        detachShapeIfBehindParent(shape);
+        moveRenderableItemsInZ([shape], "back");
         render();
       });
     }
     if (zFront) {
       zFront.addEventListener("click", () => {
         pushHistory();
-        bringRenderableItemsToFront([shape]);
+        moveRenderableItemsInZ([shape], "front");
         render();
       });
     }
@@ -8953,14 +9160,14 @@
     if (zBack) {
       zBack.addEventListener("click", () => {
         pushHistory();
-        sendRenderableItemsToBack([arrow]);
+        moveRenderableItemsInZ([arrow], "back");
         render();
       });
     }
     if (zFront) {
       zFront.addEventListener("click", () => {
         pushHistory();
-        bringRenderableItemsToFront([arrow]);
+        moveRenderableItemsInZ([arrow], "front");
         render();
       });
     }
@@ -9149,6 +9356,34 @@
         const button = evt.target && evt.target.closest("[data-kind]");
         if (!button) return;
         addShape(button.getAttribute("data-kind") || "square");
+      });
+    }
+
+    if (els.shapePagePrev) {
+      els.shapePagePrev.addEventListener("click", () => {
+        setShapeToolPage(state.shapeToolPage - 1);
+      });
+    }
+    if (els.shapePageNext) {
+      els.shapePageNext.addEventListener("click", () => {
+        setShapeToolPage(state.shapeToolPage + 1);
+      });
+    }
+    if (els.shapePageInput) {
+      const commitShapePageInput = () => {
+        setShapeToolPage(Number(els.shapePageInput.value) - 1);
+      };
+      els.shapePageInput.addEventListener("change", commitShapePageInput);
+      els.shapePageInput.addEventListener("keydown", (evt) => {
+        if (evt.key === "Enter") {
+          evt.preventDefault();
+          commitShapePageInput();
+          els.shapePageInput.blur();
+        } else if (evt.key === "Escape") {
+          evt.preventDefault();
+          renderShapeToolPager();
+          els.shapePageInput.blur();
+        }
       });
     }
 
