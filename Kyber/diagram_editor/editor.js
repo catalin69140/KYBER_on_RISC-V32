@@ -77,8 +77,8 @@
   const TABLE_MIN_CELL_WIDTH = 70;
   const TABLE_MIN_CELL_HEIGHT = 40;
   const HEADER_MIN_THICKNESS = 20;
-  const FREE_ENDPOINT_SNAP_DISTANCE = 42;
-  const CONTAINER_FREE_ENDPOINT_MARGIN = 20;
+  const FREE_ENDPOINT_SNAP_DISTANCE = 8;
+  const CONTAINER_FREE_ENDPOINT_MARGIN = 8;
   const HANDLE_SIZE = 8;
   const MIN_SHAPE_SIZE = 24;
   const HISTORY_LIMIT = 120;
@@ -3413,6 +3413,7 @@
       const f = { x: shape.x, y: shape.y + shape.height - offY };
       const g = { x: shape.x + offX, y: shape.y + offY };
       const h = { x: shape.x + shape.width - offX, y: shape.y + shape.height - offY };
+      appendFilledPolygon([a, g, e, f], darken(shape.fill, -16));
       appendFilledPolygon([a, b, c, g], darken(shape.fill, -18));
       appendFilledPolygon([b, h, d, c], darken(shape.fill, -10));
       appendFilledPolygon([f, h, d, e], darken(shape.fill, -14));
@@ -4178,15 +4179,16 @@
     state.model.shapes.forEach((shape) => {
       const candidate = nearestAnchorForShape(shape, point);
       if (!candidate) return;
-      let score = candidate.d2;
-      if (preferredShape && preferredShape.id === shape.id) score -= 64;
+      const rawD2 = candidate.d2;
+      let score = rawD2;
+      if (preferredShape && preferredShape.id === shape.id) score -= 8;
       if (!best || score < best.score) {
-        best = Object.assign({ score: score }, candidate);
+        best = Object.assign({ score: score, rawD2: rawD2 }, candidate);
       }
     });
 
     if (!best) return null;
-    if (best.score > (FREE_ENDPOINT_SNAP_DISTANCE * FREE_ENDPOINT_SNAP_DISTANCE)) {
+    if (best.rawD2 > (FREE_ENDPOINT_SNAP_DISTANCE * FREE_ENDPOINT_SNAP_DISTANCE)) {
       return null;
     }
     return {

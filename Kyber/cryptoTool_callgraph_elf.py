@@ -3266,6 +3266,7 @@ def write_html_animation(
             const f = { x: spec.x, y: spec.y + spec.h - offY };
             const gFront = { x: spec.x + offX, y: spec.y + offY };
             const hBack = { x: spec.x + spec.w - offX, y: spec.y + spec.h - offY };
+            appendFilledPolygon([a, gFront, e, f], refDarkenHex(fill, -16));
             appendFilledPolygon([a, b, c, gFront], refDarkenHex(fill, -18));
             appendFilledPolygon([b, hBack, d, c], refDarkenHex(fill, -10));
             appendFilledPolygon([f, hBack, d, e], refDarkenHex(fill, -14));
