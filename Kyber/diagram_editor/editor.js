@@ -1440,6 +1440,35 @@
     });
   }
 
+  function promoteDraggedItemsAboveContainers(shapeIds, arrowIds) {
+    const movedShapes = (shapeIds || []).map((id) => shapeById(id)).filter(Boolean);
+    const movedArrows = (arrowIds || []).map((id) => arrowById(id)).filter(Boolean);
+    const movedItems = movedShapes.concat(movedArrows);
+    if (!movedItems.length) return;
+
+    let requiredTopZ = null;
+    movedShapes.forEach((shape) => {
+      const parent = pickContainerForShape(shape);
+      if (!parent) return;
+      const frontZ = containerFrontZ(parent, shape.id);
+      requiredTopZ = requiredTopZ === null ? frontZ : Math.max(requiredTopZ, frontZ);
+    });
+    movedArrows.forEach((arrow) => {
+      const parent = pickContainerForFreeArrow(arrow, false);
+      if (!parent) return;
+      const frontZ = containerFrontZ(parent);
+      requiredTopZ = requiredTopZ === null ? frontZ : Math.max(requiredTopZ, frontZ);
+    });
+    if (requiredTopZ === null) return;
+
+    const currentTopZ = Math.max.apply(null, movedItems.map((item) => Number(item.z) || 0));
+    if (currentTopZ > requiredTopZ) return;
+    const delta = requiredTopZ + 1 - currentTopZ;
+    movedItems.forEach((item) => {
+      item.z = (Number(item.z) || 0) + delta;
+    });
+  }
+
   function moveSelectedShapesBy(dx, dy) {
     const selectedIds = currentSelectedShapeIds();
     if (!selectedIds.length) return false;
@@ -5702,6 +5731,7 @@
         if (!arrow) return;
         translateArrowBy(arrow, state.drag.arrowBefore[id], dx, dy);
       });
+      promoteDraggedItemsAboveContainers(state.drag.movedShapeIds, state.drag.movedArrowIds);
       const movedBounds = selectionBounds(state.drag.rootShapeIds || state.drag.movedShapeIds);
       updateCanvasDuringInteraction(movedBounds);
       render();
@@ -5716,6 +5746,7 @@
         if (!arrow) return;
         translateArrowBy(arrow, state.drag.before[id], dx, dy);
       });
+      promoteDraggedItemsAboveContainers([], state.drag.arrowIds);
       updateCanvasDuringInteraction(contentBounds());
       render();
       return;
