@@ -3270,7 +3270,7 @@ def write_html_animation(
             appendFilledPolygon([b, hBack, d, c], refDarkenHex(fill, -10));
             appendFilledPolygon([f, hBack, d, e], refDarkenHex(fill, -14));
             appendFilledPolygon([gFront, c, d, e], baseFill);
-            [[a, b], [b, c], [c, d], [d, e], [e, f], [f, a], [a, gFront], [b, hBack], [hBack, d], [f, e], [gFront, c], [gFront, e]].forEach(([p1, p2]) => {
+            [[a, b], [b, c], [c, d], [d, e], [e, f], [f, a], [a, gFront], [b, hBack], [hBack, d], [hBack, f], [f, e], [gFront, c], [gFront, e]].forEach(([p1, p2]) => {
                 appendStrokeLine({ x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y }, minorSeparatorWidth);
             });
         } else if (shapeKind === "hexagonal_prism") {
@@ -3285,12 +3285,14 @@ def write_html_animation(
             appendFilledPolygon([bottom[0], bottom[1], bottom[2], bottom[3], bottom[4], bottom[5]], baseFill);
             const outline = [top[0], top[1], top[2], bottom[2], bottom[3], bottom[4], bottom[5], top[5], top[0]];
             appendStrokePath("M " + outline.map(refPointStr).join(" L ") + " Z", borderWidth);
-            [0, 1, 2, 5].forEach((idx) => {
+            [0, 1, 2, 3, 4, 5].forEach((idx) => {
                 appendStrokeLine({ x1: top[idx].x, y1: top[idx].y, x2: bottom[idx].x, y2: bottom[idx].y }, minorSeparatorWidth);
             });
-            appendStrokeLine({ x1: top[5].x, y1: top[5].y, x2: top[0].x, y2: top[0].y }, minorSeparatorWidth);
-            appendStrokeLine({ x1: top[0].x, y1: top[0].y, x2: top[1].x, y2: top[1].y }, minorSeparatorWidth);
-            appendStrokeLine({ x1: top[1].x, y1: top[1].y, x2: top[2].x, y2: top[2].y }, minorSeparatorWidth);
+            for (let idx = 0; idx < 6; idx += 1) {
+                const next = (idx + 1) % 6;
+                appendStrokeLine({ x1: top[idx].x, y1: top[idx].y, x2: top[next].x, y2: top[next].y }, minorSeparatorWidth);
+                appendStrokeLine({ x1: bottom[idx].x, y1: bottom[idx].y, x2: bottom[next].x, y2: bottom[next].y }, minorSeparatorWidth);
+            }
         } else if (shapeKind === "and") {
             appendPathShape(`M ${spec.x} ${spec.y} L ${spec.x + spec.w * 0.5} ${spec.y} C ${spec.x + spec.w * 0.78} ${spec.y} ${spec.x + spec.w} ${spec.y + spec.h * 0.22} ${spec.x + spec.w} ${spec.y + spec.h / 2} C ${spec.x + spec.w} ${spec.y + spec.h * 0.78} ${spec.x + spec.w * 0.78} ${spec.y + spec.h} ${spec.x + spec.w * 0.5} ${spec.y + spec.h} L ${spec.x} ${spec.y + spec.h} Z`);
         } else if (shapeKind === "or") {

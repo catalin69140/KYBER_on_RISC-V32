@@ -3419,7 +3419,7 @@
       appendFilledPolygon([g, c, d, e], baseFill);
       [
         [a, b], [b, c], [c, d], [d, e], [e, f], [f, a],
-        [a, g], [b, h], [h, d], [f, e], [g, c], [g, e],
+        [a, g], [b, h], [h, d], [h, f], [f, e], [g, c], [g, e],
       ].forEach(([p1, p2]) => {
         appendStrokeLine({ x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y }, minorSeparatorWidth);
       });
@@ -3441,7 +3441,7 @@
       appendFilledPolygon([bottom[0], bottom[1], bottom[2], bottom[3], bottom[4], bottom[5]], baseFill);
       const outline = [top[0], top[1], top[2], bottom[2], bottom[3], bottom[4], bottom[5], top[5], top[0]];
       appendStrokePath(polylinePath(outline) + " Z", strokeWidth);
-      [0, 1, 2, 5].forEach((idx) => {
+      [0, 1, 2, 3, 4, 5].forEach((idx) => {
         appendStrokeLine({
           x1: top[idx].x,
           y1: top[idx].y,
@@ -3449,9 +3449,11 @@
           y2: bottom[idx].y,
         }, minorSeparatorWidth);
       });
-      appendStrokeLine({ x1: top[5].x, y1: top[5].y, x2: top[0].x, y2: top[0].y }, minorSeparatorWidth);
-      appendStrokeLine({ x1: top[0].x, y1: top[0].y, x2: top[1].x, y2: top[1].y }, minorSeparatorWidth);
-      appendStrokeLine({ x1: top[1].x, y1: top[1].y, x2: top[2].x, y2: top[2].y }, minorSeparatorWidth);
+      for (let idx = 0; idx < 6; idx += 1) {
+        const next = (idx + 1) % 6;
+        appendStrokeLine({ x1: top[idx].x, y1: top[idx].y, x2: top[next].x, y2: top[next].y }, minorSeparatorWidth);
+        appendStrokeLine({ x1: bottom[idx].x, y1: bottom[idx].y, x2: bottom[next].x, y2: bottom[next].y }, minorSeparatorWidth);
+      }
     } else if (kind === "and") {
       const x0 = shape.x;
       const y0 = shape.y;
@@ -3887,9 +3889,9 @@
     return a.shapeId === b.shapeId;
   }
 
-  function updateConnectPreview(point, preferredShapeId, skipRender, referencePoint) {
+  function updateConnectPreview(point, preferredShapeId, skipRender) {
     let nextPreview = null;
-    const anchor = point ? nearestAnchor(point, preferredShapeId || "", referencePoint) : null;
+    const anchor = point ? nearestAnchor(point, preferredShapeId || "") : null;
     if (anchor && anchor.shapeId) {
       nextPreview = { shapeId: anchor.shapeId };
     }
@@ -4110,47 +4112,8 @@
     };
   }
 
-  function sampledDirectionalAnchorForShape(shape, referencePoint, fallbackPoint) {
-    if (!shape || !referencePoint) return null;
-    const center = shapeCenter(shape);
-    const vx = referencePoint.x - center.x;
-    const vy = referencePoint.y - center.y;
-    const vLen = Math.sqrt(vx * vx + vy * vy);
-    if (!(vLen > 0.001)) return null;
-    const ux = vx / vLen;
-    const uy = vy / vLen;
-    const sampleCount = 64;
-    let best = null;
-    ["top", "right", "bottom", "left"].forEach((side) => {
-      for (let i = 0; i <= sampleCount; i += 1) {
-        const frac = i / sampleCount;
-        const anchor = getAnchorPoint({ shapeId: shape.id, side: side, anchorFraction: frac });
-        const ax = anchor.x - center.x;
-        const ay = anchor.y - center.y;
-        const aLen = Math.sqrt(ax * ax + ay * ay) || 1;
-        const dot = (ax / aLen) * ux + (ay / aLen) * uy;
-        const cursorPenalty = fallbackPoint ? Math.sqrt(distance2(fallbackPoint, anchor)) * 0.0005 : 0;
-        const score = dot - cursorPenalty;
-        if (!best || score > best.score) {
-          best = {
-            shapeId: shape.id,
-            side: side,
-            anchorFraction: normalizeAnchorFraction(frac, 0.5),
-            x: anchor.x,
-            y: anchor.y,
-            d2: fallbackPoint ? distance2(fallbackPoint, anchor) : 0,
-            score: score,
-          };
-        }
-      }
-    });
-    return best;
-  }
-
-  function nearestAnchorForShape(shape, point, referencePoint) {
+  function nearestAnchorForShape(shape, point) {
     if (!shape) return null;
-    const directional = referencePoint ? sampledDirectionalAnchorForShape(shape, referencePoint, point) : null;
-    if (directional) return directional;
     const x0 = shape.x;
     const y0 = shape.y;
     const x1 = shape.x + shape.width;
@@ -4208,18 +4171,14 @@
     return best;
   }
 
-  function nearestAnchor(point, preferredShapeId, referencePoint) {
+  function nearestAnchor(point, preferredShapeId) {
     const preferredShape = preferredShapeId ? shapeById(preferredShapeId) : null;
     let best = null;
 
     state.model.shapes.forEach((shape) => {
-      const proximityCandidate = nearestAnchorForShape(shape, point);
-      if (!proximityCandidate) return;
-      const candidate = referencePoint
-        ? (nearestAnchorForShape(shape, point, referencePoint) || proximityCandidate)
-        : proximityCandidate;
+      const candidate = nearestAnchorForShape(shape, point);
       if (!candidate) return;
-      let score = proximityCandidate.d2;
+      let score = candidate.d2;
       if (preferredShape && preferredShape.id === shape.id) score -= 64;
       if (!best || score < best.score) {
         best = Object.assign({ score: score }, candidate);
@@ -5147,12 +5106,12 @@
     );
   }
 
-  function endpointForShapePointer(shape, point, referencePoint) {
+  function endpointForShapePointer(shape, point) {
     if (!shape) return freeEndpointAt(point);
     if ((isContainerKind(shape.kind) || isGroupFormKind(shape.kind)) && pointDistanceToShapeFrame(point, shape) > CONTAINER_FREE_ENDPOINT_MARGIN) {
       return freeEndpointAt(point);
     }
-    const anchor = nearestAnchorForShape(shape, point, referencePoint);
+    const anchor = nearestAnchorForShape(shape, point);
     if (!anchor) return freeEndpointAt(point);
     return {
       shapeId: shape.id,
@@ -5227,8 +5186,7 @@
 
     if (state.mode !== "select") {
       const point = clientToSvg(evt);
-      const referencePoint = state.connectSourceEndpoint ? endpointPoint(state.connectSourceEndpoint) : null;
-      const endpoint = endpointForShapePointer(shape, point, referencePoint);
+      const endpoint = endpointForShapePointer(shape, point);
       if (!state.connectSourceEndpoint) {
         beginConnection(endpoint);
         setStatus("Connection mode: source selected " + (endpoint.shapeId || "free point") + ". Click target shape or canvas point.", "ok");
@@ -5509,12 +5467,7 @@
   function handlePointerMove(evt) {
     if (!state.drag) {
       if (state.mode !== "select") {
-        updateConnectPreview(
-          clientToSvg(evt),
-          state.connectSourceId || "",
-          false,
-          state.connectSourceEndpoint ? endpointPoint(state.connectSourceEndpoint) : null
-        );
+        updateConnectPreview(clientToSvg(evt), state.connectSourceId || "");
       }
       return;
     }
@@ -5667,10 +5620,8 @@
       const arrow = arrowById(state.drag.arrowId);
       if (!arrow) return;
       const currentEndpoint = arrow[state.drag.endpointKey] || {};
-      const otherEndpoint = state.drag.endpointKey === "from" ? arrow.to : arrow.from;
-      const referencePoint = endpointPoint(otherEndpoint);
-      const anchor = nearestAnchor(point, currentEndpoint.shapeId || "", referencePoint);
-      updateConnectPreview(anchor ? point : null, anchor ? anchor.shapeId : "", false, referencePoint);
+      const anchor = nearestAnchor(point, currentEndpoint.shapeId || "");
+      updateConnectPreview(anchor ? point : null, anchor ? anchor.shapeId : "");
       arrow[state.drag.endpointKey] = anchor
         ? {
             shapeId: anchor.shapeId,
