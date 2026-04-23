@@ -5136,7 +5136,7 @@
 
       [
         { key: "from", p: geom.from, fill: "#8fe6ff" },
-        { key: "to", p: geom.to, fill: "#ffcf8f" },
+        { key: "to", p: geom.to, fill: "#ff8f8f" },
       ].forEach((ep) => {
         const isActive = !!(selectedHandle
           && selectedHandle.type === "endpoint"
@@ -5768,16 +5768,69 @@
     if (!endpoint || !endpoint.shapeId) return null;
     const shape = shapeById(endpoint.shapeId);
     if (!shape) return null;
-    const currentPoint = getAnchorPoint(endpoint);
-    const targetPoint = {
-      x: currentPoint.x + dx,
-      y: currentPoint.y + dy,
-    };
-    const nextAnchor = nearestAnchorForShape(shape, targetPoint, endpoint.side);
-    if (!nextAnchor) return null;
-    const nextFraction = normalizeAnchorFraction(nextAnchor.anchorFraction, endpoint.anchorFraction);
-    const nextSide = normalizeSide(nextAnchor.side);
-    if (nextSide === normalizeSide(endpoint.side) && Math.abs(nextFraction - endpointFraction(endpoint)) < 0.000001) {
+    const side = normalizeSide(endpoint.side);
+    const fraction = endpointFraction(endpoint);
+    const width = Math.max(1, Number(shape.width) || 1);
+    const height = Math.max(1, Number(shape.height) || 1);
+    const xStep = clamp(Math.abs(dx) / width, 0.001, 1);
+    const yStep = clamp(Math.abs(dy) / height, 0.001, 1);
+    const cornerYThreshold = Math.max(yStep * 1.5, 0.02);
+    const cornerXThreshold = Math.max(xStep * 1.5, 0.02);
+
+    let nextSide = side;
+    let nextFraction = fraction;
+
+    if (side === "left") {
+      if (dy < 0) nextFraction = clamp(fraction - yStep, 0, 1);
+      else if (dy > 0) nextFraction = clamp(fraction + yStep, 0, 1);
+      else if (dx > 0) {
+        if (fraction <= cornerYThreshold) {
+          nextSide = "top";
+          nextFraction = xStep;
+        } else if (fraction >= 1 - cornerYThreshold) {
+          nextSide = "bottom";
+          nextFraction = xStep;
+        }
+      }
+    } else if (side === "right") {
+      if (dy < 0) nextFraction = clamp(fraction - yStep, 0, 1);
+      else if (dy > 0) nextFraction = clamp(fraction + yStep, 0, 1);
+      else if (dx < 0) {
+        if (fraction <= cornerYThreshold) {
+          nextSide = "top";
+          nextFraction = clamp(1 - xStep, 0, 1);
+        } else if (fraction >= 1 - cornerYThreshold) {
+          nextSide = "bottom";
+          nextFraction = clamp(1 - xStep, 0, 1);
+        }
+      }
+    } else if (side === "top") {
+      if (dx < 0) nextFraction = clamp(fraction - xStep, 0, 1);
+      else if (dx > 0) nextFraction = clamp(fraction + xStep, 0, 1);
+      else if (dy > 0) {
+        if (fraction <= cornerXThreshold) {
+          nextSide = "left";
+          nextFraction = yStep;
+        } else if (fraction >= 1 - cornerXThreshold) {
+          nextSide = "right";
+          nextFraction = yStep;
+        }
+      }
+    } else {
+      if (dx < 0) nextFraction = clamp(fraction - xStep, 0, 1);
+      else if (dx > 0) nextFraction = clamp(fraction + xStep, 0, 1);
+      else if (dy < 0) {
+        if (fraction <= cornerXThreshold) {
+          nextSide = "left";
+          nextFraction = clamp(1 - yStep, 0, 1);
+        } else if (fraction >= 1 - cornerXThreshold) {
+          nextSide = "right";
+          nextFraction = clamp(1 - yStep, 0, 1);
+        }
+      }
+    }
+
+    if (nextSide === side && Math.abs(nextFraction - fraction) < 0.000001) {
       return null;
     }
     return {
