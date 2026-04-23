@@ -80,6 +80,7 @@
   const FREE_ENDPOINT_SNAP_DISTANCE = 8;
   const CONTAINER_FREE_ENDPOINT_MARGIN = 8;
   const SHAPE_TOOLS_PER_PAGE = 24;
+  const ANCHOR_SIDE_SWITCH_HYSTERESIS = 144;
   const HANDLE_SIZE = 8;
   const MIN_SHAPE_SIZE = 24;
   const HISTORY_LIMIT = 120;
@@ -192,6 +193,7 @@
     selectedShapeIds: [],
     selectedArrowIds: [],
     selectedGroupComponents: [],
+    selectedArrowHandle: null,
     shapeToolPage: 0,
     connectPreview: null,
     richTextSelection: null,
@@ -1108,6 +1110,64 @@
     return [];
   }
 
+  function normalizeArrowHandle(handle) {
+    if (!handle || typeof handle !== "object") return null;
+    const arrow = arrowById(handle.arrowId);
+    if (!arrow) return null;
+    const type = String(handle.type || "").toLowerCase();
+    if (type === "endpoint") {
+      const endpointKey = handle.endpointKey === "to" ? "to" : "from";
+      return {
+        type: "endpoint",
+        arrowId: arrow.id,
+        endpointKey: endpointKey,
+      };
+    }
+    if (type === "waypoint") {
+      const waypointIndex = Math.round(Number(handle.waypointIndex) || 0);
+      if (!arrow.waypoints || !arrow.waypoints[waypointIndex]) return null;
+      return {
+        type: "waypoint",
+        arrowId: arrow.id,
+        waypointIndex: waypointIndex,
+      };
+    }
+    if (type === "control") {
+      const cpIndex = Math.round(Number(handle.cpIndex) || 0);
+      if (cpIndex < 0 || cpIndex > 1) return null;
+      return {
+        type: "control",
+        arrowId: arrow.id,
+        cpIndex: cpIndex,
+      };
+    }
+    return null;
+  }
+
+  function sameArrowHandle(a, b) {
+    const ha = normalizeArrowHandle(a);
+    const hb = normalizeArrowHandle(b);
+    if (!ha && !hb) return true;
+    if (!ha || !hb || ha.type !== hb.type || ha.arrowId !== hb.arrowId) return false;
+    if (ha.type === "endpoint") return ha.endpointKey === hb.endpointKey;
+    if (ha.type === "waypoint") return ha.waypointIndex === hb.waypointIndex;
+    if (ha.type === "control") return ha.cpIndex === hb.cpIndex;
+    return false;
+  }
+
+  function currentSelectedArrowHandle() {
+    const handle = normalizeArrowHandle(state.selectedArrowHandle);
+    if (!handle) return null;
+    const selectedIds = currentSelectedArrowIds();
+    if (selectedIds.length !== 1 || selectedIds[0] !== handle.arrowId) return null;
+    return handle;
+  }
+
+  function setSelectedArrowHandle(handle, skipRender) {
+    state.selectedArrowHandle = normalizeArrowHandle(handle);
+    if (!skipRender) render();
+  }
+
   function isArrowSelected(arrowId) {
     return currentSelectedArrowIds().indexOf(arrowId) >= 0;
   }
@@ -1117,6 +1177,10 @@
     state.selectedArrowIds = nextIds;
     state.selectedShapeIds = [];
     state.selectedGroupComponents = [];
+    const nextHandle = currentSelectedArrowHandle();
+    state.selectedArrowHandle = nextIds.length === 1 && nextHandle && nextHandle.arrowId === nextIds[0]
+      ? nextHandle
+      : null;
     if (!nextIds.length) {
       state.selected = null;
     } else {
@@ -1162,6 +1226,7 @@
     state.selectedGroupComponents = nextEntries;
     state.selectedShapeIds = [];
     state.selectedArrowIds = [];
+    state.selectedArrowHandle = null;
     if (!nextEntries.length) {
       state.selected = null;
     } else {
@@ -1190,6 +1255,7 @@
     state.selectedShapeIds = nextIds;
     state.selectedArrowIds = [];
     state.selectedGroupComponents = [];
+    state.selectedArrowHandle = null;
     if (!nextIds.length) {
       state.selected = null;
     } else {
@@ -1266,6 +1332,18 @@
       if (shape.id === excludeShapeId) return false;
       if (excludeShapeId && isDescendant(shape.id, excludeShapeId)) return false;
       if ((Number(itemZ) || 0) <= (Number(shape.z) || 0)) return false;
+      return pointInShapeFrame(point, shape);
+    }).sort((a, b) => {
+      const areaA = a.width * a.height;
+      const areaB = b.width * b.height;
+      if (areaA !== areaB) return areaA - areaB;
+      return (Number(b.z) || 0) - (Number(a.z) || 0);
+    });
+  }
+
+  function containersContainingPoint(point) {
+    return (state.model.shapes || []).filter((shape) => {
+      if (!isContainerKind(shape.kind)) return false;
       return pointInShapeFrame(point, shape);
     }).sort((a, b) => {
       const areaA = a.width * a.height;
@@ -1365,6 +1443,20 @@
     arrow.parentId = parent.id;
   }
 
+  function promoteArrowAboveContainerPoints(arrow, points) {
+    if (!arrow) return;
+    let requiredTopZ = null;
+    (points || []).forEach((point) => {
+      containersContainingPoint(point).forEach((container) => {
+        const frontZ = containerFrontZ(container);
+        requiredTopZ = requiredTopZ === null ? frontZ : Math.max(requiredTopZ, frontZ);
+      });
+    });
+    if (requiredTopZ === null) return;
+    if ((Number(arrow.z) || 0) > requiredTopZ) return;
+    arrow.z = requiredTopZ + 1;
+  }
+
   function syncStackContainment() {
     (state.model.shapes || []).forEach((shape) => syncShapeStackContainment(shape));
     (state.model.arrows || []).forEach((arrow) => syncArrowContainerAttachment(arrow));
@@ -1454,10 +1546,16 @@
       requiredTopZ = requiredTopZ === null ? frontZ : Math.max(requiredTopZ, frontZ);
     });
     movedArrows.forEach((arrow) => {
-      const parent = pickContainerForFreeArrow(arrow, false);
-      if (!parent) return;
-      const frontZ = containerFrontZ(parent);
-      requiredTopZ = requiredTopZ === null ? frontZ : Math.max(requiredTopZ, frontZ);
+      const geom = buildArrowGeometry(arrow);
+      [geom.from, geom.to]
+        .concat(geom.waypoints || [])
+        .concat(geom.controlPoints || [])
+        .forEach((point) => {
+          containersContainingPoint(point).forEach((container) => {
+            const frontZ = containerFrontZ(container);
+            requiredTopZ = requiredTopZ === null ? frontZ : Math.max(requiredTopZ, frontZ);
+          });
+        });
     });
     if (requiredTopZ === null) return;
 
@@ -4336,7 +4434,7 @@
     };
   }
 
-  function nearestAnchorForShape(shape, point) {
+  function nearestAnchorForShape(shape, point, preferredSide) {
     if (!shape) return null;
     const x0 = shape.x;
     const y0 = shape.y;
@@ -4389,18 +4487,25 @@
     }
 
     let best = null;
+    let preferred = null;
     candidates.forEach((candidate) => {
+      if (candidate.side === preferredSide && (!preferred || candidate.d2 < preferred.d2)) {
+        preferred = candidate;
+      }
       if (!best || candidate.d2 < best.d2) best = candidate;
     });
+    if (preferred && best && best.side !== preferred.side && preferred.d2 <= best.d2 + ANCHOR_SIDE_SWITCH_HYSTERESIS) {
+      return preferred;
+    }
     return best;
   }
 
-  function nearestAnchor(point, preferredShapeId) {
+  function nearestAnchor(point, preferredShapeId, preferredSide) {
     const preferredShape = preferredShapeId ? shapeById(preferredShapeId) : null;
     let best = null;
 
     state.model.shapes.forEach((shape) => {
-      const candidate = nearestAnchorForShape(shape, point);
+      const candidate = nearestAnchorForShape(shape, point, preferredShape && preferredShape.id === shape.id ? preferredSide : "");
       if (!candidate) return;
       const rawD2 = candidate.d2;
       let score = rawD2;
@@ -4581,6 +4686,7 @@
       }
       const currentIds = currentSelectedArrowIds();
       const selectionIds = currentIds.indexOf(arrow.id) >= 0 ? currentIds : [arrow.id];
+      state.selectedArrowHandle = null;
       setArrowSelection(selectionIds, arrow.id, true);
       if (state.mode === "select" && evt.button === 0 && arrowIsMovable(arrow)) {
         startArrowMoveDrag(evt, arrow.id);
@@ -5025,23 +5131,30 @@
       if (arrowIds.length !== 1) return;
       const arrow = arrowById(arrowIds[0]);
       const geom = state.arrowRenderCache[arrowIds[0]];
+      const selectedHandle = currentSelectedArrowHandle();
       if (!arrow || !geom) return;
 
       [
         { key: "from", p: geom.from, fill: "#8fe6ff" },
         { key: "to", p: geom.to, fill: "#ffcf8f" },
       ].forEach((ep) => {
+        const isActive = !!(selectedHandle
+          && selectedHandle.type === "endpoint"
+          && selectedHandle.arrowId === arrow.id
+          && selectedHandle.endpointKey === ep.key);
         const c = createSvg("circle", {
           cx: ep.p.x,
           cy: ep.p.y,
-          r: 5.2,
-          fill: ep.fill,
-          stroke: "#1a2235",
-          "stroke-width": 1,
+          r: isActive ? 6.2 : 5.2,
+          fill: isActive ? "#ffe48f" : ep.fill,
+          stroke: isActive ? "#5a3900" : "#1a2235",
+          "stroke-width": isActive ? 1.8 : 1,
           style: "cursor:crosshair",
         });
         c.addEventListener("pointerdown", (evt) => {
           evt.stopPropagation();
+          setArrowSelection([arrow.id], arrow.id, true);
+          setSelectedArrowHandle({ type: "endpoint", arrowId: arrow.id, endpointKey: ep.key }, true);
           startArrowEndpointDrag(evt, arrow.id, ep.key);
         });
         overlayLayer.appendChild(c);
@@ -5049,6 +5162,10 @@
 
       if (arrow.routing === "curved") {
         geom.controlPoints.forEach((cp, idx) => {
+          const isActive = !!(selectedHandle
+            && selectedHandle.type === "control"
+            && selectedHandle.arrowId === arrow.id
+            && selectedHandle.cpIndex === idx);
           const line = createSvg("line", {
             x1: idx === 0 ? geom.from.x : geom.to.x,
             y1: idx === 0 ? geom.from.y : geom.to.y,
@@ -5062,34 +5179,42 @@
           const c = createSvg("circle", {
             cx: cp.x,
             cy: cp.y,
-            r: 4.8,
-            fill: "#d6dcff",
-            stroke: "#1a2235",
-            "stroke-width": 1,
+            r: isActive ? 5.6 : 4.8,
+            fill: isActive ? "#ffe48f" : "#d6dcff",
+            stroke: isActive ? "#5a3900" : "#1a2235",
+            "stroke-width": isActive ? 1.8 : 1,
             style: "cursor:move",
           });
           c.addEventListener("pointerdown", (evt) => {
             evt.stopPropagation();
+            setArrowSelection([arrow.id], arrow.id, true);
+            setSelectedArrowHandle({ type: "control", arrowId: arrow.id, cpIndex: idx }, true);
             startArrowControlPointDrag(evt, arrow.id, idx);
           });
           overlayLayer.appendChild(c);
         });
       } else if (arrow.routing === "angled") {
         (arrow.waypoints || []).forEach((wp, idx) => {
+          const isActive = !!(selectedHandle
+            && selectedHandle.type === "waypoint"
+            && selectedHandle.arrowId === arrow.id
+            && selectedHandle.waypointIndex === idx);
           const c = createSvg("rect", {
-            x: wp.x - 4.2,
-            y: wp.y - 4.2,
-            width: 8.4,
-            height: 8.4,
-            fill: "#b6ffc8",
-            stroke: "#1a2235",
-            "stroke-width": 1,
+            x: wp.x - (isActive ? 4.8 : 4.2),
+            y: wp.y - (isActive ? 4.8 : 4.2),
+            width: isActive ? 9.6 : 8.4,
+            height: isActive ? 9.6 : 8.4,
+            fill: isActive ? "#ffe48f" : "#b6ffc8",
+            stroke: isActive ? "#5a3900" : "#1a2235",
+            "stroke-width": isActive ? 1.8 : 1,
             rx: 1.2,
             ry: 1.2,
             style: "cursor:move",
           });
           c.addEventListener("pointerdown", (evt) => {
             evt.stopPropagation();
+            setArrowSelection([arrow.id], arrow.id, true);
+            setSelectedArrowHandle({ type: "waypoint", arrowId: arrow.id, waypointIndex: idx }, true);
             startArrowWaypointDrag(evt, arrow.id, idx);
           });
           overlayLayer.appendChild(c);
@@ -5224,6 +5349,7 @@
       state.selectedShapeIds = [];
       state.selectedArrowIds = [];
       state.selectedGroupComponents = [];
+      state.selectedArrowHandle = null;
       render();
       return;
     }
@@ -5238,6 +5364,7 @@
         state.selectedShapeIds = [];
         state.selectedArrowIds = [];
         state.selectedGroupComponents = [];
+        state.selectedArrowHandle = null;
         render();
         return;
       }
@@ -5257,6 +5384,7 @@
     state.selectedShapeIds = [];
     state.selectedArrowIds = [];
     state.selectedGroupComponents = [];
+    state.selectedArrowHandle = null;
     render();
   }
 
@@ -5378,6 +5506,7 @@
         state.selectedShapeIds = [];
         state.selectedArrowIds = [];
         state.selectedGroupComponents = [];
+        state.selectedArrowHandle = null;
       }
       state.drag = {
         type: "marquee-select",
@@ -5600,6 +5729,7 @@
 
   function startArrowEndpointDrag(evt, arrowId, endpointKey) {
     pushHistory();
+    state.selectedArrowHandle = normalizeArrowHandle({ type: "endpoint", arrowId: arrowId, endpointKey: endpointKey });
     state.drag = {
       type: "arrow-endpoint",
       arrowId: arrowId,
@@ -5634,6 +5764,96 @@
     arrow.controlPoints = before.controlPoints.map((point) => ({ x: point.x + dx, y: point.y + dy }));
   }
 
+  function anchoredEndpointAfterKeyboardMove(endpoint, dx, dy) {
+    if (!endpoint || !endpoint.shapeId) return null;
+    const shape = shapeById(endpoint.shapeId);
+    if (!shape) return null;
+    const currentPoint = getAnchorPoint(endpoint);
+    const targetPoint = {
+      x: currentPoint.x + dx,
+      y: currentPoint.y + dy,
+    };
+    const nextAnchor = nearestAnchorForShape(shape, targetPoint, endpoint.side);
+    if (!nextAnchor) return null;
+    const nextFraction = normalizeAnchorFraction(nextAnchor.anchorFraction, endpoint.anchorFraction);
+    const nextSide = normalizeSide(nextAnchor.side);
+    if (nextSide === normalizeSide(endpoint.side) && Math.abs(nextFraction - endpointFraction(endpoint)) < 0.000001) {
+      return null;
+    }
+    return {
+      side: nextSide,
+      anchorFraction: nextFraction,
+      anchorIndex: anchorIndexForFraction(nextFraction),
+    };
+  }
+
+  function moveAnchoredEndpointByKeyboard(endpoint, dx, dy) {
+    const next = anchoredEndpointAfterKeyboardMove(endpoint, dx, dy);
+    if (!next) return false;
+    endpoint.side = next.side;
+    endpoint.anchorFraction = next.anchorFraction;
+    endpoint.anchorIndex = next.anchorIndex;
+    return true;
+  }
+
+  function moveSelectedArrowHandleBy(dx, dy) {
+    const handle = currentSelectedArrowHandle();
+    if (!handle) return false;
+    const arrow = arrowById(handle.arrowId);
+    if (!arrow) return false;
+    if (handle.type === "endpoint") {
+      const endpoint = arrow[handle.endpointKey];
+      if (!endpoint) return false;
+      if (endpoint.shapeId) {
+        const next = anchoredEndpointAfterKeyboardMove(endpoint, dx, dy);
+        if (!next) return false;
+        pushHistory();
+        endpoint.side = next.side;
+        endpoint.anchorFraction = next.anchorFraction;
+        endpoint.anchorIndex = next.anchorIndex;
+        promoteArrowAboveContainerPoints(arrow, [getAnchorPoint(endpoint)]);
+      } else {
+        pushHistory();
+        endpoint.x = (Number(endpoint.x) || 0) + dx;
+        endpoint.y = (Number(endpoint.y) || 0) + dy;
+        promoteArrowAboveContainerPoints(arrow, [{ x: endpoint.x, y: endpoint.y }]);
+      }
+      finalizeMovedArrowContainment(arrow);
+      syncCanvasRectToContent();
+      render();
+      return true;
+    }
+    if (handle.type === "waypoint") {
+      const waypoint = arrow.waypoints && arrow.waypoints[handle.waypointIndex];
+      if (!waypoint) return false;
+      pushHistory();
+      waypoint.x = (Number(waypoint.x) || 0) + dx;
+      waypoint.y = (Number(waypoint.y) || 0) + dy;
+      promoteArrowAboveContainerPoints(arrow, [waypoint]);
+      finalizeMovedArrowContainment(arrow);
+      syncCanvasRectToContent();
+      render();
+      return true;
+    }
+    if (handle.type === "control") {
+      while ((arrow.controlPoints || []).length < 2) {
+        const geom = buildArrowGeometry(arrow);
+        const fallback = geom.controlPoints[(arrow.controlPoints || []).length] || geom.from || { x: 0, y: 0 };
+        arrow.controlPoints.push({ x: fallback.x, y: fallback.y });
+      }
+      const control = arrow.controlPoints && arrow.controlPoints[handle.cpIndex];
+      if (!control) return false;
+      pushHistory();
+      control.x = (Number(control.x) || 0) + dx;
+      control.y = (Number(control.y) || 0) + dy;
+      promoteArrowAboveContainerPoints(arrow, [control]);
+      syncCanvasRectToContent();
+      render();
+      return true;
+    }
+    return false;
+  }
+
   function startArrowMoveDrag(evt, arrowId) {
     const selected = currentSelectedArrowIds()
       .map((id) => arrowById(id))
@@ -5661,6 +5881,7 @@
 
   function startArrowWaypointDrag(evt, arrowId, waypointIndex) {
     pushHistory();
+    state.selectedArrowHandle = normalizeArrowHandle({ type: "waypoint", arrowId: arrowId, waypointIndex: waypointIndex });
     state.drag = {
       type: "arrow-waypoint",
       arrowId: arrowId,
@@ -5670,6 +5891,7 @@
 
   function startArrowControlPointDrag(evt, arrowId, cpIndex) {
     pushHistory();
+    state.selectedArrowHandle = normalizeArrowHandle({ type: "control", arrowId: arrowId, cpIndex: cpIndex });
     state.drag = {
       type: "arrow-control",
       arrowId: arrowId,
@@ -5859,7 +6081,7 @@
       const arrow = arrowById(state.drag.arrowId);
       if (!arrow) return;
       const currentEndpoint = arrow[state.drag.endpointKey] || {};
-      const anchor = nearestAnchor(point, currentEndpoint.shapeId || "");
+      const anchor = nearestAnchor(point, currentEndpoint.shapeId || "", currentEndpoint.side || "");
       updateConnectPreview(anchor ? point : null, anchor ? anchor.shapeId : "");
       arrow[state.drag.endpointKey] = anchor
         ? {
@@ -5868,6 +6090,7 @@
             anchorFraction: anchor.anchorFraction,
           }
         : freeEndpointAt(point);
+      promoteArrowAboveContainerPoints(arrow, [endpointPoint(arrow[state.drag.endpointKey])]);
       updateCanvasDuringInteraction(contentBounds());
       render();
       return;
@@ -5877,6 +6100,7 @@
       const arrow = arrowById(state.drag.arrowId);
       if (!arrow || !arrow.waypoints[state.drag.waypointIndex]) return;
       arrow.waypoints[state.drag.waypointIndex] = { x: point.x, y: point.y };
+      promoteArrowAboveContainerPoints(arrow, [arrow.waypoints[state.drag.waypointIndex]]);
       updateCanvasDuringInteraction(contentBounds());
       render();
       return;
@@ -5889,6 +6113,7 @@
         arrow.controlPoints.push({ x: point.x, y: point.y });
       }
       arrow.controlPoints[state.drag.cpIndex] = { x: point.x, y: point.y };
+      promoteArrowAboveContainerPoints(arrow, [arrow.controlPoints[state.drag.cpIndex]]);
       updateCanvasDuringInteraction(contentBounds());
       render();
     }
@@ -5966,6 +6191,7 @@
           state.selectedShapeIds = [];
           state.selectedArrowIds = [];
           state.selectedGroupComponents = [];
+          state.selectedArrowHandle = null;
         }
         render();
       } else {
@@ -5981,6 +6207,7 @@
         state.selectedShapeIds = [];
         state.selectedArrowIds = [];
         state.selectedGroupComponents = [];
+        state.selectedArrowHandle = null;
         render();
       }
     }
@@ -6138,6 +6365,7 @@
       state.selectedShapeIds = [];
       state.selectedArrowIds = [];
       state.selectedGroupComponents = [];
+      state.selectedArrowHandle = null;
       state.connectSourceId = null;
       syncCanvasRectToContent();
       render();
@@ -6152,6 +6380,7 @@
       state.selectedShapeIds = [];
       state.selectedArrowIds = [];
       state.selectedGroupComponents = [];
+      state.selectedArrowHandle = null;
       syncCanvasRectToContent();
       render();
     }
@@ -9327,6 +9556,7 @@
       state.selectedShapeIds = [];
       state.selectedArrowIds = [];
       state.selectedGroupComponents = [];
+      state.selectedArrowHandle = null;
       state.connectSourceId = null;
       render();
       recenterView();
@@ -9588,7 +9818,11 @@
           d: { x: KEYBOARD_NUDGE_STEP, y: 0 },
         };
         const delta = deltas[moveKey];
-        if (delta && (moveSelectedShapesBy(delta.x, delta.y) || moveSelectedArrowsBy(delta.x, delta.y))) {
+        if (delta && (
+          moveSelectedArrowHandleBy(delta.x, delta.y) ||
+          moveSelectedShapesBy(delta.x, delta.y) ||
+          moveSelectedArrowsBy(delta.x, delta.y)
+        )) {
           evt.preventDefault();
         }
         return;
