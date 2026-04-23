@@ -4197,6 +4197,42 @@
     layer.appendChild(line);
   }
 
+  function appendGroupFormCellMidpointMarks(layer, shape) {
+    if (!layer || !shape || !isGroupFormKind(shape.kind)) return;
+    const layout = groupFormLayout(shape);
+    const bodyLeft = layout.bodyX;
+    const bodyTop = layout.bodyY;
+    const bodyRight = layout.bodyX + layout.bodyWidth;
+    const bodyBottom = layout.bodyY + layout.bodyHeight;
+    layout.components.forEach((box) => {
+      const marks = [];
+      if (Math.abs(box.x - bodyLeft) < 0.5) {
+        marks.push({ x: box.x, y: box.y + box.height / 2 });
+      }
+      if (Math.abs((box.x + box.width) - bodyRight) < 0.5) {
+        marks.push({ x: box.x + box.width, y: box.y + box.height / 2 });
+      }
+      if (Math.abs(box.y - bodyTop) < 0.5) {
+        marks.push({ x: box.x + box.width / 2, y: box.y });
+      }
+      if (Math.abs((box.y + box.height) - bodyBottom) < 0.5) {
+        marks.push({ x: box.x + box.width / 2, y: box.y + box.height });
+      }
+      marks.forEach((mark) => {
+        layer.appendChild(createSvg("circle", {
+          cx: mark.x,
+          cy: mark.y,
+          r: 3.2,
+          fill: "#eef7ff",
+          stroke: "#36a3ff",
+          "stroke-width": 1.2,
+          "vector-effect": "non-scaling-stroke",
+          "pointer-events": "none",
+        }));
+      });
+    });
+  }
+
   function renderConnectPerimeterPreview(layer, shape) {
     if (!shape) return;
     if (shape.kind === "circle" || shape.kind === "oval") {
@@ -4211,6 +4247,7 @@
     const d = shapePerimeterPreviewPath(shape);
     if (!d) return;
     appendPerimeterPreviewStroke(layer, "path", { d: d });
+    appendGroupFormCellMidpointMarks(layer, shape);
   }
 
   function sameConnectPreview(a, b) {
@@ -4328,16 +4365,6 @@
       if (side === "left") {
         return quadraticBezierPoint(curves.startTop, curves.leftControl, curves.startBottom, frac);
       }
-      if (side === "top") {
-        return quadraticBezierPoint(curves.startTop, curves.topControl, curves.rightMid, frac);
-      }
-      if (side === "bottom") {
-        return quadraticBezierPoint(curves.rightMid, curves.bottomControl, curves.startBottom, frac);
-      }
-      if (frac <= 0.5) {
-        return quadraticBezierPoint(curves.startTop, curves.topControl, curves.rightMid, frac / 0.5);
-      }
-      return quadraticBezierPoint(curves.rightMid, curves.bottomControl, curves.startBottom, (frac - 0.5) / 0.5);
     }
 
     const polygonVertices = polygonVerticesForShape(shape);
@@ -4447,18 +4474,6 @@
     return best;
   }
 
-  function closestPointOnPolyline(point, vertices) {
-    if (!Array.isArray(vertices) || vertices.length < 2) return null;
-    let best = null;
-    for (let i = 0; i < vertices.length - 1; i += 1) {
-      const projected = projectPointToSegment(point, vertices[i], vertices[i + 1]);
-      if (!best || projected.d2 < best.d2) {
-        best = Object.assign({ segmentIndex: i }, projected);
-      }
-    }
-    return best;
-  }
-
   function orCurvePoints(shape) {
     const x = shape.x;
     const y = shape.y;
@@ -4472,15 +4487,6 @@
       startBottom: { x: x + w * 0.1, y: y + h },
       leftControl: { x: x + w * 0.26, y: y + h / 2 },
     };
-  }
-
-  function sampleQuadraticCurve(start, control, end, sampleCount) {
-    const points = [];
-    const steps = Math.max(6, sampleCount || 24);
-    for (let i = 0; i <= steps; i += 1) {
-      points.push(quadraticBezierPoint(start, control, end, i / steps));
-    }
-    return points;
   }
 
   function buildAnchorCandidate(shape, side, frac, point) {
@@ -4529,20 +4535,6 @@
       candidates.push(buildAnchorCandidate(shape, "left", leftProj.t, point));
       candidates.push(buildAnchorCandidate(shape, "right", rightProj.t, point));
       candidates.push(buildAnchorCandidate(shape, "bottom", bottomFrac, point));
-    } else if (shape.kind === "or") {
-      const curves = orCurvePoints(shape);
-      const leftCurve = sampleQuadraticCurve(curves.startTop, curves.leftControl, curves.startBottom, 32);
-      const topCurve = sampleQuadraticCurve(curves.startTop, curves.topControl, curves.rightMid, 32);
-      const bottomCurve = sampleQuadraticCurve(curves.rightMid, curves.bottomControl, curves.startBottom, 32);
-      const rightCurve = topCurve.concat(bottomCurve.slice(1));
-      const leftProj = closestPointOnPolyline(point, leftCurve);
-      const topProj = closestPointOnPolyline(point, topCurve);
-      const bottomProj = closestPointOnPolyline(point, bottomCurve);
-      const rightProj = closestPointOnPolyline(point, rightCurve);
-      if (leftProj) candidates.push(buildAnchorCandidate(shape, "left", clamp((leftProj.segmentIndex + leftProj.t) / Math.max(1, leftCurve.length - 1), 0, 1), point));
-      if (topProj) candidates.push(buildAnchorCandidate(shape, "top", clamp((topProj.segmentIndex + topProj.t) / Math.max(1, topCurve.length - 1), 0, 1), point));
-      if (bottomProj) candidates.push(buildAnchorCandidate(shape, "bottom", clamp((bottomProj.segmentIndex + bottomProj.t) / Math.max(1, bottomCurve.length - 1), 0, 1), point));
-      if (rightProj) candidates.push(buildAnchorCandidate(shape, "right", clamp((rightProj.segmentIndex + rightProj.t) / Math.max(1, rightCurve.length - 1), 0, 1), point));
     } else if (shape.kind === "circle" || shape.kind === "oval") {
       const h = Math.max(0.01, shape.height);
       const w = Math.max(0.01, shape.width);
@@ -10010,11 +10002,12 @@
           d: { x: KEYBOARD_NUDGE_STEP, y: 0 },
         };
         const delta = deltas[moveKey];
-        if (delta && (
-          moveSelectedArrowHandleBy(delta.x, delta.y) ||
-          moveSelectedShapesBy(delta.x, delta.y) ||
-          moveSelectedArrowsBy(delta.x, delta.y)
-        )) {
+        if (delta && currentSelectedArrowHandle()) {
+          evt.preventDefault();
+          moveSelectedArrowHandleBy(delta.x, delta.y);
+          return;
+        }
+        if (delta && (moveSelectedShapesBy(delta.x, delta.y) || moveSelectedArrowsBy(delta.x, delta.y))) {
           evt.preventDefault();
         }
         return;
