@@ -2197,6 +2197,14 @@
     };
   }
 
+  function quadraticBezierPoint(a, control, b, t) {
+    const u = 1 - t;
+    return {
+      x: u * u * a.x + 2 * u * t * control.x + t * t * b.x,
+      y: u * u * a.y + 2 * u * t * control.y + t * t * b.y,
+    };
+  }
+
   function distanceBetweenPoints(a, b) {
     const dx = b.x - a.x;
     const dy = b.y - a.y;
@@ -4315,6 +4323,23 @@
       return lerpPoint(apex, rightBase, (frac - 0.5) / 0.5);
     }
 
+    if (shape.kind === "or") {
+      const curves = orCurvePoints(shape);
+      if (side === "left") {
+        return quadraticBezierPoint(curves.startTop, curves.leftControl, curves.startBottom, frac);
+      }
+      if (side === "top") {
+        return quadraticBezierPoint(curves.startTop, curves.topControl, curves.rightMid, frac);
+      }
+      if (side === "bottom") {
+        return quadraticBezierPoint(curves.rightMid, curves.bottomControl, curves.startBottom, frac);
+      }
+      if (frac <= 0.5) {
+        return quadraticBezierPoint(curves.startTop, curves.topControl, curves.rightMid, frac / 0.5);
+      }
+      return quadraticBezierPoint(curves.rightMid, curves.bottomControl, curves.startBottom, (frac - 0.5) / 0.5);
+    }
+
     const polygonVertices = polygonVerticesForShape(shape);
     if (polygonVertices) {
       const target = side === "left"
@@ -4422,6 +4447,42 @@
     return best;
   }
 
+  function closestPointOnPolyline(point, vertices) {
+    if (!Array.isArray(vertices) || vertices.length < 2) return null;
+    let best = null;
+    for (let i = 0; i < vertices.length - 1; i += 1) {
+      const projected = projectPointToSegment(point, vertices[i], vertices[i + 1]);
+      if (!best || projected.d2 < best.d2) {
+        best = Object.assign({ segmentIndex: i }, projected);
+      }
+    }
+    return best;
+  }
+
+  function orCurvePoints(shape) {
+    const x = shape.x;
+    const y = shape.y;
+    const w = shape.width;
+    const h = shape.height;
+    return {
+      startTop: { x: x + w * 0.1, y: y },
+      topControl: { x: x + w * 0.62, y: y },
+      rightMid: { x: x + w, y: y + h / 2 },
+      bottomControl: { x: x + w * 0.62, y: y + h },
+      startBottom: { x: x + w * 0.1, y: y + h },
+      leftControl: { x: x + w * 0.26, y: y + h / 2 },
+    };
+  }
+
+  function sampleQuadraticCurve(start, control, end, sampleCount) {
+    const points = [];
+    const steps = Math.max(6, sampleCount || 24);
+    for (let i = 0; i <= steps; i += 1) {
+      points.push(quadraticBezierPoint(start, control, end, i / steps));
+    }
+    return points;
+  }
+
   function buildAnchorCandidate(shape, side, frac, point) {
     const anchor = getAnchorPoint({ shapeId: shape.id, side: side, anchorFraction: frac });
     return {
@@ -4451,18 +4512,37 @@
       const leftProj = projectPointToSegment(point, top, bl);
       const rightProj = projectPointToSegment(point, top, br);
       const bottomFrac = shape.width <= 0 ? 0.5 : clamp((point.x - x0) / shape.width, 0, 1);
-      const topLeftProj = projectPointToSegment(point, bl, top);
-      const topRightProj = projectPointToSegment(point, top, br);
 
       candidates.push(buildAnchorCandidate(shape, "left", leftProj.t, point));
       candidates.push(buildAnchorCandidate(shape, "right", rightProj.t, point));
       candidates.push(buildAnchorCandidate(shape, "bottom", bottomFrac, point));
-      candidates.push(buildAnchorCandidate(
-        shape,
-        "top",
-        point.x <= cx ? (0.5 * topLeftProj.t) : (0.5 + 0.5 * topRightProj.t),
-        point
-      ));
+    } else if (shape.kind === "cone") {
+      const rx = shape.width / 2;
+      const ry = Math.max(8, Math.min(14, shape.height * 0.11));
+      const apex = { x: cx, y: y0 };
+      const baseCy = y0 + shape.height - ry;
+      const leftBase = { x: cx - rx, y: baseCy };
+      const rightBase = { x: cx + rx, y: baseCy };
+      const leftProj = projectPointToSegment(point, apex, leftBase);
+      const rightProj = projectPointToSegment(point, apex, rightBase);
+      const bottomFrac = shape.width <= 0 ? 0.5 : clamp((point.x - x0) / shape.width, 0, 1);
+      candidates.push(buildAnchorCandidate(shape, "left", leftProj.t, point));
+      candidates.push(buildAnchorCandidate(shape, "right", rightProj.t, point));
+      candidates.push(buildAnchorCandidate(shape, "bottom", bottomFrac, point));
+    } else if (shape.kind === "or") {
+      const curves = orCurvePoints(shape);
+      const leftCurve = sampleQuadraticCurve(curves.startTop, curves.leftControl, curves.startBottom, 32);
+      const topCurve = sampleQuadraticCurve(curves.startTop, curves.topControl, curves.rightMid, 32);
+      const bottomCurve = sampleQuadraticCurve(curves.rightMid, curves.bottomControl, curves.startBottom, 32);
+      const rightCurve = topCurve.concat(bottomCurve.slice(1));
+      const leftProj = closestPointOnPolyline(point, leftCurve);
+      const topProj = closestPointOnPolyline(point, topCurve);
+      const bottomProj = closestPointOnPolyline(point, bottomCurve);
+      const rightProj = closestPointOnPolyline(point, rightCurve);
+      if (leftProj) candidates.push(buildAnchorCandidate(shape, "left", clamp((leftProj.segmentIndex + leftProj.t) / Math.max(1, leftCurve.length - 1), 0, 1), point));
+      if (topProj) candidates.push(buildAnchorCandidate(shape, "top", clamp((topProj.segmentIndex + topProj.t) / Math.max(1, topCurve.length - 1), 0, 1), point));
+      if (bottomProj) candidates.push(buildAnchorCandidate(shape, "bottom", clamp((bottomProj.segmentIndex + bottomProj.t) / Math.max(1, bottomCurve.length - 1), 0, 1), point));
+      if (rightProj) candidates.push(buildAnchorCandidate(shape, "right", clamp((rightProj.segmentIndex + rightProj.t) / Math.max(1, rightCurve.length - 1), 0, 1), point));
     } else if (shape.kind === "circle" || shape.kind === "oval") {
       const h = Math.max(0.01, shape.height);
       const w = Math.max(0.01, shape.width);
@@ -4470,7 +4550,7 @@
       candidates.push(buildAnchorCandidate(shape, "right", clamp((point.y - y0) / h, 0, 1), point));
       candidates.push(buildAnchorCandidate(shape, "top", clamp((point.x - x0) / w, 0, 1), point));
       candidates.push(buildAnchorCandidate(shape, "bottom", clamp((point.x - x0) / w, 0, 1), point));
-    } else if (shape.kind === "cone" || shape.kind === "cylinder" || polygonVerticesForShape(shape)) {
+    } else if (shape.kind === "cylinder" || polygonVerticesForShape(shape)) {
       const h = Math.max(0.01, shape.height);
       const w = Math.max(0.01, shape.width);
       candidates.push(buildAnchorCandidate(shape, "left", clamp((point.y - y0) / h, 0, 1), point));
@@ -5768,8 +5848,8 @@
     if (!endpoint || !endpoint.shapeId) return null;
     const shape = shapeById(endpoint.shapeId);
     if (!shape) return null;
-    const side = normalizeSide(endpoint.side);
-    const fraction = endpointFraction(endpoint);
+    let side = normalizeSide(endpoint.side);
+    let fraction = endpointFraction(endpoint);
     const width = Math.max(1, Number(shape.width) || 1);
     const height = Math.max(1, Number(shape.height) || 1);
     const xStep = clamp(Math.abs(dx) / width, 0.001, 1);
@@ -5777,8 +5857,67 @@
     const cornerYThreshold = Math.max(yStep * 1.5, 0.02);
     const cornerXThreshold = Math.max(xStep * 1.5, 0.02);
 
+    if ((shape.kind === "triangle" || shape.kind === "cone") && side === "top") {
+      if (fraction <= 0.5) {
+        side = "left";
+        fraction = clamp(1 - (fraction / 0.5), 0, 1);
+      } else {
+        side = "right";
+        fraction = clamp((fraction - 0.5) / 0.5, 0, 1);
+      }
+    }
+
     let nextSide = side;
     let nextFraction = fraction;
+
+    if (shape.kind === "triangle" || shape.kind === "cone") {
+      if (side === "left") {
+        if (dy < 0) nextFraction = clamp(fraction - yStep, 0, 1);
+        else if (dy > 0) nextFraction = clamp(fraction + yStep, 0, 1);
+        else if (dx > 0) {
+          if (fraction <= cornerYThreshold) {
+            nextSide = "right";
+            nextFraction = yStep;
+          } else if (fraction >= 1 - cornerYThreshold) {
+            nextSide = "bottom";
+            nextFraction = xStep;
+          }
+        }
+      } else if (side === "right") {
+        if (dy < 0) nextFraction = clamp(fraction - yStep, 0, 1);
+        else if (dy > 0) nextFraction = clamp(fraction + yStep, 0, 1);
+        else if (dx < 0) {
+          if (fraction <= cornerYThreshold) {
+            nextSide = "left";
+            nextFraction = yStep;
+          } else if (fraction >= 1 - cornerYThreshold) {
+            nextSide = "bottom";
+            nextFraction = clamp(1 - xStep, 0, 1);
+          }
+        }
+      } else if (side === "bottom") {
+        if (dx < 0) nextFraction = clamp(fraction - xStep, 0, 1);
+        else if (dx > 0) nextFraction = clamp(fraction + xStep, 0, 1);
+        else if (dy < 0) {
+          if (fraction <= cornerXThreshold) {
+            nextSide = "left";
+            nextFraction = clamp(1 - yStep, 0, 1);
+          } else if (fraction >= 1 - cornerXThreshold) {
+            nextSide = "right";
+            nextFraction = clamp(1 - yStep, 0, 1);
+          }
+        }
+      }
+
+      if (nextSide === side && Math.abs(nextFraction - fraction) < 0.000001) {
+        return null;
+      }
+      return {
+        side: nextSide,
+        anchorFraction: nextFraction,
+        anchorIndex: anchorIndexForFraction(nextFraction),
+      };
+    }
 
     if (side === "left") {
       if (dy < 0) nextFraction = clamp(fraction - yStep, 0, 1);
