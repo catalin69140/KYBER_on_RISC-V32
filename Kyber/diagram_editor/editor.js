@@ -4197,28 +4197,42 @@
     layer.appendChild(line);
   }
 
-  function appendGroupFormCellMidpointMarks(layer, shape) {
-    if (!layer || !shape || !isGroupFormKind(shape.kind)) return;
+  function groupFormCellMidpointMarks(shape) {
+    if (!shape || !isGroupFormKind(shape.kind)) return [];
     const layout = groupFormLayout(shape);
     const bodyLeft = layout.bodyX;
     const bodyTop = layout.bodyY;
     const bodyRight = layout.bodyX + layout.bodyWidth;
     const bodyBottom = layout.bodyY + layout.bodyHeight;
+    const marks = [];
+    const seen = new Set();
     layout.components.forEach((box) => {
-      const marks = [];
+      const boxMarks = [];
       if (Math.abs(box.x - bodyLeft) < 0.5) {
-        marks.push({ x: box.x, y: box.y + box.height / 2 });
+        boxMarks.push({ x: box.x, y: box.y + box.height / 2 });
       }
       if (Math.abs((box.x + box.width) - bodyRight) < 0.5) {
-        marks.push({ x: box.x + box.width, y: box.y + box.height / 2 });
+        boxMarks.push({ x: box.x + box.width, y: box.y + box.height / 2 });
       }
       if (Math.abs(box.y - bodyTop) < 0.5) {
-        marks.push({ x: box.x + box.width / 2, y: box.y });
+        boxMarks.push({ x: box.x + box.width / 2, y: box.y });
       }
       if (Math.abs((box.y + box.height) - bodyBottom) < 0.5) {
-        marks.push({ x: box.x + box.width / 2, y: box.y + box.height });
+        boxMarks.push({ x: box.x + box.width / 2, y: box.y + box.height });
       }
-      marks.forEach((mark) => {
+      boxMarks.forEach((mark) => {
+        const key = roundNum(mark.x) + ":" + roundNum(mark.y);
+        if (seen.has(key)) return;
+        seen.add(key);
+        marks.push(mark);
+      });
+    });
+    return marks;
+  }
+
+  function appendGroupFormCellMidpointMarks(layer, shape) {
+    if (!layer || !shape || !isGroupFormKind(shape.kind)) return;
+    groupFormCellMidpointMarks(shape).forEach((mark) => {
         layer.appendChild(createSvg("circle", {
           cx: mark.x,
           cy: mark.y,
@@ -4229,8 +4243,15 @@
           "vector-effect": "non-scaling-stroke",
           "pointer-events": "none",
         }));
-      });
     });
+  }
+
+  function endpointMatchesGroupFormMidpoint(endpoint) {
+    if (!endpoint || !endpoint.shapeId) return false;
+    const shape = shapeById(endpoint.shapeId);
+    if (!shape || !isGroupFormKind(shape.kind)) return false;
+    const point = endpointPoint(endpoint);
+    return groupFormCellMidpointMarks(shape).some((mark) => distance2(point, mark) <= 4);
   }
 
   function renderConnectPerimeterPreview(layer, shape) {
@@ -5218,6 +5239,7 @@
         { key: "from", p: geom.from, fill: "#8fe6ff" },
         { key: "to", p: geom.to, fill: "#ff8f8f" },
       ].forEach((ep) => {
+        const onMidpoint = endpointMatchesGroupFormMidpoint(arrow[ep.key]);
         const isActive = !!(selectedHandle
           && selectedHandle.type === "endpoint"
           && selectedHandle.arrowId === arrow.id
@@ -5226,9 +5248,9 @@
           cx: ep.p.x,
           cy: ep.p.y,
           r: isActive ? 6.2 : 5.2,
-          fill: isActive ? "#ffe48f" : ep.fill,
-          stroke: isActive ? "#5a3900" : "#1a2235",
-          "stroke-width": isActive ? 1.8 : 1,
+          fill: onMidpoint ? "#4fd26b" : (isActive ? "#ffe48f" : ep.fill),
+          stroke: isActive ? "#ffe48f" : (onMidpoint ? "#1f5d2b" : "#1a2235"),
+          "stroke-width": isActive ? 2.1 : (onMidpoint ? 1.4 : 1),
           style: "cursor:crosshair",
         });
         c.addEventListener("pointerdown", (evt) => {
