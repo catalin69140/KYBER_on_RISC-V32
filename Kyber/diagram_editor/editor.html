@@ -524,16 +524,24 @@
 
     .rotation-controls {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 84px;
+      grid-template-columns: 84px minmax(0, 1fr);
       gap: 8px;
       align-items: center;
       margin-top: 8px;
+    }
+
+    .rotation-geometry-tools {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
     }
 
     .rotation-slider {
       width: 100%;
       min-width: 0;
       accent-color: var(--accent);
+      margin: 0;
     }
 
     .rotation-angle-input {

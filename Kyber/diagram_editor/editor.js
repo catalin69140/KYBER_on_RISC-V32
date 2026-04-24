@@ -8201,10 +8201,19 @@
     const normalized = normalizeRotation(angle);
     return [
       '<div class="rotation-controls">',
-      '<input id="' + base + '-slider" class="rotation-slider" type="range" min="0" max="359" step="1" value="' + roundNum(normalized) + '"/>',
       '<input id="' + base + '-angle" class="rotation-angle-input" type="number" min="0" max="359" step="1" value="' + roundNum(normalized) + '"/>',
+      '<input id="' + base + '-slider" class="rotation-slider" type="range" min="0" max="359" step="1" value="' + roundNum(normalized) + '"/>',
       "</div>",
       '<div class="row"><button id="' + base + '-quarter-turn" type="button">Rotate 90°</button></div>',
+    ].join("");
+  }
+
+  function rotationGeometryControlsHtml(prefix, angle) {
+    const base = prefix || "ins-rotation";
+    const normalized = normalizeRotation(angle);
+    return [
+      '<div class="inline-field"><label for="' + base + '-angle">angle:</label><input id="' + base + '-angle" class="rotation-angle-input" type="number" min="0" max="359" step="1" value="' + roundNum(normalized) + '"/></div>',
+      '<div class="rotation-geometry-tools"><input id="' + base + '-slider" class="rotation-slider" type="range" min="0" max="359" step="1" value="' + roundNum(normalized) + '"/><button id="' + base + '-quarter-turn" type="button">Rotate 90°</button></div>',
     ].join("");
   }
 
@@ -9152,13 +9161,12 @@
       '<div class="grid2">' +
         '<div class="inline-field"><label for="ins-shape-x">x:</label><input id="ins-shape-x" type="number" step="1" value="' + roundNum(shape.x) + '"/></div>' +
         '<div class="inline-field"><label for="ins-shape-y">y:</label><input id="ins-shape-y" type="number" step="1" value="' + roundNum(shape.y) + '"/></div>' +
+        rotationGeometryControlsHtml("ins-rotation", shapeRotation(shape)) +
         '<div class="inline-field"><label for="ins-shape-w">width:</label><input id="ins-shape-w" type="number" step="1" min="' + MIN_SHAPE_SIZE + '" value="' + roundNum(shape.width) + '"/></div>' +
         '<div class="inline-field"><label for="ins-shape-h">height:</label><input id="ins-shape-h" type="number" step="1" min="' + MIN_SHAPE_SIZE + '" value="' + roundNum(shape.height) + '"/></div>' +
       '</div>',
       "<h3>Z-Order</h3>",
       '<div class="row"><button id="ins-z-back">Send Back</button><button id="ins-z-front">Bring Front</button></div>',
-      "<h3>Rotation</h3>",
-      rotationControlsHtml("ins-rotation", shapeRotation(shape)),
       "</div>",
     ].join("");
 
