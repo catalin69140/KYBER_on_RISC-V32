@@ -5206,6 +5206,14 @@
       const selectedHandle = currentSelectedArrowHandle();
       if (!arrow || !geom) return;
 
+      const markedShapes = new Set();
+      [arrow.from, arrow.to].forEach((endpoint) => {
+        const shape = endpoint && endpoint.shapeId ? shapeById(endpoint.shapeId) : null;
+        if (!shape || !isGroupFormKind(shape.kind) || markedShapes.has(shape.id)) return;
+        markedShapes.add(shape.id);
+        appendGroupFormCellMidpointMarks(overlayLayer, shape);
+      });
+
       [
         { key: "from", p: geom.from, fill: "#8fe6ff" },
         { key: "to", p: geom.to, fill: "#ff8f8f" },
