@@ -3720,6 +3720,34 @@
       return path;
     }
 
+    function appendEditorGuideGridRect(x, y, width, height, rx, ry) {
+      if (width <= 0 || height <= 0) return;
+      group.appendChild(createSvg("rect", {
+        x: x,
+        y: y,
+        width: width,
+        height: height,
+        rx: Math.max(0, rx || 0),
+        ry: Math.max(0, ry || 0),
+        fill: "url(#editor-grid-minor)",
+        opacity: 0.26,
+        stroke: "none",
+        "pointer-events": "none",
+      }));
+      group.appendChild(createSvg("rect", {
+        x: x,
+        y: y,
+        width: width,
+        height: height,
+        rx: Math.max(0, rx || 0),
+        ry: Math.max(0, ry || 0),
+        fill: "url(#editor-grid-major)",
+        opacity: 0.34,
+        stroke: "none",
+        "pointer-events": "none",
+      }));
+    }
+
     if (kind === "text_box" && shape.noBackground) {
       const hitRect = createSvg("rect", {
         x: shape.x,
@@ -4000,6 +4028,7 @@
         rx: roundedRadius,
         ry: roundedRadius,
       }, commonStroke)));
+      appendEditorGuideGridRect(shape.x, shape.y, shape.width, shape.height, roundedRadius, roundedRadius);
       group.appendChild(createSvg("rect", {
         x: headerRect ? (headerRect.x + 1) : (shape.x + 1),
         y: headerRect ? (headerRect.y + 1) : (shape.y + 1),
@@ -4210,6 +4239,9 @@
         rx: roundedRadius,
         ry: roundedRadius,
       }, commonStroke)));
+      if (kind === "container") {
+        appendEditorGuideGridRect(shape.x, shape.y, shape.width, shape.height, roundedRadius, roundedRadius);
+      }
     }
 
     renderRichTextBlock(group, shape, shapeTextBox(shape));
