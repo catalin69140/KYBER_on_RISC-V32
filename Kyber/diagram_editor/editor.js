@@ -69,7 +69,7 @@
   const WORKSPACE_SURROUND = 2000;
   const WORKSPACE_EXPAND_TRIGGER_PX = 20;
   const KEYBOARD_NUDGE_STEP = 1;
-  const KEYBOARD_ROTATE_STEP = 5;
+  const KEYBOARD_ROTATE_STEP = 1;
   const ZOOM_STEP = 0.05;
   const ZOOM_VISIBLE_WIDTH_AT_100 = 1280;
   const DEFAULT_ANCHOR_STOPS = Array.from({ length: 11 }, (_, idx) => idx / 10);
@@ -9103,6 +9103,8 @@
       '</div>',
       "<h3>Z-Order</h3>",
       '<div class="row"><button id="ins-z-back">Send Back</button><button id="ins-z-front">Bring Front</button></div>',
+      "<h3>Rotation</h3>",
+      rotationControlsHtml("ins-rotation", shapeRotation(shape)),
       "</div>",
     ].join("");
 
