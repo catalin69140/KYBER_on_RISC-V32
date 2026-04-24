@@ -9,6 +9,32 @@
     { key: "output", label: "Output", letter: "O", fill: "#633c39", stroke: "#d6948c" },
     { key: "usage_hints", label: "Usage hints", letter: "U", fill: "#4e5a69", stroke: "#b6cadf" },
   ];
+  const MARKING_COLOR_SWATCHES = [
+    { key: "orange", label: "Orange", fill: "#ff7a1b", stroke: "#ffb36d" },
+    { key: "green", label: "Green", fill: "#59d35d", stroke: "#a3ef8a" },
+    { key: "blue", label: "Blue", fill: "#6aa9ff", stroke: "#cfe3ff" },
+    { key: "cyan", label: "Cyan", fill: "#39c6ff", stroke: "#8ee6ff" },
+  ];
+  const MARKING_POSITION_DEFS = [
+    { value: "top_left", label: "Top left" },
+    { value: "top_center", label: "Top center" },
+    { value: "top_right", label: "Top right" },
+    { value: "bottom_left", label: "Bottom left" },
+    { value: "bottom_center", label: "Bottom center" },
+    { value: "bottom_right", label: "Bottom right" },
+  ];
+  const MARKING_FORM_DEFS = [
+    { value: "none", label: "None" },
+    { value: "square", label: "Square" },
+    { value: "circle", label: "Circle" },
+    { value: "diamond", label: "Diamond" },
+    { value: "triangle", label: "Triangle" },
+  ];
+  const DEFAULT_MARKING = {
+    position: "top_center",
+    shape: "none",
+    color: MARKING_COLOR_SWATCHES[0].fill,
+  };
   const DEFAULT_COLOR_PALETTE = TYPE_COLOR_SWATCHES.map((entry) => entry.fill);
   const DEFAULT_SHAPE_FILL = "#1c2f4f";
   const DEFAULT_SHAPE_STROKE = "#80b6ff";
@@ -88,6 +114,8 @@
   const MIN_SHAPE_SIZE = 24;
   const HISTORY_LIMIT = 120;
   const HTML_NS = "http://www.w3.org/1999/xhtml";
+  const MARKING_MIN_SIZE = 12;
+  const MARKING_MAX_SIZE = 18;
 
   const CONNECT_MODES = {
     connect_directional_connector: "directional_connector",
@@ -346,6 +374,98 @@
     return DEFAULT_FONT_FAMILY;
   }
 
+  function defaultMarking() {
+    return {
+      position: DEFAULT_MARKING.position,
+      shape: DEFAULT_MARKING.shape,
+      color: DEFAULT_MARKING.color,
+    };
+  }
+
+  function normalizeMarkingPosition(raw) {
+    const value = String(raw || "").trim().toLowerCase();
+    return MARKING_POSITION_DEFS.some((entry) => entry.value === value)
+      ? value
+      : DEFAULT_MARKING.position;
+  }
+
+  function normalizeMarkingShape(raw) {
+    const value = String(raw || "").trim().toLowerCase();
+    return MARKING_FORM_DEFS.some((entry) => entry.value === value)
+      ? value
+      : DEFAULT_MARKING.shape;
+  }
+
+  function normalizeMarkingColor(raw, fallback) {
+    const source = String(raw || "").trim().toLowerCase();
+    const matched = MARKING_COLOR_SWATCHES.find((entry) => (
+      entry.fill.toLowerCase() === source
+      || entry.key === source
+      || entry.label.toLowerCase() === source
+    ));
+    if (matched) return matched.fill;
+    return fallback || DEFAULT_MARKING.color;
+  }
+
+  function normalizeMarking(raw) {
+    const source = raw && typeof raw === "object" ? raw : {};
+    return {
+      position: normalizeMarkingPosition(source.position),
+      shape: normalizeMarkingShape(source.shape),
+      color: normalizeMarkingColor(source.color, DEFAULT_MARKING.color),
+    };
+  }
+
+  function hasVisibleMarking(raw) {
+    return normalizeMarkingShape(raw && raw.shape) !== "none";
+  }
+
+  function markingColorInfo(rawColor) {
+    const fill = normalizeMarkingColor(rawColor, DEFAULT_MARKING.color);
+    const matched = MARKING_COLOR_SWATCHES.find((entry) => entry.fill.toLowerCase() === fill.toLowerCase());
+    return matched || {
+      fill: fill,
+      stroke: darken(fill, -18),
+      label: fill,
+    };
+  }
+
+  function markerSizeForFrame(frame) {
+    if (!frame) return MARKING_MIN_SIZE;
+    return clamp(Math.min(frame.width, frame.height) * 0.18, MARKING_MIN_SIZE, MARKING_MAX_SIZE);
+  }
+
+  function markingAnchorPoint(frame, rawMarking) {
+    if (!frame) return { x: 0, y: 0 };
+    const marking = normalizeMarking(rawMarking);
+    const size = markerSizeForFrame(frame);
+    const inset = clamp(size * 0.58, 8, 12);
+    const x = marking.position.endsWith("left")
+      ? frame.x + inset
+      : (marking.position.endsWith("right") ? (frame.x + frame.width - inset) : (frame.x + frame.width / 2));
+    const y = marking.position.startsWith("top")
+      ? frame.y + inset
+      : (frame.y + frame.height - inset);
+    return { x, y, size };
+  }
+
+  function markingTextInsets(frame, rawMarking, hostFrame) {
+    if (!frame || !hasVisibleMarking(rawMarking)) {
+      return { top: 0, bottom: 0 };
+    }
+    const marking = normalizeMarking(rawMarking);
+    const markerFrame = hostFrame || frame;
+    const anchor = markingAnchorPoint(markerFrame, marking);
+    if (anchor.y < frame.y - 0.5 || anchor.y > frame.y + frame.height + 0.5) {
+      return { top: 0, bottom: 0 };
+    }
+    const extra = markerSizeForFrame(markerFrame) + 6;
+    if (marking.position.startsWith("top")) {
+      return { top: extra, bottom: 0 };
+    }
+    return { top: 0, bottom: extra };
+  }
+
   function normalizeRotation(raw) {
     const value = Number(raw);
     if (!Number.isFinite(value)) return 0;
@@ -483,7 +603,7 @@
 
   function defaultModel(elfName) {
     return {
-      version: 5,
+      version: 6,
       metadata: {
         elf: elfName || "",
         viewBox: {
@@ -716,6 +836,7 @@
       richText: "",
       fill: normalizeColor(groupShape && groupShape.fill, DEFAULT_CONTAINER_FILL),
       fillOverride: false,
+      marking: defaultMarking(),
       textColor: normalizeColor(groupShape && groupShape.textColor, DEFAULT_TEXT_COLOR),
       textAlign: "center",
       textVAlign: "center",
@@ -750,6 +871,7 @@
           : plainTextToRichHtml(text);
         raw.fill = normalizeColor(raw.fill, defaults.fill);
         raw.fillOverride = !!(raw.fillOverride || raw.override);
+        raw.marking = normalizeMarking(raw.marking);
         raw.textColor = normalizeColor(raw.textColor, defaults.textColor);
         raw.textAlign = normalizeTextAlign(raw.textAlign || defaults.textAlign);
         raw.textVAlign = normalizeTextVAlign(raw.textVAlign || defaults.textVAlign);
@@ -896,6 +1018,7 @@
       shape.width = Math.max(MIN_SHAPE_SIZE, Number(shape.width) || defaultShapeSize(shape.kind).width);
       shape.height = Math.max(MIN_SHAPE_SIZE, Number(shape.height) || defaultShapeSize(shape.kind).height);
       shape.rotation = normalizeRotation(shape.rotation);
+      shape.marking = normalizeMarking(shape.marking);
       if (shape.kind === "square" || shape.kind === "circle") {
         const side = Math.max(shape.width, shape.height);
         shape.width = side;
@@ -2796,6 +2919,12 @@
       width: Number.isFinite(Number(spec.width)) ? Number(spec.width) : baseBox.width,
       height: Number.isFinite(Number(spec.height)) ? Number(spec.height) : baseBox.height,
     };
+    const markerHost = {
+      x: Number.isFinite(Number(spec.x)) ? Number(spec.x) : outer.x,
+      y: Number.isFinite(Number(spec.y)) ? Number(spec.y) : outer.y,
+      width: Number.isFinite(Number(spec.width)) ? Number(spec.width) : outer.width,
+      height: Number.isFinite(Number(spec.height)) ? Number(spec.height) : outer.height,
+    };
     const pad = normalizeTextInset(spec.textPadding, 0);
     const maxPadX = Math.max(0, Math.floor((outer.width - 8) / 2));
     const maxPadY = Math.max(0, Math.floor((outer.height - 8) / 2));
@@ -2808,6 +2937,9 @@
     let rightInset = Math.max(effectivePad, baseRight + normalizeTextInset(spec.textOffsetLeft, 0) - normalizeTextInset(spec.textOffsetRight, 0));
     let topInset = Math.max(effectivePad, baseTop + normalizeTextInset(spec.textOffsetDown, 0) - normalizeTextInset(spec.textOffsetUp, 0));
     let bottomInset = Math.max(effectivePad, baseBottom + normalizeTextInset(spec.textOffsetUp, 0) - normalizeTextInset(spec.textOffsetDown, 0));
+    const markerInsets = markingTextInsets(outer, spec.marking, markerHost);
+    topInset = Math.max(topInset, effectivePad + markerInsets.top);
+    bottomInset = Math.max(bottomInset, effectivePad + markerInsets.bottom);
     const maxExtraW = Math.max(0, outer.width - 8 - effectivePad * 2);
     const extraLeft = Math.max(0, leftInset - effectivePad);
     const extraRight = Math.max(0, rightInset - effectivePad);
@@ -3748,6 +3880,70 @@
       }));
     }
 
+    function appendMarkingForFrame(frame, rawMarking) {
+      if (!frame || !hasVisibleMarking(rawMarking)) return;
+      const marking = normalizeMarking(rawMarking);
+      const info = markingColorInfo(marking.color);
+      const anchor = markingAnchorPoint(frame, marking);
+      const size = anchor.size;
+      const half = size / 2;
+      if (marking.shape === "circle") {
+        group.appendChild(createSvg("circle", {
+          cx: anchor.x,
+          cy: anchor.y,
+          r: half,
+          fill: info.fill,
+          stroke: info.stroke,
+          "stroke-width": 1.4,
+          "pointer-events": "none",
+        }));
+        return;
+      }
+      if (marking.shape === "triangle") {
+        const points = [
+          { x: anchor.x, y: anchor.y - half },
+          { x: anchor.x + half, y: anchor.y + half },
+          { x: anchor.x - half, y: anchor.y + half },
+        ];
+        group.appendChild(createSvg("polygon", {
+          points: points.map(pointStr).join(" "),
+          fill: info.fill,
+          stroke: info.stroke,
+          "stroke-width": 1.4,
+          "pointer-events": "none",
+        }));
+        return;
+      }
+      if (marking.shape === "diamond") {
+        const points = [
+          { x: anchor.x, y: anchor.y - half },
+          { x: anchor.x + half, y: anchor.y },
+          { x: anchor.x, y: anchor.y + half },
+          { x: anchor.x - half, y: anchor.y },
+        ];
+        group.appendChild(createSvg("polygon", {
+          points: points.map(pointStr).join(" "),
+          fill: info.fill,
+          stroke: info.stroke,
+          "stroke-width": 1.4,
+          "pointer-events": "none",
+        }));
+        return;
+      }
+      group.appendChild(createSvg("rect", {
+        x: anchor.x - half,
+        y: anchor.y - half,
+        width: size,
+        height: size,
+        fill: info.fill,
+        stroke: info.stroke,
+        "stroke-width": 1.4,
+        "pointer-events": "none",
+      }));
+    }
+
+    const deferredCellMarkings = [];
+
     if (kind === "text_box" && shape.noBackground) {
       const hitRect = createSvg("rect", {
         x: shape.x,
@@ -4128,6 +4324,10 @@
           width: box.width,
           height: box.height,
         }));
+        deferredCellMarkings.push({
+          frame: { x: box.x, y: box.y, width: box.width, height: box.height },
+          marking: component.marking,
+        });
       });
 
       layout.verticalDividers.forEach((divider) => {
@@ -4207,6 +4407,10 @@
           width: box.width,
           height: box.height,
         }));
+        deferredCellMarkings.push({
+          frame: { x: box.x, y: box.y, width: box.width, height: box.height },
+          marking: component.marking,
+        });
       });
 
       if (layout.direction === "horizontal") {
@@ -4245,6 +4449,15 @@
     }
 
     renderRichTextBlock(group, shape, shapeTextBox(shape));
+    deferredCellMarkings.forEach((entry) => {
+      appendMarkingForFrame(entry.frame, entry.marking);
+    });
+    appendMarkingForFrame({
+      x: shape.x,
+      y: shape.y,
+      width: shape.width,
+      height: shape.height,
+    }, shape.marking);
   }
 
   function renderShape(shapeLayer, shape) {
@@ -6753,6 +6966,7 @@
       width: size.width,
       height: size.height,
       rotation: 0,
+      marking: defaultMarking(),
       fill: isContainer ? "#0d172a" : "#1c2f4f",
       stroke: isContainer ? "#eef3ff" : "#80b6ff",
       borderStyle: isTextBox ? "none" : "solid",
@@ -8339,6 +8553,63 @@
     }
   }
 
+  function markingControlsHtml(prefix, rawMarking) {
+    const base = prefix || "ins-marking";
+    const marking = normalizeMarking(rawMarking);
+    const positionOptions = MARKING_POSITION_DEFS.map((entry) => (
+      '<option value="' + entry.value + '"' + (entry.value === marking.position ? " selected" : "") + '>' + escapeHtml(entry.label) + "</option>"
+    )).join("");
+    const formOptions = MARKING_FORM_DEFS.map((entry) => (
+      '<option value="' + entry.value + '"' + (entry.value === marking.shape ? " selected" : "") + '>' + escapeHtml(entry.label) + "</option>"
+    )).join("");
+    return [
+      "<h3>Marking</h3>",
+      '<div class="inline-field"><label for="' + base + '-position">Position:</label><select id="' + base + '-position">' + positionOptions + "</select></div>",
+      '<div class="inline-field"><label for="' + base + '-shape">Form:</label><select id="' + base + '-shape">' + formOptions + "</select></div>",
+      '<div class="palette-block"><label>Color</label><div class="palette" id="' + base + '-palette"></div></div>',
+    ].join("");
+  }
+
+  function bindMarkingControls(prefix, getter, setter) {
+    const base = prefix || "ins-marking";
+    const paletteEl = document.getElementById(base + "-palette");
+    const current = normalizeMarking(getter());
+    if (paletteEl) {
+      MARKING_COLOR_SWATCHES.forEach((entry) => {
+        const sw = document.createElement("button");
+        sw.type = "button";
+        sw.className = "swatch" + (normalizeMarkingColor(current.color, DEFAULT_MARKING.color) === entry.fill ? " active" : "");
+        sw.style.background = entry.fill;
+        sw.style.color = swatchTextColor(entry.fill);
+        sw.style.textShadow = swatchTextColor(entry.fill) === "#122033"
+          ? "0 1px 0 rgba(255,255,255,0.28)"
+          : "0 1px 0 rgba(0,0,0,0.22)";
+        sw.title = entry.label;
+        sw.disabled = !hasVisibleMarking(current);
+        sw.addEventListener("click", () => {
+          const live = normalizeMarking(getter());
+          if (!hasVisibleMarking(live)) return;
+          pushHistory();
+          setter(normalizeMarking(Object.assign({}, live, { color: entry.fill })));
+          render();
+        });
+        paletteEl.appendChild(sw);
+      });
+    }
+    bindInput(base + "-position", "change", (value) => {
+      pushHistory();
+      const live = normalizeMarking(getter());
+      setter(normalizeMarking(Object.assign({}, live, { position: value })));
+      render();
+    });
+    bindInput(base + "-shape", "change", (value) => {
+      pushHistory();
+      const live = normalizeMarking(getter());
+      setter(normalizeMarking(Object.assign({}, live, { shape: value })));
+      render();
+    });
+  }
+
   function bindTextSpacingControls(prefix, entity) {
     const base = prefix || "ins-spacing";
     const bindField = (suffix, key) => {
@@ -9199,6 +9470,7 @@
       '</div>',
       "<h3>Z-Order</h3>",
       '<div class="row"><button id="ins-z-back">Send Back</button><button id="ins-z-front">Bring Front</button></div>',
+      markingControlsHtml("ins-marking", shape.marking),
       "</div>",
     ].join("");
 
@@ -9554,6 +9826,10 @@
       });
     }
 
+    bindMarkingControls("ins-marking", () => shape.marking, (value) => {
+      shape.marking = value;
+    });
+
     bindRotationControls("ins-rotation", () => shapeRotation(shape), (value) => {
       shape.rotation = normalizeRotation(value);
     });
@@ -9642,6 +9918,7 @@
       '<div class="section-heading-row"><h3>Color</h3><label class="inline-toggle"><input id="ins-comp-fill-override" type="checkbox"' + (component.fillOverride ? " checked" : "") + '> Override</label></div>',
       '<div class="palette-block section-offset"><label>Fill palette</label><div class="palette" id="ins-comp-fill-palette"></div></div>',
       '<div class="color-inline-row"><label for="ins-comp-fill">Fill:</label><input id="ins-comp-fill" type="color" value="' + normalizeColor(fillValue, "#0d172a") + '"' + (component.fillOverride ? "" : " disabled") + '/></div>',
+      markingControlsHtml("ins-marking", component.marking),
       "</div>",
     ].join("");
 
@@ -9828,6 +10105,15 @@
       pushHistory();
       nextComponent.fill = normalizeColor(value, nextComponent.fill || fillValue);
       render();
+    });
+
+    bindMarkingControls("ins-marking", () => {
+      const nextComponent = currentComponent();
+      return nextComponent ? nextComponent.marking : defaultMarking();
+    }, (value) => {
+      const nextComponent = currentComponent();
+      if (!nextComponent) return;
+      nextComponent.marking = value;
     });
 
     if (selectedBox) {

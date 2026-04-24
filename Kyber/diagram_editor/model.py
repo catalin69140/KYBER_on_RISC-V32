@@ -4,7 +4,7 @@ import copy
 import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-MODEL_VERSION = 5
+MODEL_VERSION = 6
 DEFAULT_VIEWBOX = {"x": 0.0, "y": 0.0, "width": 1000.0, "height": 1000.0}
 DEFAULT_BACKGROUND = "#0b1220"
 DEFAULT_ANCHOR_STOPS = [i / 10 for i in range(11)]
@@ -89,6 +89,20 @@ VALID_TEXT_ALIGN = {"left", "center", "right"}
 VALID_TEXT_V_ALIGN = {"top", "center", "bottom"}
 VALID_CONNECTION_TYPES = {"directional_connector", "bidirectional_connector", "line"}
 VALID_GROUP_HEADER_SIDES = {"top", "right", "bottom", "left", "none"}
+VALID_MARKING_POSITIONS = {
+    "top_left",
+    "top_center",
+    "top_right",
+    "bottom_left",
+    "bottom_center",
+    "bottom_right",
+}
+VALID_MARKING_SHAPES = {"none", "square", "circle", "diamond", "triangle"}
+DEFAULT_MARKING = {
+    "position": "top_center",
+    "shape": "none",
+    "color": "#ff7a1b",
+}
 
 
 def sanitize_id(value: Any) -> str:
@@ -376,6 +390,34 @@ def _normalize_rotation(value: Any, fallback: float = 0.0) -> float:
     return rotation
 
 
+def _as_marking_position(value: Any) -> str:
+    position = str(value or "").strip().lower()
+    if position in VALID_MARKING_POSITIONS:
+        return position
+    return str(DEFAULT_MARKING["position"])
+
+
+def _as_marking_shape(value: Any) -> str:
+    shape = str(value or "").strip().lower()
+    if shape in VALID_MARKING_SHAPES:
+        return shape
+    return str(DEFAULT_MARKING["shape"])
+
+
+def _as_marking_color(value: Any) -> str:
+    color = str(value or "").strip()
+    return color or str(DEFAULT_MARKING["color"])
+
+
+def _normalize_marking(value: Any) -> Dict[str, Any]:
+    raw = value if isinstance(value, dict) else {}
+    return {
+        "position": _as_marking_position(raw.get("position")),
+        "shape": _as_marking_shape(raw.get("shape")),
+        "color": _as_marking_color(raw.get("color")),
+    }
+
+
 def _normalize_component_labels(value: Any, count: int) -> List[str]:
     out: List[str] = []
     if isinstance(value, list):
@@ -415,6 +457,7 @@ def _default_group_component(
         "richText": "",
         "fill": str(fill or DEFAULT_CONTAINER_FILL),
         "fillOverride": False,
+        "marking": copy.deepcopy(DEFAULT_MARKING),
         "textColor": str(text_color or DEFAULT_TEXT_COLOR),
         "textAlign": "center",
         "textVAlign": "center",
@@ -467,6 +510,7 @@ def _normalize_group_components(
                     "richText": str(raw_item.get("richText") if "richText" in raw_item else ""),
                     "fill": str(raw_item.get("fill") or default["fill"]),
                     "fillOverride": bool(raw_item.get("fillOverride", raw_item.get("override", False))),
+                    "marking": _normalize_marking(raw_item.get("marking")),
                     "textColor": str(raw_item.get("textColor") or default["textColor"]),
                     "textAlign": _as_text_align(raw_item.get("textAlign")),
                     "textVAlign": _as_text_v_align(raw_item.get("textVAlign")),
@@ -642,6 +686,7 @@ def normalize_model(raw_model: Any, elf_name: str = "") -> Dict[str, Any]:
             "width": width,
             "height": height,
             "rotation": _normalize_rotation(raw_shape.get("rotation"), 0.0),
+            "marking": _normalize_marking(raw_shape.get("marking")),
             "fill": str(raw_shape.get("fill") or fill_default),
             "stroke": str(raw_shape.get("stroke") or stroke_default),
             "borderStyle": _as_border_style(raw_shape.get("borderStyle", "none" if kind == "text_box" else "solid")),

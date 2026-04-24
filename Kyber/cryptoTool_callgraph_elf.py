@@ -2720,6 +2720,12 @@ def write_html_animation(
             width: Number.isFinite(Number(spec.w ?? spec.width)) ? Number(spec.w ?? spec.width) : baseBox.width,
             height: Number.isFinite(Number(spec.h ?? spec.height)) ? Number(spec.h ?? spec.height) : baseBox.height
         };
+        const markerHost = {
+            x: Number.isFinite(Number(spec.x)) ? Number(spec.x) : outer.x,
+            y: Number.isFinite(Number(spec.y)) ? Number(spec.y) : outer.y,
+            width: Number.isFinite(Number(spec.w ?? spec.width)) ? Number(spec.w ?? spec.width) : outer.width,
+            height: Number.isFinite(Number(spec.h ?? spec.height)) ? Number(spec.h ?? spec.height) : outer.height
+        };
         const pad = refTextInset(spec.textPadding, 0);
         const maxPadX = Math.max(0, Math.floor((outer.width - 8) / 2));
         const maxPadY = Math.max(0, Math.floor((outer.height - 8) / 2));
@@ -2732,6 +2738,9 @@ def write_html_animation(
         let rightInset = Math.max(effectivePad, baseRight + refTextInset(spec.textOffsetLeft, 0) - refTextInset(spec.textOffsetRight, 0));
         let topInset = Math.max(effectivePad, baseTop + refTextInset(spec.textOffsetDown, 0) - refTextInset(spec.textOffsetUp, 0));
         let bottomInset = Math.max(effectivePad, baseBottom + refTextInset(spec.textOffsetUp, 0) - refTextInset(spec.textOffsetDown, 0));
+        const markerInsets = refMarkingTextInsets(outer, spec.marking, markerHost);
+        topInset = Math.max(topInset, effectivePad + markerInsets.top);
+        bottomInset = Math.max(bottomInset, effectivePad + markerInsets.bottom);
         const maxExtraW = Math.max(0, outer.width - 8 - effectivePad * 2);
         const extraLeft = Math.max(0, leftInset - effectivePad);
         const extraRight = Math.max(0, rightInset - effectivePad);
@@ -2756,6 +2765,66 @@ def write_html_animation(
             width: Math.max(8, outer.width - leftInset - rightInset),
             height: Math.max(8, outer.height - topInset - bottomInset)
         };
+    }
+
+    function refAppendMarking(g, frame, rawMarking) {
+        if (!g || !frame || !refHasVisibleMarking(rawMarking)) return;
+        const marking = refNormalizeMarking(rawMarking);
+        const anchor = refMarkingAnchorPoint(frame, marking);
+        const half = anchor.size / 2;
+        const fill = refNormalizeMarkingColor(marking.color);
+        const stroke = refDarkenHex(fill, -18);
+        if (marking.shape === "circle") {
+            g.appendChild(createSvgEl("circle", {
+                cx: anchor.x,
+                cy: anchor.y,
+                r: half,
+                fill: fill,
+                stroke: stroke,
+                "stroke-width": 1.4,
+                "pointer-events": "none"
+            }));
+            return;
+        }
+        if (marking.shape === "triangle") {
+            g.appendChild(createSvgEl("polygon", {
+                points: [
+                    { x: anchor.x, y: anchor.y - half },
+                    { x: anchor.x + half, y: anchor.y + half },
+                    { x: anchor.x - half, y: anchor.y + half }
+                ].map(refPointStr).join(" "),
+                fill: fill,
+                stroke: stroke,
+                "stroke-width": 1.4,
+                "pointer-events": "none"
+            }));
+            return;
+        }
+        if (marking.shape === "diamond") {
+            g.appendChild(createSvgEl("polygon", {
+                points: [
+                    { x: anchor.x, y: anchor.y - half },
+                    { x: anchor.x + half, y: anchor.y },
+                    { x: anchor.x, y: anchor.y + half },
+                    { x: anchor.x - half, y: anchor.y }
+                ].map(refPointStr).join(" "),
+                fill: fill,
+                stroke: stroke,
+                "stroke-width": 1.4,
+                "pointer-events": "none"
+            }));
+            return;
+        }
+        g.appendChild(createSvgEl("rect", {
+            x: anchor.x - half,
+            y: anchor.y - half,
+            width: anchor.size,
+            height: anchor.size,
+            fill: fill,
+            stroke: stroke,
+            "stroke-width": 1.4,
+            "pointer-events": "none"
+        }));
     }
 
     function refPolygonVertices(spec, kind) {
@@ -2977,6 +3046,7 @@ def write_html_animation(
                     richText: String(raw.richText || refPlainTextToRichHtml(text)),
                     fill: String(raw.fill || spec.fill || "#0d172a"),
                     fillOverride: !!(raw.fillOverride || raw.override),
+                    marking: refNormalizeMarking(raw.marking),
                     textColor: String(raw.textColor || spec.textColor || "#f4f7ff"),
                     textAlign: String(raw.textAlign || "center"),
                     textVAlign: String(raw.textVAlign || "center"),
@@ -2997,6 +3067,7 @@ def write_html_animation(
                     richText: refPlainTextToRichHtml(text),
                     fill: String(spec.fill || "#0d172a"),
                     fillOverride: false,
+                    marking: refNormalizeMarking(null),
                     textColor: String(spec.textColor || "#f4f7ff"),
                     textAlign: "center",
                     textVAlign: "center",
@@ -3015,6 +3086,7 @@ def write_html_animation(
                 richText: refPlainTextToRichHtml(fallbackText),
                 fill: String(spec.fill || "#0d172a"),
                 fillOverride: false,
+                marking: refNormalizeMarking(null),
                 textColor: String(spec.textColor || "#f4f7ff"),
                 textAlign: "center",
                 textVAlign: "center",
@@ -3028,6 +3100,76 @@ def write_html_animation(
             });
         }
         return out;
+    }
+
+    function refNormalizeMarkingPosition(value) {
+        const normalized = String(value || "").trim().toLowerCase();
+        return [
+            "top_left",
+            "top_center",
+            "top_right",
+            "bottom_left",
+            "bottom_center",
+            "bottom_right",
+        ].includes(normalized) ? normalized : "top_center";
+    }
+
+    function refNormalizeMarkingShape(value) {
+        const normalized = String(value || "").trim().toLowerCase();
+        return ["none", "square", "circle", "diamond", "triangle"].includes(normalized) ? normalized : "none";
+    }
+
+    function refNormalizeMarkingColor(value) {
+        const color = String(value || "").trim();
+        return color || "#ff7a1b";
+    }
+
+    function refNormalizeMarking(value) {
+        const raw = value && typeof value === "object" ? value : {};
+        return {
+            position: refNormalizeMarkingPosition(raw.position),
+            shape: refNormalizeMarkingShape(raw.shape),
+            color: refNormalizeMarkingColor(raw.color),
+        };
+    }
+
+    function refHasVisibleMarking(marking) {
+        return refNormalizeMarkingShape(marking && marking.shape) !== "none";
+    }
+
+    function refMarkerSizeForFrame(frame) {
+        if (!frame) return 12;
+        return refClamp(Math.min(frame.width, frame.height) * 0.18, 12, 18);
+    }
+
+    function refMarkingAnchorPoint(frame, rawMarking) {
+        const marking = refNormalizeMarking(rawMarking);
+        const size = refMarkerSizeForFrame(frame);
+        const inset = refClamp(size * 0.58, 8, 12);
+        const x = marking.position.endsWith("left")
+            ? frame.x + inset
+            : (marking.position.endsWith("right") ? (frame.x + frame.width - inset) : (frame.x + frame.width / 2));
+        const y = marking.position.startsWith("top")
+            ? frame.y + inset
+            : (frame.y + frame.height - inset);
+        return { x, y, size };
+    }
+
+    function refMarkingTextInsets(frame, rawMarking, hostFrame) {
+        if (!frame || !refHasVisibleMarking(rawMarking)) {
+            return { top: 0, bottom: 0 };
+        }
+        const marking = refNormalizeMarking(rawMarking);
+        const markerFrame = hostFrame || frame;
+        const anchor = refMarkingAnchorPoint(markerFrame, marking);
+        if (anchor.y < frame.y - 0.5 || anchor.y > frame.y + frame.height + 0.5) {
+            return { top: 0, bottom: 0 };
+        }
+        const extra = refMarkerSizeForFrame(markerFrame) + 6;
+        if (marking.position.startsWith("top")) {
+            return { top: extra, bottom: 0 };
+        }
+        return { top: 0, bottom: extra };
     }
 
     function refEffectiveGroupComponentFill(spec, component) {
@@ -3132,6 +3274,7 @@ def write_html_animation(
     function addGeneratedRefShape(svg, spec) {
         const shapeKind = String(spec.kind || "square").toLowerCase();
         const rotation = refNormalizeRotation(spec.rotation);
+        spec.marking = refNormalizeMarking(spec.marking);
 
         const g = createSvgEl("g", {
             class: `ref-node generated-ref-node kind-${shapeKind}`,
@@ -3153,6 +3296,7 @@ def write_html_animation(
         const dash = refDashArrayForStyle(borderStyle);
         const strokeLinecap = refLineCapForStyle(borderStyle);
         const showBorder = borderStyle !== "none";
+        const deferredCellMarkings = [];
 
         function appendShapeEl(tag, attrs, fillOverride) {
             const el = createSvgEl(tag, attrs);
@@ -3486,6 +3630,10 @@ def write_html_animation(
                     width: box.w,
                     height: box.h
                 }));
+                deferredCellMarkings.push({
+                    frame: { x: box.x, y: box.y, width: box.w, height: box.h },
+                    marking: component.marking
+                });
             });
 
             layout.colBoxes.slice(1).forEach((box) => {
@@ -3582,6 +3730,10 @@ def write_html_animation(
                     width: box.w,
                     height: box.h
                 }));
+                deferredCellMarkings.push({
+                    frame: { x: box.x, y: box.y, width: box.w, height: box.h },
+                    marking: component.marking
+                });
             });
 
             if (layout.direction === "horizontal") {
@@ -3613,6 +3765,15 @@ def write_html_animation(
         }
 
         refRenderRichTextBlock(g, spec, shapeKind);
+        deferredCellMarkings.forEach((entry) => {
+            refAppendMarking(g, entry.frame, entry.marking);
+        });
+        refAppendMarking(g, {
+            x: spec.x,
+            y: spec.y,
+            width: spec.w,
+            height: spec.h
+        }, spec.marking);
 
         svg.appendChild(g);
         registerRefInteractiveNode(g, spec.id, spec.x, spec.y, spec.w, spec.h, { kind: shapeKind, rotation });
