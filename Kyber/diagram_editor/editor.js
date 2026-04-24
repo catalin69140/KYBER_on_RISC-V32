@@ -8210,29 +8210,83 @@
 
   function bindRotationControls(prefix, getter, setter) {
     const base = prefix || "ins-rotation";
-    const syncInputs = () => {
-      const value = roundNum(normalizeRotation(getter()));
-      const angleEl = document.getElementById(base + "-angle");
-      const sliderEl = document.getElementById(base + "-slider");
-      if (angleEl) angleEl.value = value;
-      if (sliderEl) sliderEl.value = value;
+    const angleEl = document.getElementById(base + "-angle");
+    const sliderEl = document.getElementById(base + "-slider");
+    let anglePushed = false;
+    let sliderPushed = false;
+
+    const applyRotation = (rawValue) => {
+      const next = normalizeRotation(rawValue);
+      setter(next);
+      syncCanvasRectToContent();
+      render(true);
+      return next;
     };
-    bindSmoothNumberInput(base + "-angle", getter, (value) => {
-      setter(normalizeRotation(value));
-      syncInputs();
-    }, {
-      step: 1,
-      normalize: normalizeRotation,
-      renderFully: true,
-    });
-    bindSmoothNumberInput(base + "-slider", getter, (value) => {
-      setter(normalizeRotation(value));
-      syncInputs();
-    }, {
-      step: 1,
-      normalize: normalizeRotation,
-      renderFully: true,
-    });
+
+    const syncControls = (options) => {
+      const opts = options || {};
+      const value = roundNum(normalizeRotation(getter()));
+      if (sliderEl && !opts.skipSlider) sliderEl.value = value;
+      if (angleEl && !opts.skipAngle) angleEl.value = value;
+    };
+
+    if (sliderEl) {
+      sliderEl.addEventListener("focus", () => {
+        sliderPushed = false;
+        sliderEl.value = roundNum(normalizeRotation(getter()));
+      });
+      sliderEl.addEventListener("input", () => {
+        const num = Number(sliderEl.value);
+        if (!Number.isFinite(num)) return;
+        if (!sliderPushed) {
+          pushHistory();
+          sliderPushed = true;
+        }
+        const next = applyRotation(num);
+        if (angleEl) angleEl.value = roundNum(next);
+      });
+      sliderEl.addEventListener("change", () => {
+        sliderPushed = false;
+        syncControls();
+      });
+      sliderEl.addEventListener("blur", () => {
+        sliderPushed = false;
+        syncControls();
+      });
+    }
+
+    if (angleEl) {
+      angleEl.addEventListener("focus", () => {
+        anglePushed = false;
+      });
+      angleEl.addEventListener("input", () => {
+        const value = String(angleEl.value || "").trim();
+        if (!value) return;
+        const num = Number(value);
+        if (!Number.isFinite(num)) return;
+        if (!anglePushed) {
+          pushHistory();
+          anglePushed = true;
+        }
+        const next = applyRotation(num);
+        if (sliderEl) sliderEl.value = roundNum(next);
+      });
+      angleEl.addEventListener("change", () => {
+        anglePushed = false;
+        syncControls();
+      });
+      angleEl.addEventListener("blur", () => {
+        anglePushed = false;
+        syncControls();
+      });
+      angleEl.addEventListener("keydown", (evt) => {
+        if (evt.key === "Enter") {
+          evt.preventDefault();
+          angleEl.blur();
+        }
+      });
+    }
+
     const quarterTurnBtn = document.getElementById(base + "-quarter-turn");
     if (quarterTurnBtn) {
       quarterTurnBtn.addEventListener("click", () => {
