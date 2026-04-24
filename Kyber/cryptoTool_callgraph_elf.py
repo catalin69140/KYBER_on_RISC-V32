@@ -3035,9 +3035,48 @@ def write_html_animation(
         return String(component.fill || spec.fill || "#0d172a");
     }
 
+    function refNormalizeRotation(value) {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) return 0;
+        let normalized = numeric % 360;
+        if (normalized < 0) normalized += 360;
+        if (Math.abs(normalized - 360) < 0.000001) normalized = 0;
+        return normalized;
+    }
+
+    function refRotatePoint(point, center, degrees) {
+        if (!point || !center) return point;
+        const radians = refNormalizeRotation(degrees) * Math.PI / 180;
+        if (Math.abs(radians) < 0.000001) {
+            return { x: point.x, y: point.y };
+        }
+        const cos = Math.cos(radians);
+        const sin = Math.sin(radians);
+        const dx = point.x - center.x;
+        const dy = point.y - center.y;
+        return {
+            x: center.x + dx * cos - dy * sin,
+            y: center.y + dx * sin + dy * cos,
+        };
+    }
+
+    function refRotateNodePoint(point, box) {
+        if (!point || !box) return point;
+        const rotation = refNormalizeRotation(box.rotation);
+        if (!rotation) {
+            return { x: point.x, y: point.y };
+        }
+        return refRotatePoint(point, {
+            x: box.x + box.w / 2,
+            y: box.y + box.h / 2,
+        }, rotation);
+    }
+
     function registerRefInteractiveNode(g, id, x, y, w, h, meta = {}) {
         primaryRefNodeEls[id] = g;
-        primaryRefNodeBoxes[id] = { x, y, w, h, ...(meta || {}) };
+        const mergedMeta = { ...(meta || {}) };
+        mergedMeta.rotation = refNormalizeRotation(mergedMeta.rotation);
+        primaryRefNodeBoxes[id] = { x, y, w, h, ...mergedMeta };
 
         g.style.cursor = "pointer";
         g.addEventListener("click", (ev) => {
@@ -3092,11 +3131,15 @@ def write_html_animation(
 
     function addGeneratedRefShape(svg, spec) {
         const shapeKind = String(spec.kind || "square").toLowerCase();
+        const rotation = refNormalizeRotation(spec.rotation);
 
         const g = createSvgEl("g", {
             class: `ref-node generated-ref-node kind-${shapeKind}`,
             "data-node-id": spec.id
         });
+        if (rotation) {
+            g.setAttribute("transform", `rotate(${rotation} ${spec.x + spec.w / 2} ${spec.y + spec.h / 2})`);
+        }
         const isContainer = (shapeKind === "container" || shapeKind === "header_container" || shapeKind === "table_group" || shapeKind === "component_group");
         const noBackground = shapeKind === "text_box" ? spec.noBackground !== false : !!spec.noBackground;
         const fill = spec.fill || (isContainer ? "#0d172a" : "#1c2f4f");
@@ -3572,7 +3615,7 @@ def write_html_animation(
         refRenderRichTextBlock(g, spec, shapeKind);
 
         svg.appendChild(g);
-        registerRefInteractiveNode(g, spec.id, spec.x, spec.y, spec.w, spec.h, { kind: shapeKind });
+        registerRefInteractiveNode(g, spec.id, spec.x, spec.y, spec.w, spec.h, { kind: shapeKind, rotation });
         return g;
     }
 
@@ -3801,6 +3844,7 @@ def write_html_animation(
         if (b.anchors && b.anchors[side]) {
             return { x: b.anchors[side].x, y: b.anchors[side].y };
         }
+        const rotateAnchor = (point) => refRotateNodePoint(point, b);
         const kind = String(b.kind || "");
         const x0 = b.x;
         const y0 = b.y;
@@ -3810,10 +3854,10 @@ def write_html_animation(
         const cy = y0 + h / 2;
         const frac = refNormalizeFraction(fraction, 0.5);
         if (REF_FRAME_ANCHOR_EXCEPTION_KINDS.has(kind)) {
-            if (side === "left") return { x: x0, y: y0 + h * frac };
-            if (side === "right") return { x: x0 + w, y: y0 + h * frac };
-            if (side === "top") return { x: x0 + w * frac, y: y0 };
-            return { x: x0 + w * frac, y: y0 + h };
+            if (side === "left") return rotateAnchor({ x: x0, y: y0 + h * frac });
+            if (side === "right") return rotateAnchor({ x: x0 + w, y: y0 + h * frac });
+            if (side === "top") return rotateAnchor({ x: x0 + w * frac, y: y0 });
+            return rotateAnchor({ x: x0 + w * frac, y: y0 + h });
         }
         if (kind === "circle" || kind === "oval") {
             const rx = Math.max(0.01, w / 2);
@@ -3823,25 +3867,25 @@ def write_html_animation(
                 const ny = (targetY - cy) / ry;
                 const k = Math.sqrt(Math.max(0, 1 - ny * ny));
                 const x = cx + ((side === "left") ? -rx : rx) * k;
-                return { x, y: targetY };
+                return rotateAnchor({ x, y: targetY });
             }
             const targetX = x0 + w * frac;
             const nx = (targetX - cx) / rx;
             const k = Math.sqrt(Math.max(0, 1 - nx * nx));
             const y = cy + ((side === "top") ? -ry : ry) * k;
-            return { x: targetX, y };
+            return rotateAnchor({ x: targetX, y });
         }
         if (kind === "triangle") {
             const top = { x: cx, y: y0 };
             const bl = { x: x0, y: y0 + h };
             const br = { x: x0 + w, y: y0 + h };
-            if (side === "left") return refLerpPoint(top, bl, frac);
-            if (side === "right") return refLerpPoint(top, br, frac);
-            if (side === "bottom") return { x: x0 + w * frac, y: y0 + h };
+            if (side === "left") return rotateAnchor(refLerpPoint(top, bl, frac));
+            if (side === "right") return rotateAnchor(refLerpPoint(top, br, frac));
+            if (side === "bottom") return rotateAnchor({ x: x0 + w * frac, y: y0 + h });
             if (frac <= 0.5) {
-                return refLerpPoint(bl, top, frac / 0.5);
+                return rotateAnchor(refLerpPoint(bl, top, frac / 0.5));
             }
-            return refLerpPoint(top, br, (frac - 0.5) / 0.5);
+            return rotateAnchor(refLerpPoint(top, br, (frac - 0.5) / 0.5));
         }
         if (kind === "cone") {
             const rx = w / 2;
@@ -3850,18 +3894,18 @@ def write_html_animation(
             const baseCy = y0 + h - ry;
             const leftBase = { x: cx - rx, y: baseCy };
             const rightBase = { x: cx + rx, y: baseCy };
-            if (side === "left") return refLerpPoint(apex, leftBase, frac);
-            if (side === "right") return refLerpPoint(apex, rightBase, frac);
+            if (side === "left") return rotateAnchor(refLerpPoint(apex, leftBase, frac));
+            if (side === "right") return rotateAnchor(refLerpPoint(apex, rightBase, frac));
             if (side === "bottom") {
                 const targetX = cx - rx + rx * 2 * frac;
                 const nx = (targetX - cx) / Math.max(0.01, rx);
                 const k = Math.sqrt(Math.max(0, 1 - nx * nx));
-                return { x: targetX, y: baseCy + ry * k };
+                return rotateAnchor({ x: targetX, y: baseCy + ry * k });
             }
             if (frac <= 0.5) {
-                return refLerpPoint(leftBase, apex, frac / 0.5);
+                return rotateAnchor(refLerpPoint(leftBase, apex, frac / 0.5));
             }
-            return refLerpPoint(apex, rightBase, (frac - 0.5) / 0.5);
+            return rotateAnchor(refLerpPoint(apex, rightBase, (frac - 0.5) / 0.5));
         }
         const polygon = refPolygonVertices({ x: x0, y: y0, w, h }, kind);
         if (polygon) {
@@ -3873,26 +3917,26 @@ def write_html_animation(
                         ? { x: x0 + w * frac, y: y0 }
                         : { x: x0 + w * frac, y: y0 + h };
             const projected = refClosestPointOnPolygon(target, polygon);
-            if (projected) return projected;
+            if (projected) return rotateAnchor(projected);
         }
         if (kind === "cylinder") {
             const rx = Math.max(0.01, w / 2);
             const ry = Math.max(8, Math.min(16, h * 0.12));
             const topCy = y0 + ry + 2;
             const bottomCy = y0 + h - ry - 2;
-            if (side === "left") return { x: x0, y: topCy + (bottomCy - topCy) * frac };
-            if (side === "right") return { x: x0 + w, y: topCy + (bottomCy - topCy) * frac };
+            if (side === "left") return rotateAnchor({ x: x0, y: topCy + (bottomCy - topCy) * frac });
+            if (side === "right") return rotateAnchor({ x: x0 + w, y: topCy + (bottomCy - topCy) * frac });
             const targetX = x0 + w * frac;
             const nx = (targetX - cx) / rx;
             const k = Math.sqrt(Math.max(0, 1 - nx * nx));
             const targetCy = side === "top" ? topCy : bottomCy;
-            return { x: targetX, y: targetCy + (side === "top" ? -ry : ry) * k };
+            return rotateAnchor({ x: targetX, y: targetCy + (side === "top" ? -ry : ry) * k });
         }
-        if (side === "left")   return { x: x0, y: y0 + h * frac };
-        if (side === "right")  return { x: x0 + w, y: y0 + h * frac };
-        if (side === "top")    return { x: x0 + w * frac, y: y0 };
-        if (side === "bottom") return { x: x0 + w * frac, y: y0 + h };
-        return { x: cx, y: cy };
+        if (side === "left")   return rotateAnchor({ x: x0, y: y0 + h * frac });
+        if (side === "right")  return rotateAnchor({ x: x0 + w, y: y0 + h * frac });
+        if (side === "top")    return rotateAnchor({ x: x0 + w * frac, y: y0 });
+        if (side === "bottom") return rotateAnchor({ x: x0 + w * frac, y: y0 + h });
+        return rotateAnchor({ x: cx, y: cy });
     }
 
     function refAnchor(nodeId, side, dx = 0, dy = 0) {
@@ -3901,6 +3945,7 @@ def write_html_animation(
         if (b.anchors && b.anchors[side]) {
             return { x: b.anchors[side].x + dx, y: b.anchors[side].y + dy };
         }
+        const rotateAnchor = (point) => refRotateNodePoint(point, b);
         const kind = String(b.kind || "");
         const x0 = b.x;
         const y0 = b.y;
@@ -3916,13 +3961,13 @@ def write_html_animation(
                 const ny = (targetY - cy) / ry;
                 const k = Math.sqrt(Math.max(0, 1 - ny * ny));
                 const x = cx + ((side === "left") ? -rx : rx) * k;
-                return { x: x + dx, y: targetY };
+                return rotateAnchor({ x: x + dx, y: targetY });
             }
             const targetX = cx + dx;
             const nx = (targetX - cx) / rx;
             const k = Math.sqrt(Math.max(0, 1 - nx * nx));
             const y = cy + ((side === "top") ? -ry : ry) * k;
-            return { x: targetX, y: y + dy };
+            return rotateAnchor({ x: targetX, y: y + dy });
         }
         const polygon = refPolygonVertices({ x: x0, y: y0, w, h }, kind);
         if (polygon) {
@@ -3934,20 +3979,20 @@ def write_html_animation(
                         ? { x: cx + dx, y: y0 }
                         : { x: cx + dx, y: y0 + h };
             const projected = refClosestPointOnPolygon(target, polygon);
-            if (projected) return projected;
+            if (projected) return rotateAnchor(projected);
         }
         if (kind === "cylinder") {
             const rx = Math.max(0.01, w / 2);
             const ry = Math.max(8, Math.min(16, h * 0.12));
             const topCy = y0 + ry + 2;
             const bottomCy = y0 + h - ry - 2;
-            if (side === "left") return { x: x0, y: cy + dy };
-            if (side === "right") return { x: x0 + w, y: cy + dy };
+            if (side === "left") return rotateAnchor({ x: x0, y: cy + dy });
+            if (side === "right") return rotateAnchor({ x: x0 + w, y: cy + dy });
             const targetX = cx + dx;
             const nx = (targetX - cx) / rx;
             const k = Math.sqrt(Math.max(0, 1 - nx * nx));
             const targetCy = side === "top" ? topCy : bottomCy;
-            return { x: targetX, y: targetCy + (side === "top" ? -ry : ry) * k };
+            return rotateAnchor({ x: targetX, y: targetCy + (side === "top" ? -ry : ry) * k });
         }
         if (kind === "cloud" || kind === "cloud_callout") {
             const rx = Math.max(0.01, w / 2);
@@ -3956,18 +4001,18 @@ def write_html_animation(
                 const targetY = cy + dy;
                 const ny = (targetY - cy) / ry;
                 const k = Math.sqrt(Math.max(0, 1 - ny * ny));
-                return { x: cx + ((side === "left") ? -rx : rx) * k, y: targetY };
+                return rotateAnchor({ x: cx + ((side === "left") ? -rx : rx) * k, y: targetY });
             }
             const targetX = cx + dx;
             const nx = (targetX - cx) / rx;
             const k = Math.sqrt(Math.max(0, 1 - nx * nx));
-            return { x: targetX, y: cy + ((side === "top") ? -ry : ry) * k };
+            return rotateAnchor({ x: targetX, y: cy + ((side === "top") ? -ry : ry) * k });
         }
-        if (side === "left")   return { x: x0, y: cy + dy };
-        if (side === "right")  return { x: x0 + w, y: cy + dy };
-        if (side === "top")    return { x: cx + dx, y: y0 };
-        if (side === "bottom") return { x: cx + dx, y: y0 + h };
-        return { x: cx + dx, y: cy + dy };
+        if (side === "left")   return rotateAnchor({ x: x0, y: cy + dy });
+        if (side === "right")  return rotateAnchor({ x: x0 + w, y: cy + dy });
+        if (side === "top")    return rotateAnchor({ x: cx + dx, y: y0 });
+        if (side === "bottom") return rotateAnchor({ x: cx + dx, y: y0 + h });
+        return rotateAnchor({ x: cx + dx, y: cy + dy });
     }
 
     function refEndpointPoint(spec, fallbackSide) {

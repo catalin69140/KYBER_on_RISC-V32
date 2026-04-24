@@ -522,6 +522,26 @@
       letter-spacing: 0.2px;
     }
 
+    .rotation-controls {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 84px;
+      gap: 8px;
+      align-items: center;
+      margin-top: 8px;
+    }
+
+    .rotation-slider {
+      width: 100%;
+      min-width: 0;
+      accent-color: var(--accent);
+    }
+
+    .rotation-angle-input {
+      width: 100%;
+      min-width: 0;
+      text-align: right;
+    }
+
     .spacing-up {
       grid-column: 2;
     }

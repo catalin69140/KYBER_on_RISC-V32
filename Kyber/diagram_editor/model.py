@@ -4,7 +4,7 @@ import copy
 import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-MODEL_VERSION = 4
+MODEL_VERSION = 5
 DEFAULT_VIEWBOX = {"x": 0.0, "y": 0.0, "width": 1000.0, "height": 1000.0}
 DEFAULT_BACKGROUND = "#0b1220"
 DEFAULT_ANCHOR_STOPS = [i / 10 for i in range(11)]
@@ -367,6 +367,15 @@ def _as_text_inset(value: Any, fallback: float = 0.0) -> float:
     return max(0.0, min(200.0, _to_float(value, fallback)))
 
 
+def _normalize_rotation(value: Any, fallback: float = 0.0) -> float:
+    rotation = _to_float(value, fallback) % 360.0
+    if rotation < 0.0:
+        rotation += 360.0
+    if abs(rotation - 360.0) < 1e-9:
+        return 0.0
+    return rotation
+
+
 def _normalize_component_labels(value: Any, count: int) -> List[str]:
     out: List[str] = []
     if isinstance(value, list):
@@ -632,6 +641,7 @@ def normalize_model(raw_model: Any, elf_name: str = "") -> Dict[str, Any]:
             "y": _to_float(raw_shape.get("y"), 60 + idx * 10),
             "width": width,
             "height": height,
+            "rotation": _normalize_rotation(raw_shape.get("rotation"), 0.0),
             "fill": str(raw_shape.get("fill") or fill_default),
             "stroke": str(raw_shape.get("stroke") or stroke_default),
             "borderStyle": _as_border_style(raw_shape.get("borderStyle", "none" if kind == "text_box" else "solid")),

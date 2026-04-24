@@ -69,6 +69,7 @@
   const WORKSPACE_SURROUND = 2000;
   const WORKSPACE_EXPAND_TRIGGER_PX = 20;
   const KEYBOARD_NUDGE_STEP = 1;
+  const KEYBOARD_ROTATE_STEP = 5;
   const ZOOM_STEP = 0.05;
   const ZOOM_VISIBLE_WIDTH_AT_100 = 1280;
   const DEFAULT_ANCHOR_STOPS = Array.from({ length: 11 }, (_, idx) => idx / 10);
@@ -82,6 +83,8 @@
   const SHAPE_TOOLS_PER_PAGE = 24;
   const ANCHOR_SIDE_SWITCH_HYSTERESIS = 144;
   const HANDLE_SIZE = 8;
+  const ROTATE_HANDLE_RADIUS = 6.5;
+  const ROTATE_HANDLE_OFFSET = 18;
   const MIN_SHAPE_SIZE = 24;
   const HISTORY_LIMIT = 120;
   const HTML_NS = "http://www.w3.org/1999/xhtml";
@@ -343,6 +346,98 @@
     return DEFAULT_FONT_FAMILY;
   }
 
+  function normalizeRotation(raw) {
+    const value = Number(raw);
+    if (!Number.isFinite(value)) return 0;
+    let normalized = value % 360;
+    if (normalized < 0) normalized += 360;
+    if (Math.abs(normalized - 360) < 0.000001) normalized = 0;
+    return normalized;
+  }
+
+  function shapeRotation(shape) {
+    return normalizeRotation(shape && shape.rotation);
+  }
+
+  function degreesToRadians(degrees) {
+    return (Number(degrees) || 0) * Math.PI / 180;
+  }
+
+  function rotatePoint(point, center, degrees) {
+    if (!point || !center) return point;
+    const radians = degreesToRadians(degrees);
+    if (Math.abs(radians) < 0.000001) {
+      return { x: point.x, y: point.y };
+    }
+    const cos = Math.cos(radians);
+    const sin = Math.sin(radians);
+    const dx = point.x - center.x;
+    const dy = point.y - center.y;
+    return {
+      x: center.x + dx * cos - dy * sin,
+      y: center.y + dx * sin + dy * cos,
+    };
+  }
+
+  function inverseRotatePoint(point, center, degrees) {
+    return rotatePoint(point, center, -degrees);
+  }
+
+  function shapeLocalPoint(point, shape) {
+    if (!point || !shape) return point;
+    const rotation = shapeRotation(shape);
+    if (!rotation) {
+      return { x: point.x, y: point.y };
+    }
+    return inverseRotatePoint(point, shapeCenter(shape), rotation);
+  }
+
+  function shapeWorldPoint(point, shape) {
+    if (!point || !shape) return point;
+    const rotation = shapeRotation(shape);
+    if (!rotation) {
+      return { x: point.x, y: point.y };
+    }
+    return rotatePoint(point, shapeCenter(shape), rotation);
+  }
+
+  function shapeTransform(shape) {
+    const rotation = shapeRotation(shape);
+    if (!rotation) return "";
+    const center = shapeCenter(shape);
+    return "rotate(" + roundNum(rotation) + " " + roundNum(center.x) + " " + roundNum(center.y) + ")";
+  }
+
+  function rotatedRectCorners(shape) {
+    if (!shape) return [];
+    const corners = [
+      { x: shape.x, y: shape.y },
+      { x: shape.x + shape.width, y: shape.y },
+      { x: shape.x + shape.width, y: shape.y + shape.height },
+      { x: shape.x, y: shape.y + shape.height },
+    ];
+    const rotation = shapeRotation(shape);
+    if (!rotation) return corners;
+    const center = shapeCenter(shape);
+    return corners.map((corner) => rotatePoint(corner, center, rotation));
+  }
+
+  function boundsFromPoints(points) {
+    if (!Array.isArray(points) || !points.length) return null;
+    const xs = points.map((point) => point.x);
+    const ys = points.map((point) => point.y);
+    const left = Math.min.apply(null, xs);
+    const top = Math.min.apply(null, ys);
+    const right = Math.max.apply(null, xs);
+    const bottom = Math.max.apply(null, ys);
+    return {
+      x: left,
+      y: top,
+      width: right - left,
+      height: bottom - top,
+    };
+  }
+
   function anchorCount() {
     const explicit = Number(state.model && state.model.anchors && state.model.anchors.countPerEdge);
     if (Number.isFinite(explicit)) return Math.max(2, Math.round(explicit));
@@ -388,7 +483,7 @@
 
   function defaultModel(elfName) {
     return {
-      version: 4,
+      version: 5,
       metadata: {
         elf: elfName || "",
         viewBox: {
@@ -800,6 +895,7 @@
       shape.y = Number(shape.y) || 0;
       shape.width = Math.max(MIN_SHAPE_SIZE, Number(shape.width) || defaultShapeSize(shape.kind).width);
       shape.height = Math.max(MIN_SHAPE_SIZE, Number(shape.height) || defaultShapeSize(shape.kind).height);
+      shape.rotation = normalizeRotation(shape.rotation);
       if (shape.kind === "square" || shape.kind === "circle") {
         const side = Math.max(shape.width, shape.height);
         shape.width = side;
@@ -1311,19 +1407,25 @@
   }
 
   function pointInShapeFrame(point, shape) {
-    return !!(point && shape
-      && point.x >= shape.x
-      && point.x <= shape.x + shape.width
-      && point.y >= shape.y
-      && point.y <= shape.y + shape.height);
+    if (!point || !shape) return false;
+    const local = shapeLocalPoint(point, shape);
+    return (
+      local.x >= shape.x &&
+      local.x <= shape.x + shape.width &&
+      local.y >= shape.y &&
+      local.y <= shape.y + shape.height
+    );
   }
 
   function rectInsideShapeFrame(rect, shape) {
-    return !!(rect && shape
-      && rect.x >= shape.x
-      && rect.y >= shape.y
-      && rect.x + rect.width <= shape.x + shape.width
-      && rect.y + rect.height <= shape.y + shape.height);
+    if (!rect || !shape) return false;
+    const corners = [
+      { x: rect.x, y: rect.y },
+      { x: rect.x + rect.width, y: rect.y },
+      { x: rect.x + rect.width, y: rect.y + rect.height },
+      { x: rect.x, y: rect.y + rect.height },
+    ];
+    return corners.every((corner) => pointInShapeFrame(corner, shape));
   }
 
   function candidateContainersForPoint(point, itemZ, excludeShapeId) {
@@ -1623,6 +1725,20 @@
       translateArrowBy(arrow, snapshotArrowForMove(arrow), axisDx, axisDy);
     });
     arrows.forEach((arrow) => finalizeMovedArrowContainment(arrow));
+    syncCanvasRectToContent();
+    render();
+    return true;
+  }
+
+  function rotateSelectedShapesBy(deltaDegrees) {
+    const selectedIds = currentSelectedShapeIds();
+    if (!selectedIds.length) return false;
+    const shapes = selectedIds.map((id) => shapeById(id)).filter(Boolean);
+    if (!shapes.length) return false;
+    pushHistory();
+    shapes.forEach((shape) => {
+      shape.rotation = normalizeRotation(shapeRotation(shape) + deltaDegrees);
+    });
     syncCanvasRectToContent();
     render();
     return true;
@@ -4112,6 +4228,10 @@
       "data-shape-id": shape.id,
       style: "cursor:" + (state.mode === "select" ? "move" : "crosshair"),
     });
+    const transform = shapeTransform(shape);
+    if (transform) {
+      group.setAttribute("transform", transform);
+    }
     renderShapeVisual(group, shape, stroke, strokeWidth);
     group.addEventListener("pointerdown", (evt) => onShapePointerDown(evt, shape.id));
     shapeLayer.appendChild(group);
@@ -4221,10 +4341,11 @@
         boxMarks.push({ x: box.x + box.width / 2, y: box.y + box.height });
       }
       boxMarks.forEach((mark) => {
-        const key = roundNum(mark.x) + ":" + roundNum(mark.y);
+        const worldMark = shapeWorldPoint(mark, shape);
+        const key = roundNum(worldMark.x) + ":" + roundNum(worldMark.y);
         if (seen.has(key)) return;
         seen.add(key);
-        marks.push(mark);
+        marks.push(worldMark);
       });
     });
     return marks;
@@ -4304,12 +4425,14 @@
     const h = shape.height;
     const cx = x0 + w / 2;
     const cy = y0 + h / 2;
+    let anchor = null;
 
     if (FRAME_ANCHOR_EXCEPTION_KINDS.has(shape.kind)) {
-      if (side === "left") return { x: x0, y: y0 + h * frac };
-      if (side === "right") return { x: x0 + w, y: y0 + h * frac };
-      if (side === "top") return { x: x0 + w * frac, y: y0 };
-      return { x: x0 + w * frac, y: y0 + h };
+      if (side === "left") anchor = { x: x0, y: y0 + h * frac };
+      else if (side === "right") anchor = { x: x0 + w, y: y0 + h * frac };
+      else if (side === "top") anchor = { x: x0 + w * frac, y: y0 };
+      else anchor = { x: x0 + w * frac, y: y0 + h };
+      return shapeWorldPoint(anchor, shape);
     }
 
     if (shape.kind === "circle" || shape.kind === "oval") {
@@ -4320,13 +4443,13 @@
         const ny = (y - cy) / ry;
         const k = Math.sqrt(Math.max(0, 1 - ny * ny));
         const x = cx + (side === "left" ? -rx : rx) * k;
-        return { x: x, y: y };
+        return shapeWorldPoint({ x: x, y: y }, shape);
       }
       const x = x0 + w * frac;
       const nx = (x - cx) / rx;
       const k = Math.sqrt(Math.max(0, 1 - nx * nx));
       const y = cy + (side === "top" ? -ry : ry) * k;
-      return { x: x, y: y };
+      return shapeWorldPoint({ x: x, y: y }, shape);
     }
 
     if (shape.kind === "triangle") {
@@ -4334,30 +4457,34 @@
       const bl = { x: x0, y: y0 + h };
       const br = { x: x0 + w, y: y0 + h };
       if (side === "left") {
-        return {
+        anchor = {
           x: top.x + (bl.x - top.x) * frac,
           y: top.y + (bl.y - top.y) * frac,
         };
+        return shapeWorldPoint(anchor, shape);
       }
       if (side === "right") {
-        return {
+        anchor = {
           x: top.x + (br.x - top.x) * frac,
           y: top.y + (br.y - top.y) * frac,
         };
+        return shapeWorldPoint(anchor, shape);
       }
-      if (side === "bottom") return { x: x0 + w * frac, y: y0 + h };
+      if (side === "bottom") return shapeWorldPoint({ x: x0 + w * frac, y: y0 + h }, shape);
       if (frac <= 0.5) {
         const u = frac / 0.5;
-        return {
+        anchor = {
           x: bl.x + (top.x - bl.x) * u,
           y: bl.y + (top.y - bl.y) * u,
         };
+        return shapeWorldPoint(anchor, shape);
       }
       const u = (frac - 0.5) / 0.5;
-      return {
+      anchor = {
         x: top.x + (br.x - top.x) * u,
         y: top.y + (br.y - top.y) * u,
       };
+      return shapeWorldPoint(anchor, shape);
     }
 
     if (shape.kind === "cone") {
@@ -4367,24 +4494,24 @@
       const baseCy = y0 + h - ry;
       const leftBase = { x: cx - rx, y: baseCy };
       const rightBase = { x: cx + rx, y: baseCy };
-      if (side === "left") return lerpPoint(apex, leftBase, frac);
-      if (side === "right") return lerpPoint(apex, rightBase, frac);
+      if (side === "left") return shapeWorldPoint(lerpPoint(apex, leftBase, frac), shape);
+      if (side === "right") return shapeWorldPoint(lerpPoint(apex, rightBase, frac), shape);
       if (side === "bottom") {
         const targetX = cx - rx + rx * 2 * frac;
         const nx = (targetX - cx) / Math.max(0.01, rx);
         const k = Math.sqrt(Math.max(0, 1 - nx * nx));
-        return { x: targetX, y: baseCy + ry * k };
+        return shapeWorldPoint({ x: targetX, y: baseCy + ry * k }, shape);
       }
       if (frac <= 0.5) {
-        return lerpPoint(leftBase, apex, frac / 0.5);
+        return shapeWorldPoint(lerpPoint(leftBase, apex, frac / 0.5), shape);
       }
-      return lerpPoint(apex, rightBase, (frac - 0.5) / 0.5);
+      return shapeWorldPoint(lerpPoint(apex, rightBase, (frac - 0.5) / 0.5), shape);
     }
 
     if (shape.kind === "or") {
       const curves = orCurvePoints(shape);
       if (side === "left") {
-        return quadraticBezierPoint(curves.startTop, curves.leftControl, curves.startBottom, frac);
+        return shapeWorldPoint(quadraticBezierPoint(curves.startTop, curves.leftControl, curves.startBottom, frac), shape);
       }
     }
 
@@ -4398,7 +4525,7 @@
             ? { x: x0 + w * frac, y: y0 }
             : { x: x0 + w * frac, y: y0 + h };
       const projected = closestPointOnPolygon(target, polygonVertices);
-      if (projected) return { x: projected.x, y: projected.y };
+      if (projected) return shapeWorldPoint({ x: projected.x, y: projected.y }, shape);
     }
 
     if (shape.kind === "cylinder") {
@@ -4406,13 +4533,13 @@
       const ry = Math.max(8, Math.min(16, h * 0.12));
       const topCy = y0 + ry + 2;
       const bottomCy = y0 + h - ry - 2;
-      if (side === "left") return { x: x0, y: topCy + (bottomCy - topCy) * frac };
-      if (side === "right") return { x: x0 + w, y: topCy + (bottomCy - topCy) * frac };
+      if (side === "left") return shapeWorldPoint({ x: x0, y: topCy + (bottomCy - topCy) * frac }, shape);
+      if (side === "right") return shapeWorldPoint({ x: x0 + w, y: topCy + (bottomCy - topCy) * frac }, shape);
       const targetX = x0 + w * frac;
       const nx = (targetX - cx) / rx;
       const k = Math.sqrt(Math.max(0, 1 - nx * nx));
       const targetCy = side === "top" ? topCy : bottomCy;
-      return { x: targetX, y: targetCy + (side === "top" ? -ry : ry) * k };
+      return shapeWorldPoint({ x: targetX, y: targetCy + (side === "top" ? -ry : ry) * k }, shape);
     }
 
     if (shape.kind === "cloud" || shape.kind === "cloud_callout") {
@@ -4422,18 +4549,19 @@
         const y = y0 + h * frac;
         const ny = (y - cy) / ry;
         const k = Math.sqrt(Math.max(0, 1 - ny * ny));
-        return { x: cx + (side === "left" ? -rx : rx) * k, y: y };
+        return shapeWorldPoint({ x: cx + (side === "left" ? -rx : rx) * k, y: y }, shape);
       }
       const x = x0 + w * frac;
       const nx = (x - cx) / rx;
       const k = Math.sqrt(Math.max(0, 1 - nx * nx));
-      return { x: x, y: cy + (side === "top" ? -ry : ry) * k };
+      return shapeWorldPoint({ x: x, y: cy + (side === "top" ? -ry : ry) * k }, shape);
     }
 
-    if (side === "left") return { x: x0, y: y0 + h * frac };
-    if (side === "right") return { x: x0 + w, y: y0 + h * frac };
-    if (side === "top") return { x: x0 + w * frac, y: y0 };
-    return { x: x0 + w * frac, y: y0 + h };
+    if (side === "left") anchor = { x: x0, y: y0 + h * frac };
+    else if (side === "right") anchor = { x: x0 + w, y: y0 + h * frac };
+    else if (side === "top") anchor = { x: x0 + w * frac, y: y0 };
+    else anchor = { x: x0 + w * frac, y: y0 + h };
+    return shapeWorldPoint(anchor, shape);
   }
 
   function getAllAnchors() {
@@ -4524,6 +4652,7 @@
 
   function nearestAnchorForShape(shape, point, preferredSide) {
     if (!shape) return null;
+    const localPoint = shapeLocalPoint(point, shape);
     const x0 = shape.x;
     const y0 = shape.y;
     const x1 = shape.x + shape.width;
@@ -4536,9 +4665,9 @@
       const top = { x: cx, y: y0 };
       const bl = { x: x0, y: y1 };
       const br = { x: x1, y: y1 };
-      const leftProj = projectPointToSegment(point, top, bl);
-      const rightProj = projectPointToSegment(point, top, br);
-      const bottomFrac = shape.width <= 0 ? 0.5 : clamp((point.x - x0) / shape.width, 0, 1);
+      const leftProj = projectPointToSegment(localPoint, top, bl);
+      const rightProj = projectPointToSegment(localPoint, top, br);
+      const bottomFrac = shape.width <= 0 ? 0.5 : clamp((localPoint.x - x0) / shape.width, 0, 1);
 
       candidates.push(buildAnchorCandidate(shape, "left", leftProj.t, point));
       candidates.push(buildAnchorCandidate(shape, "right", rightProj.t, point));
@@ -4550,33 +4679,33 @@
       const baseCy = y0 + shape.height - ry;
       const leftBase = { x: cx - rx, y: baseCy };
       const rightBase = { x: cx + rx, y: baseCy };
-      const leftProj = projectPointToSegment(point, apex, leftBase);
-      const rightProj = projectPointToSegment(point, apex, rightBase);
-      const bottomFrac = shape.width <= 0 ? 0.5 : clamp((point.x - x0) / shape.width, 0, 1);
+      const leftProj = projectPointToSegment(localPoint, apex, leftBase);
+      const rightProj = projectPointToSegment(localPoint, apex, rightBase);
+      const bottomFrac = shape.width <= 0 ? 0.5 : clamp((localPoint.x - x0) / shape.width, 0, 1);
       candidates.push(buildAnchorCandidate(shape, "left", leftProj.t, point));
       candidates.push(buildAnchorCandidate(shape, "right", rightProj.t, point));
       candidates.push(buildAnchorCandidate(shape, "bottom", bottomFrac, point));
     } else if (shape.kind === "circle" || shape.kind === "oval") {
       const h = Math.max(0.01, shape.height);
       const w = Math.max(0.01, shape.width);
-      candidates.push(buildAnchorCandidate(shape, "left", clamp((point.y - y0) / h, 0, 1), point));
-      candidates.push(buildAnchorCandidate(shape, "right", clamp((point.y - y0) / h, 0, 1), point));
-      candidates.push(buildAnchorCandidate(shape, "top", clamp((point.x - x0) / w, 0, 1), point));
-      candidates.push(buildAnchorCandidate(shape, "bottom", clamp((point.x - x0) / w, 0, 1), point));
+      candidates.push(buildAnchorCandidate(shape, "left", clamp((localPoint.y - y0) / h, 0, 1), point));
+      candidates.push(buildAnchorCandidate(shape, "right", clamp((localPoint.y - y0) / h, 0, 1), point));
+      candidates.push(buildAnchorCandidate(shape, "top", clamp((localPoint.x - x0) / w, 0, 1), point));
+      candidates.push(buildAnchorCandidate(shape, "bottom", clamp((localPoint.x - x0) / w, 0, 1), point));
     } else if (shape.kind === "cylinder" || polygonVerticesForShape(shape)) {
       const h = Math.max(0.01, shape.height);
       const w = Math.max(0.01, shape.width);
-      candidates.push(buildAnchorCandidate(shape, "left", clamp((point.y - y0) / h, 0, 1), point));
-      candidates.push(buildAnchorCandidate(shape, "right", clamp((point.y - y0) / h, 0, 1), point));
-      candidates.push(buildAnchorCandidate(shape, "top", clamp((point.x - x0) / w, 0, 1), point));
-      candidates.push(buildAnchorCandidate(shape, "bottom", clamp((point.x - x0) / w, 0, 1), point));
+      candidates.push(buildAnchorCandidate(shape, "left", clamp((localPoint.y - y0) / h, 0, 1), point));
+      candidates.push(buildAnchorCandidate(shape, "right", clamp((localPoint.y - y0) / h, 0, 1), point));
+      candidates.push(buildAnchorCandidate(shape, "top", clamp((localPoint.x - x0) / w, 0, 1), point));
+      candidates.push(buildAnchorCandidate(shape, "bottom", clamp((localPoint.x - x0) / w, 0, 1), point));
     } else {
       const h = Math.max(0.01, shape.height);
       const w = Math.max(0.01, shape.width);
-      candidates.push(buildAnchorCandidate(shape, "left", clamp((point.y - y0) / h, 0, 1), point));
-      candidates.push(buildAnchorCandidate(shape, "right", clamp((point.y - y0) / h, 0, 1), point));
-      candidates.push(buildAnchorCandidate(shape, "top", clamp((point.x - x0) / w, 0, 1), point));
-      candidates.push(buildAnchorCandidate(shape, "bottom", clamp((point.x - x0) / w, 0, 1), point));
+      candidates.push(buildAnchorCandidate(shape, "left", clamp((localPoint.y - y0) / h, 0, 1), point));
+      candidates.push(buildAnchorCandidate(shape, "right", clamp((localPoint.y - y0) / h, 0, 1), point));
+      candidates.push(buildAnchorCandidate(shape, "top", clamp((localPoint.x - x0) / w, 0, 1), point));
+      candidates.push(buildAnchorCandidate(shape, "bottom", clamp((localPoint.x - x0) / w, 0, 1), point));
     }
 
     let best = null;
@@ -4798,16 +4927,15 @@
       .map((id) => shapeById(id))
       .filter(Boolean);
     if (!shapes.length) return null;
-    const left = Math.min.apply(null, shapes.map((shape) => shape.x));
-    const top = Math.min.apply(null, shapes.map((shape) => shape.y));
-    const right = Math.max.apply(null, shapes.map((shape) => shape.x + shape.width));
-    const bottom = Math.max.apply(null, shapes.map((shape) => shape.y + shape.height));
-    return {
-      x: left,
-      y: top,
-      width: right - left,
-      height: bottom - top,
-    };
+    const bounds = shapes.map((shape) => shapeBounds(shape)).filter(Boolean);
+    return boundsFromPoints(
+      bounds.reduce((points, bound) => points.concat([
+        { x: bound.x, y: bound.y },
+        { x: bound.x + bound.width, y: bound.y },
+        { x: bound.x + bound.width, y: bound.y + bound.height },
+        { x: bound.x, y: bound.y + bound.height },
+      ]), [])
+    );
   }
 
   function rectFromPoints(a, b) {
@@ -4829,12 +4957,7 @@
 
   function shapeBounds(shape) {
     if (!shape) return null;
-    return {
-      x: shape.x,
-      y: shape.y,
-      width: shape.width,
-      height: shape.height,
-    };
+    return boundsFromPoints(rotatedRectCorners(shape));
   }
 
   function currentCanvasRect() {
@@ -4863,8 +4986,10 @@
     const points = [];
     const shapes = state.model && Array.isArray(state.model.shapes) ? state.model.shapes : [];
     shapes.forEach((shape) => {
-      points.push({ x: shape.x, y: shape.y });
-      points.push({ x: shape.x + shape.width, y: shape.y + shape.height });
+      const bounds = shapeBounds(shape);
+      if (!bounds) return;
+      points.push({ x: bounds.x, y: bounds.y });
+      points.push({ x: bounds.x + bounds.width, y: bounds.y + bounds.height });
     });
 
     const arrows = state.model && Array.isArray(state.model.arrows) ? state.model.arrows : [];
@@ -5094,6 +5219,16 @@
     });
   }
 
+  function createShapeOverlayGroup(overlayLayer, shape) {
+    const group = createSvg("g");
+    const transform = shapeTransform(shape);
+    if (transform) {
+      group.setAttribute("transform", transform);
+    }
+    overlayLayer.appendChild(group);
+    return group;
+  }
+
   function renderSelectionOverlay(overlayLayer) {
     if (state.connectPreview && state.connectPreview.shapeId) {
       const previewShape = shapeById(state.connectPreview.shapeId);
@@ -5143,6 +5278,20 @@
 
       const shape = shapeById(selectedIds[0]);
       if (!shape) return;
+      const shapeOverlay = createShapeOverlayGroup(overlayLayer, shape);
+      shapeOverlay.appendChild(createSvg("rect", {
+        x: shape.x - 4,
+        y: shape.y - 4,
+        width: shape.width + 8,
+        height: shape.height + 8,
+        fill: "none",
+        stroke: "#ffd76b",
+        "stroke-width": 1.5,
+        "stroke-dasharray": "8 5",
+        rx: 8,
+        ry: 8,
+        "pointer-events": "none",
+      }));
       const handles = [
         { key: "nw", x: shape.x, y: shape.y },
         { key: "ne", x: shape.x + shape.width, y: shape.y },
@@ -5167,9 +5316,34 @@
           evt.stopPropagation();
           startShapeResize(evt, shape.id, h.key);
         });
-        overlayLayer.appendChild(handle);
+        shapeOverlay.appendChild(handle);
       });
-      renderGroupDividerHandles(overlayLayer, shape);
+      const rotateHandleX = shape.x + shape.width + ROTATE_HANDLE_OFFSET;
+      const rotateHandleY = shape.y - ROTATE_HANDLE_OFFSET;
+      shapeOverlay.appendChild(createSvg("line", {
+        x1: shape.x + shape.width,
+        y1: shape.y,
+        x2: rotateHandleX,
+        y2: rotateHandleY,
+        stroke: "#ffd76b",
+        "stroke-width": 1.5,
+        "pointer-events": "none",
+      }));
+      const rotateHandle = createSvg("circle", {
+        cx: rotateHandleX,
+        cy: rotateHandleY,
+        r: ROTATE_HANDLE_RADIUS,
+        fill: "#ffd76b",
+        stroke: "#382a00",
+        "stroke-width": 1.2,
+        style: "cursor:grab",
+      });
+      rotateHandle.addEventListener("pointerdown", (evt) => {
+        evt.stopPropagation();
+        startShapeRotate(evt, shape.id);
+      });
+      shapeOverlay.appendChild(rotateHandle);
+      renderGroupDividerHandles(shapeOverlay, shape);
       return;
     }
 
@@ -5182,6 +5356,7 @@
         const layout = groupFormLayout(shape);
         const box = layout.components[entry.componentIndex];
         if (!box) return;
+        const localOverlay = createShapeOverlayGroup(overlayLayer, shape);
         const attrs = {
           fill: "none",
           stroke: "#ffd76b",
@@ -5191,7 +5366,7 @@
         };
         const cornerRadii = groupCellCornerRadii(shape, layout, box);
         if (cornerRadii.tl || cornerRadii.tr || cornerRadii.br || cornerRadii.bl) {
-          overlayLayer.appendChild(createSvg("path", Object.assign({
+          localOverlay.appendChild(createSvg("path", Object.assign({
             d: roundedRectPathSelective(box.x - 2, box.y - 2, box.width + 4, box.height + 4, {
               tl: cornerRadii.tl ? cornerRadii.tl + 2 : 0,
               tr: cornerRadii.tr ? cornerRadii.tr + 2 : 0,
@@ -5200,7 +5375,7 @@
             }),
           }, attrs)));
         } else {
-          overlayLayer.appendChild(createSvg("rect", Object.assign({
+          localOverlay.appendChild(createSvg("rect", Object.assign({
             x: box.x - 2,
             y: box.y - 2,
             width: box.width + 4,
@@ -5213,7 +5388,7 @@
       if (selectedEntries.length === 1) {
         const selectedComponent = currentSelectedGroupComponent();
         if (selectedComponent) {
-          renderGroupDividerHandles(overlayLayer, selectedComponent.shape);
+          renderGroupDividerHandles(createShapeOverlayGroup(overlayLayer, selectedComponent.shape), selectedComponent.shape);
         }
       }
       return;
@@ -5553,11 +5728,12 @@
 
   function pointDistanceToShapeFrame(point, shape) {
     if (!shape) return Infinity;
+    const local = shapeLocalPoint(point, shape);
     return Math.min(
-      Math.abs(point.x - shape.x),
-      Math.abs(point.x - (shape.x + shape.width)),
-      Math.abs(point.y - shape.y),
-      Math.abs(point.y - (shape.y + shape.height))
+      Math.abs(local.x - shape.x),
+      Math.abs(local.x - (shape.x + shape.width)),
+      Math.abs(local.y - shape.y),
+      Math.abs(local.y - (shape.y + shape.height))
     );
   }
 
@@ -5663,7 +5839,7 @@
     const selectedIds = currentSelectedShapeIds();
     const modifier = !!(evt.metaKey || evt.ctrlKey);
     if (isGroupFormKind(shape.kind)) {
-      const point = clientToSvg(evt);
+      const point = shapeLocalPoint(clientToSvg(evt), shape);
       const layout = groupFormLayout(shape);
       const rawIndex = layout.components.findIndex((box) => (
         point.x >= box.x
@@ -5774,6 +5950,25 @@
         width: shape.width,
         height: shape.height,
       },
+    };
+  }
+
+  function angleBetweenPoints(center, point) {
+    return Math.atan2((point.y || 0) - (center.y || 0), (point.x || 0) - (center.x || 0)) * 180 / Math.PI;
+  }
+
+  function startShapeRotate(evt, shapeId) {
+    const shape = shapeById(shapeId);
+    if (!shape) return;
+    pushHistory();
+    const point = clientToSvg(evt);
+    const center = shapeCenter(shape);
+    state.drag = {
+      type: "rotate-shape",
+      shapeId: shapeId,
+      center: center,
+      startAngle: angleBetweenPoints(center, point),
+      beforeRotation: shapeRotation(shape),
     };
   }
 
@@ -6241,6 +6436,16 @@
       return;
     }
 
+    if (state.drag.type === "rotate-shape") {
+      const shape = shapeById(state.drag.shapeId);
+      if (!shape) return;
+      const nextAngle = angleBetweenPoints(state.drag.center, point);
+      shape.rotation = normalizeRotation(state.drag.beforeRotation + (nextAngle - state.drag.startAngle));
+      updateCanvasDuringInteraction(shapeBounds(shape));
+      render();
+      return;
+    }
+
     if (state.drag.type === "resize-group-divider") {
       const shape = shapeById(state.drag.shapeId);
       if (!shape || !isGroupFormKind(shape.kind)) return;
@@ -6364,6 +6569,11 @@
     }
 
     if (drag.type === "resize-shape") {
+      syncCanvasRectToContent();
+      render();
+    }
+
+    if (drag.type === "rotate-shape") {
       syncCanvasRectToContent();
       render();
     }
@@ -6510,6 +6720,7 @@
       y: y,
       width: size.width,
       height: size.height,
+      rotation: 0,
       fill: isContainer ? "#0d172a" : "#1c2f4f",
       stroke: isContainer ? "#eef3ff" : "#80b6ff",
       borderStyle: isTextBox ? "none" : "solid",
@@ -7985,6 +8196,54 @@
     ].join("");
   }
 
+  function rotationControlsHtml(prefix, angle) {
+    const base = prefix || "ins-rotation";
+    const normalized = normalizeRotation(angle);
+    return [
+      '<div class="rotation-controls">',
+      '<input id="' + base + '-slider" class="rotation-slider" type="range" min="0" max="359" step="1" value="' + roundNum(normalized) + '"/>',
+      '<input id="' + base + '-angle" class="rotation-angle-input" type="number" min="0" max="359" step="1" value="' + roundNum(normalized) + '"/>',
+      "</div>",
+      '<div class="row"><button id="' + base + '-quarter-turn" type="button">Rotate 90°</button></div>',
+    ].join("");
+  }
+
+  function bindRotationControls(prefix, getter, setter) {
+    const base = prefix || "ins-rotation";
+    const syncInputs = () => {
+      const value = roundNum(normalizeRotation(getter()));
+      const angleEl = document.getElementById(base + "-angle");
+      const sliderEl = document.getElementById(base + "-slider");
+      if (angleEl) angleEl.value = value;
+      if (sliderEl) sliderEl.value = value;
+    };
+    bindSmoothNumberInput(base + "-angle", getter, (value) => {
+      setter(normalizeRotation(value));
+      syncInputs();
+    }, {
+      step: 1,
+      normalize: normalizeRotation,
+      renderFully: true,
+    });
+    bindSmoothNumberInput(base + "-slider", getter, (value) => {
+      setter(normalizeRotation(value));
+      syncInputs();
+    }, {
+      step: 1,
+      normalize: normalizeRotation,
+      renderFully: true,
+    });
+    const quarterTurnBtn = document.getElementById(base + "-quarter-turn");
+    if (quarterTurnBtn) {
+      quarterTurnBtn.addEventListener("click", () => {
+        pushHistory();
+        setter(normalizeRotation(getter() + 90));
+        syncCanvasRectToContent();
+        render();
+      });
+    }
+  }
+
   function bindTextSpacingControls(prefix, entity) {
     const base = prefix || "ins-spacing";
     const bindField = (suffix, key) => {
@@ -8313,6 +8572,7 @@
     const commonStroke = commonValue(shapes, (shape) => normalizeColor(shape.stroke, DEFAULT_SHAPE_STROKE), (value) => normalizeColor(value, DEFAULT_SHAPE_STROKE));
     const commonBorderStyle = commonValue(shapes, (shape) => normalizeBorderStyle(shape.borderStyle), normalizeBorderStyle);
     const minBorderWidth = minimumValue(shapes, (shape) => normalizeBorderWidth(shape.borderWidth, defaultBorderWidth(shape.kind)), normalizeBorderWidth, 1);
+    const minRotation = minimumValue(shapes, (shape) => shapeRotation(shape), normalizeRotation, 0);
     const roundableShapes = shapes.filter((shape) => shapeSupportsRounding(shape.kind));
     const roundedAll = roundableShapes.length ? roundableShapes.every((shape) => !!shape.rounded) : false;
     const roundedMixed = roundableShapes.length > 1 && !roundableShapes.every((shape) => !!shape.rounded === roundedAll);
@@ -8363,6 +8623,8 @@
       '<div class="color-inline-row"><label for="ins-shape-fill">Fill:</label><input id="ins-shape-fill" type="color" value="' + normalizeColor(commonFill || DEFAULT_SHAPE_FILL, DEFAULT_SHAPE_FILL) + '"/><label for="ins-shape-stroke">Border:</label><input id="ins-shape-stroke" type="color" value="' + normalizeColor(commonStroke || DEFAULT_SHAPE_STROKE, DEFAULT_SHAPE_STROKE) + '"/></div>',
       "<h3>Z-Order</h3>",
       '<div class="row"><button id="ins-z-back">Send Back</button><button id="ins-z-front">Bring Front</button></div>',
+      "<h3>Rotation</h3>",
+      rotationControlsHtml("ins-rotation", minRotation),
       "</div>",
     ].join("");
 
@@ -8499,6 +8761,12 @@
     const zFront = document.getElementById("ins-z-front");
     if (zBack) zBack.addEventListener("click", () => moveSelected("back"));
     if (zFront) zFront.addEventListener("click", () => moveSelected("front"));
+    bindRotationControls("ins-rotation", () => minRotation, (value) => {
+      const next = normalizeRotation(value);
+      shapes.forEach((shape) => {
+        shape.rotation = next;
+      });
+    });
   }
 
   function renderMultiGroupComponentInspector(entries) {
@@ -9189,6 +9457,10 @@
         render();
       });
     }
+
+    bindRotationControls("ins-rotation", () => shapeRotation(shape), (value) => {
+      shape.rotation = normalizeRotation(value);
+    });
 
     const parentSel = document.getElementById("ins-parent");
     if (parentSel) {
@@ -10038,6 +10310,20 @@
           return;
         }
         if (delta && (moveSelectedShapesBy(delta.x, delta.y) || moveSelectedArrowsBy(delta.x, delta.y))) {
+          evt.preventDefault();
+        }
+        return;
+      }
+
+      if (!inInput && moveKey === "q") {
+        if (rotateSelectedShapesBy(-KEYBOARD_ROTATE_STEP)) {
+          evt.preventDefault();
+        }
+        return;
+      }
+
+      if (!inInput && moveKey === "e") {
+        if (rotateSelectedShapesBy(KEYBOARD_ROTATE_STEP)) {
           evt.preventDefault();
         }
         return;
