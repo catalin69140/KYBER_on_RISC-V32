@@ -2720,12 +2720,6 @@ def write_html_animation(
             width: Number.isFinite(Number(spec.w ?? spec.width)) ? Number(spec.w ?? spec.width) : baseBox.width,
             height: Number.isFinite(Number(spec.h ?? spec.height)) ? Number(spec.h ?? spec.height) : baseBox.height
         };
-        const markerHost = {
-            x: Number.isFinite(Number(spec.x)) ? Number(spec.x) : outer.x,
-            y: Number.isFinite(Number(spec.y)) ? Number(spec.y) : outer.y,
-            width: Number.isFinite(Number(spec.w ?? spec.width)) ? Number(spec.w ?? spec.width) : outer.width,
-            height: Number.isFinite(Number(spec.h ?? spec.height)) ? Number(spec.h ?? spec.height) : outer.height
-        };
         const pad = refTextInset(spec.textPadding, 0);
         const maxPadX = Math.max(0, Math.floor((outer.width - 8) / 2));
         const maxPadY = Math.max(0, Math.floor((outer.height - 8) / 2));
@@ -2738,9 +2732,6 @@ def write_html_animation(
         let rightInset = Math.max(effectivePad, baseRight + refTextInset(spec.textOffsetLeft, 0) - refTextInset(spec.textOffsetRight, 0));
         let topInset = Math.max(effectivePad, baseTop + refTextInset(spec.textOffsetDown, 0) - refTextInset(spec.textOffsetUp, 0));
         let bottomInset = Math.max(effectivePad, baseBottom + refTextInset(spec.textOffsetUp, 0) - refTextInset(spec.textOffsetDown, 0));
-        const markerInsets = refMarkingTextInsets(outer, spec.marking, markerHost);
-        topInset = Math.max(topInset, effectivePad + markerInsets.top);
-        bottomInset = Math.max(bottomInset, effectivePad + markerInsets.bottom);
         const maxExtraW = Math.max(0, outer.width - 8 - effectivePad * 2);
         const extraLeft = Math.max(0, leftInset - effectivePad);
         const extraRight = Math.max(0, rightInset - effectivePad);
@@ -3111,7 +3102,7 @@ def write_html_animation(
             "bottom_left",
             "bottom_center",
             "bottom_right",
-        ].includes(normalized) ? normalized : "top_center";
+        ].includes(normalized) ? normalized : "top_right";
     }
 
     function refNormalizeMarkingShape(value) {
@@ -3124,12 +3115,19 @@ def write_html_animation(
         return color || "#ff7a1b";
     }
 
+    function refNormalizeMarkingOffset(value) {
+        const numeric = Number(value);
+        return Number.isFinite(numeric) ? numeric : 0;
+    }
+
     function refNormalizeMarking(value) {
         const raw = value && typeof value === "object" ? value : {};
         return {
             position: refNormalizeMarkingPosition(raw.position),
             shape: refNormalizeMarkingShape(raw.shape),
             color: refNormalizeMarkingColor(raw.color),
+            offsetX: refNormalizeMarkingOffset(raw.offsetX != null ? raw.offsetX : raw.x),
+            offsetY: refNormalizeMarkingOffset(raw.offsetY != null ? raw.offsetY : raw.y),
         };
     }
 
@@ -3138,38 +3136,21 @@ def write_html_animation(
     }
 
     function refMarkerSizeForFrame(frame) {
-        if (!frame) return 12;
-        return refClamp(Math.min(frame.width, frame.height) * 0.18, 12, 18);
+        if (!frame) return 10;
+        return refClamp(Math.min(frame.width, frame.height) * 0.16, 10, 16);
     }
 
     function refMarkingAnchorPoint(frame, rawMarking) {
         const marking = refNormalizeMarking(rawMarking);
         const size = refMarkerSizeForFrame(frame);
-        const inset = refClamp(size * 0.58, 8, 12);
-        const x = marking.position.endsWith("left")
+        const inset = size / 2 + 5;
+        const x = (marking.position.endsWith("left")
             ? frame.x + inset
-            : (marking.position.endsWith("right") ? (frame.x + frame.width - inset) : (frame.x + frame.width / 2));
-        const y = marking.position.startsWith("top")
+            : (marking.position.endsWith("right") ? (frame.x + frame.width - inset) : (frame.x + frame.width / 2))) + marking.offsetX;
+        const y = (marking.position.startsWith("top")
             ? frame.y + inset
-            : (frame.y + frame.height - inset);
+            : (frame.y + frame.height - inset)) + marking.offsetY;
         return { x, y, size };
-    }
-
-    function refMarkingTextInsets(frame, rawMarking, hostFrame) {
-        if (!frame || !refHasVisibleMarking(rawMarking)) {
-            return { top: 0, bottom: 0 };
-        }
-        const marking = refNormalizeMarking(rawMarking);
-        const markerFrame = hostFrame || frame;
-        const anchor = refMarkingAnchorPoint(markerFrame, marking);
-        if (anchor.y < frame.y - 0.5 || anchor.y > frame.y + frame.height + 0.5) {
-            return { top: 0, bottom: 0 };
-        }
-        const extra = refMarkerSizeForFrame(markerFrame) + 6;
-        if (marking.position.startsWith("top")) {
-            return { top: extra, bottom: 0 };
-        }
-        return { top: 0, bottom: extra };
     }
 
     function refEffectiveGroupComponentFill(spec, component) {

@@ -4,7 +4,7 @@ import copy
 import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-MODEL_VERSION = 6
+MODEL_VERSION = 7
 DEFAULT_VIEWBOX = {"x": 0.0, "y": 0.0, "width": 1000.0, "height": 1000.0}
 DEFAULT_BACKGROUND = "#0b1220"
 DEFAULT_ANCHOR_STOPS = [i / 10 for i in range(11)]
@@ -99,9 +99,11 @@ VALID_MARKING_POSITIONS = {
 }
 VALID_MARKING_SHAPES = {"none", "square", "circle", "diamond", "triangle"}
 DEFAULT_MARKING = {
-    "position": "top_center",
+    "position": "top_right",
     "shape": "none",
     "color": "#ff7a1b",
+    "offsetX": 0.0,
+    "offsetY": 0.0,
 }
 
 
@@ -409,12 +411,18 @@ def _as_marking_color(value: Any) -> str:
     return color or str(DEFAULT_MARKING["color"])
 
 
+def _as_marking_offset(value: Any) -> float:
+    return _to_float(value, 0.0)
+
+
 def _normalize_marking(value: Any) -> Dict[str, Any]:
     raw = value if isinstance(value, dict) else {}
     return {
         "position": _as_marking_position(raw.get("position")),
         "shape": _as_marking_shape(raw.get("shape")),
         "color": _as_marking_color(raw.get("color")),
+        "offsetX": _as_marking_offset(raw.get("offsetX", raw.get("x"))),
+        "offsetY": _as_marking_offset(raw.get("offsetY", raw.get("y"))),
     }
 
 

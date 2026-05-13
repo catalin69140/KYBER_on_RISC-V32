@@ -31,9 +31,11 @@
     { value: "triangle", label: "Triangle" },
   ];
   const DEFAULT_MARKING = {
-    position: "top_center",
+    position: "top_right",
     shape: "none",
     color: MARKING_COLOR_SWATCHES[0].fill,
+    offsetX: 0,
+    offsetY: 0,
   };
   const DEFAULT_COLOR_PALETTE = TYPE_COLOR_SWATCHES.map((entry) => entry.fill);
   const DEFAULT_SHAPE_FILL = "#1c2f4f";
@@ -114,8 +116,8 @@
   const MIN_SHAPE_SIZE = 24;
   const HISTORY_LIMIT = 120;
   const HTML_NS = "http://www.w3.org/1999/xhtml";
-  const MARKING_MIN_SIZE = 12;
-  const MARKING_MAX_SIZE = 18;
+  const MARKING_MIN_SIZE = 10;
+  const MARKING_MAX_SIZE = 16;
 
   const CONNECT_MODES = {
     connect_directional_connector: "directional_connector",
@@ -379,6 +381,8 @@
       position: DEFAULT_MARKING.position,
       shape: DEFAULT_MARKING.shape,
       color: DEFAULT_MARKING.color,
+      offsetX: DEFAULT_MARKING.offsetX,
+      offsetY: DEFAULT_MARKING.offsetY,
     };
   }
 
@@ -407,13 +411,25 @@
     return fallback || DEFAULT_MARKING.color;
   }
 
+  function normalizeMarkingOffset(raw) {
+    const value = Number(raw);
+    return Number.isFinite(value) ? value : 0;
+  }
+
   function normalizeMarking(raw) {
     const source = raw && typeof raw === "object" ? raw : {};
     return {
       position: normalizeMarkingPosition(source.position),
       shape: normalizeMarkingShape(source.shape),
       color: normalizeMarkingColor(source.color, DEFAULT_MARKING.color),
+      offsetX: normalizeMarkingOffset(source.offsetX != null ? source.offsetX : source.x),
+      offsetY: normalizeMarkingOffset(source.offsetY != null ? source.offsetY : source.y),
     };
+  }
+
+  function hasCustomMarkingPosition(raw) {
+    const marking = normalizeMarking(raw);
+    return Math.abs(marking.offsetX) > 0.000001 || Math.abs(marking.offsetY) > 0.000001;
   }
 
   function hasVisibleMarking(raw) {
@@ -432,38 +448,21 @@
 
   function markerSizeForFrame(frame) {
     if (!frame) return MARKING_MIN_SIZE;
-    return clamp(Math.min(frame.width, frame.height) * 0.18, MARKING_MIN_SIZE, MARKING_MAX_SIZE);
+    return clamp(Math.min(frame.width, frame.height) * 0.16, MARKING_MIN_SIZE, MARKING_MAX_SIZE);
   }
 
   function markingAnchorPoint(frame, rawMarking) {
     if (!frame) return { x: 0, y: 0 };
     const marking = normalizeMarking(rawMarking);
     const size = markerSizeForFrame(frame);
-    const inset = clamp(size * 0.58, 8, 12);
-    const x = marking.position.endsWith("left")
+    const inset = size / 2 + 5;
+    const x = (marking.position.endsWith("left")
       ? frame.x + inset
-      : (marking.position.endsWith("right") ? (frame.x + frame.width - inset) : (frame.x + frame.width / 2));
-    const y = marking.position.startsWith("top")
+      : (marking.position.endsWith("right") ? (frame.x + frame.width - inset) : (frame.x + frame.width / 2))) + marking.offsetX;
+    const y = (marking.position.startsWith("top")
       ? frame.y + inset
-      : (frame.y + frame.height - inset);
+      : (frame.y + frame.height - inset)) + marking.offsetY;
     return { x, y, size };
-  }
-
-  function markingTextInsets(frame, rawMarking, hostFrame) {
-    if (!frame || !hasVisibleMarking(rawMarking)) {
-      return { top: 0, bottom: 0 };
-    }
-    const marking = normalizeMarking(rawMarking);
-    const markerFrame = hostFrame || frame;
-    const anchor = markingAnchorPoint(markerFrame, marking);
-    if (anchor.y < frame.y - 0.5 || anchor.y > frame.y + frame.height + 0.5) {
-      return { top: 0, bottom: 0 };
-    }
-    const extra = markerSizeForFrame(markerFrame) + 6;
-    if (marking.position.startsWith("top")) {
-      return { top: extra, bottom: 0 };
-    }
-    return { top: 0, bottom: extra };
   }
 
   function normalizeRotation(raw) {
@@ -603,7 +602,7 @@
 
   function defaultModel(elfName) {
     return {
-      version: 6,
+      version: 7,
       metadata: {
         elf: elfName || "",
         viewBox: {
@@ -2919,12 +2918,6 @@
       width: Number.isFinite(Number(spec.width)) ? Number(spec.width) : baseBox.width,
       height: Number.isFinite(Number(spec.height)) ? Number(spec.height) : baseBox.height,
     };
-    const markerHost = {
-      x: Number.isFinite(Number(spec.x)) ? Number(spec.x) : outer.x,
-      y: Number.isFinite(Number(spec.y)) ? Number(spec.y) : outer.y,
-      width: Number.isFinite(Number(spec.width)) ? Number(spec.width) : outer.width,
-      height: Number.isFinite(Number(spec.height)) ? Number(spec.height) : outer.height,
-    };
     const pad = normalizeTextInset(spec.textPadding, 0);
     const maxPadX = Math.max(0, Math.floor((outer.width - 8) / 2));
     const maxPadY = Math.max(0, Math.floor((outer.height - 8) / 2));
@@ -2937,9 +2930,6 @@
     let rightInset = Math.max(effectivePad, baseRight + normalizeTextInset(spec.textOffsetLeft, 0) - normalizeTextInset(spec.textOffsetRight, 0));
     let topInset = Math.max(effectivePad, baseTop + normalizeTextInset(spec.textOffsetDown, 0) - normalizeTextInset(spec.textOffsetUp, 0));
     let bottomInset = Math.max(effectivePad, baseBottom + normalizeTextInset(spec.textOffsetUp, 0) - normalizeTextInset(spec.textOffsetDown, 0));
-    const markerInsets = markingTextInsets(outer, spec.marking, markerHost);
-    topInset = Math.max(topInset, effectivePad + markerInsets.top);
-    bottomInset = Math.max(bottomInset, effectivePad + markerInsets.bottom);
     const maxExtraW = Math.max(0, outer.width - 8 - effectivePad * 2);
     const extraLeft = Math.max(0, leftInset - effectivePad);
     const extraRight = Math.max(0, rightInset - effectivePad);
@@ -8556,9 +8546,12 @@
   function markingControlsHtml(prefix, rawMarking) {
     const base = prefix || "ins-marking";
     const marking = normalizeMarking(rawMarking);
-    const positionOptions = MARKING_POSITION_DEFS.map((entry) => (
-      '<option value="' + entry.value + '"' + (entry.value === marking.position ? " selected" : "") + '>' + escapeHtml(entry.label) + "</option>"
-    )).join("");
+    const customPosition = hasCustomMarkingPosition(marking);
+    const positionOptions = [
+      '<option value=""' + (customPosition ? " selected" : "") + ">-</option>",
+    ].concat(MARKING_POSITION_DEFS.map((entry) => (
+      '<option value="' + entry.value + '"' + (!customPosition && entry.value === marking.position ? " selected" : "") + '>' + escapeHtml(entry.label) + "</option>"
+    ))).join("");
     const formOptions = MARKING_FORM_DEFS.map((entry) => (
       '<option value="' + entry.value + '"' + (entry.value === marking.shape ? " selected" : "") + '>' + escapeHtml(entry.label) + "</option>"
     )).join("");
@@ -8567,13 +8560,40 @@
       '<div class="inline-field"><label for="' + base + '-position">Position:</label><select id="' + base + '-position">' + positionOptions + "</select></div>",
       '<div class="inline-field"><label for="' + base + '-shape">Form:</label><select id="' + base + '-shape">' + formOptions + "</select></div>",
       '<div class="palette-block"><label>Color</label><div class="palette" id="' + base + '-palette"></div></div>',
+      '<div class="section-heading-row"><h3>Geometry</h3></div>',
+      '<div class="grid2">' +
+        '<div class="inline-field"><label for="' + base + '-x">x:</label><input id="' + base + '-x" type="number" step="1" value="' + roundNum(marking.offsetX) + '"/></div>' +
+        '<div class="inline-field"><label for="' + base + '-y">y:</label><input id="' + base + '-y" type="number" step="1" value="' + roundNum(marking.offsetY) + '"/></div>' +
+      '</div>',
     ].join("");
   }
 
   function bindMarkingControls(prefix, getter, setter) {
     const base = prefix || "ins-marking";
     const paletteEl = document.getElementById(base + "-palette");
+    const positionEl = document.getElementById(base + "-position");
+    const xEl = document.getElementById(base + "-x");
+    const yEl = document.getElementById(base + "-y");
     const current = normalizeMarking(getter());
+    const syncControls = () => {
+      const live = normalizeMarking(getter());
+      if (positionEl) {
+        positionEl.value = hasCustomMarkingPosition(live) ? "" : live.position;
+      }
+      if (xEl) xEl.value = roundNum(live.offsetX);
+      if (yEl) yEl.value = roundNum(live.offsetY);
+    };
+    const applyMarking = (changes, options) => {
+      const opts = options || {};
+      const live = normalizeMarking(getter());
+      setter(normalizeMarking(Object.assign({}, live, changes)));
+      if (opts.skipInspector) {
+        render(true);
+        syncControls();
+      } else {
+        render();
+      }
+    };
     if (paletteEl) {
       MARKING_COLOR_SWATCHES.forEach((entry) => {
         const sw = document.createElement("button");
@@ -8590,24 +8610,46 @@
           const live = normalizeMarking(getter());
           if (!hasVisibleMarking(live)) return;
           pushHistory();
-          setter(normalizeMarking(Object.assign({}, live, { color: entry.fill })));
-          render();
+          applyMarking({ color: entry.fill });
         });
         paletteEl.appendChild(sw);
       });
     }
     bindInput(base + "-position", "change", (value) => {
+      if (!value) {
+        syncControls();
+        return;
+      }
       pushHistory();
-      const live = normalizeMarking(getter());
-      setter(normalizeMarking(Object.assign({}, live, { position: value })));
-      render();
+      applyMarking({ position: value, offsetX: 0, offsetY: 0 });
     });
     bindInput(base + "-shape", "change", (value) => {
       pushHistory();
-      const live = normalizeMarking(getter());
-      setter(normalizeMarking(Object.assign({}, live, { shape: value })));
-      render();
+      applyMarking({ shape: value });
     });
+    bindCommittedNumber(base + "-x", (num) => {
+      pushHistory();
+      applyMarking({ offsetX: num });
+    });
+    bindCommittedNumber(base + "-y", (num) => {
+      pushHistory();
+      applyMarking({ offsetY: num });
+    });
+    const bindMarkingStepper = (id, key) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener("keydown", (evt) => {
+        if (evt.key !== "ArrowUp" && evt.key !== "ArrowDown") return;
+        evt.preventDefault();
+        const direction = evt.key === "ArrowUp" ? 1 : -1;
+        const live = normalizeMarking(getter());
+        pushHistory();
+        applyMarking({ [key]: nudgeFromCurrent(live[key], direction, 1) }, { skipInspector: true });
+      });
+    };
+    bindMarkingStepper(base + "-x", "offsetX");
+    bindMarkingStepper(base + "-y", "offsetY");
+    syncControls();
   }
 
   function bindTextSpacingControls(prefix, entity) {
